@@ -1,0 +1,74 @@
+.calendar-wrap {
+  overflow: auto;
+}
+
+.calendar-grid {
+  min-width: 900px;
+}
+
+.calendar-day-head,
+.calendar-corner {
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 8px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: 70px repeat(5, 1fr);
+  gap: 6px;
+}
+
+.calendar-row {
+  display: contents;
+}
+
+.calendar-hour {
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10px;
+}
+
+.calendar-cell {
+  min-height: 64px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  padding: 4px;
+}
+
+.calendar-event {
+  height: 100%;
+  border-radius: 8px;
+  background: var(--ink);
+  color: white;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.72rem;
+}
+
+.calendar-event.walk-in {
+  background: white;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+.calendar-event strong {
+  font-size: 0.78rem;
+}
+
+.calendar-event span,
+.calendar-event em {
+  opacity: 0.8;
+  font-style: normal;
+}

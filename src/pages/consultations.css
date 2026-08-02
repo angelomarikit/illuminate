@@ -1,0 +1,69 @@
+.consult-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.consult-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ba-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ba-grid figure {
+  margin: 0;
+}
+
+.ba-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  filter: grayscale(0.15);
+}
+
+.ba-grid figcaption {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.consult-notes,
+.consult-ai {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.consult-notes p,
+.consult-ai p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.consult-ai {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 980px) {
+  .consult-grid {
+    grid-template-columns: 1fr;
+  }
+}
