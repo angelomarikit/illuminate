@@ -11,11 +11,13 @@ type TopbarProps = {
 }
 
 export function Topbar({ onMenu }: TopbarProps) {
-  const { branchId, setBranchId, branches } = useBranch()
+  const { branchId, setBranchId, branches, isStoreOpen, setStoreOpen, storeToggleSaving } =
+    useBranch()
   const { logout } = useAuth()
   const navigate = useNavigate()
   const [openNotes, setOpenNotes] = useState(false)
   const [notes, setNotes] = useState<string[]>([])
+  const [toggleError, setToggleError] = useState('')
 
   useEffect(() => {
     async function loadNotes() {
@@ -51,6 +53,15 @@ export function Topbar({ onMenu }: TopbarProps) {
     navigate('/login', { replace: true })
   }
 
+  async function handleStoreToggle() {
+    setToggleError('')
+    try {
+      await setStoreOpen(!isStoreOpen)
+    } catch (err) {
+      setToggleError(err instanceof Error ? err.message : 'Could not update store status.')
+    }
+  }
+
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -64,19 +75,38 @@ export function Topbar({ onMenu }: TopbarProps) {
       </div>
 
       <div className="topbar-right">
-        <select
-          className="select branch-select"
-          value={branchId}
-          onChange={(e) => setBranchId(e.target.value)}
-          aria-label="Branch"
-        >
-          {branches.map((branch) => (
-            <option key={branch.id} value={branch.id} disabled={branch.status === 'coming-soon'}>
-              {branch.name}
-              {branch.status === 'coming-soon' ? ' (Soon)' : ''}
-            </option>
-          ))}
-        </select>
+        <div className="store-branch-stack">
+          <button
+            type="button"
+            className={`store-toggle ${isStoreOpen ? 'is-open' : 'is-closed'}`}
+            onClick={handleStoreToggle}
+            disabled={storeToggleSaving}
+            aria-pressed={isStoreOpen}
+            title={isStoreOpen ? 'Store is open — click to close' : 'Store is closed — click to open'}
+          >
+            <span className="store-toggle-track" aria-hidden="true">
+              <span className="store-toggle-thumb" />
+            </span>
+            <span className="store-toggle-label">
+              {storeToggleSaving ? 'Saving...' : isStoreOpen ? 'Store Open' : 'Store Closed'}
+            </span>
+          </button>
+          <select
+            className="select branch-select"
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+            aria-label="Branch"
+          >
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id} disabled={branch.status === 'coming-soon'}>
+                {branch.name}
+                {branch.status === 'coming-soon' ? ' (Soon)' : ''}
+                {branch.isOpen === false ? ' · Closed' : ''}
+              </option>
+            ))}
+          </select>
+          {toggleError ? <span className="store-toggle-error">{toggleError}</span> : null}
+        </div>
         <Link to="/pos" className="btn btn-primary btn-sm">
           <ShoppingBag size={15} />
           Open POS

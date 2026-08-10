@@ -7,6 +7,7 @@ create table if not exists public.branches (
   name text not null,
   address text,
   status text not null default 'active' check (status in ('active', 'coming-soon')),
+  is_open boolean not null default true,
   created_at timestamptz not null default now()
 );
 
@@ -181,6 +182,7 @@ create table if not exists public.chat_messages (
 -- ========== SAFE COLUMN UPGRADES (existing projects) ==========
 alter table public.sales add column if not exists wallet_used numeric(12,2) not null default 0;
 alter table public.sales add column if not exists customer_id uuid references public.customers (id);
+alter table public.branches add column if not exists is_open boolean not null default true;
 
 -- ========== PROFILE TRIGGER ==========
 create or replace function public.handle_new_user()

@@ -67,6 +67,7 @@ export function Settings() {
           name: b.name,
           address: b.address ?? '',
           status: b.status as Branch['status'],
+          isOpen: b.is_open !== false,
         })),
       )
     }

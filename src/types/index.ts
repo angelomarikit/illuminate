@@ -3,6 +3,7 @@ export type Branch = {
   name: string
   address: string
   status: 'active' | 'coming-soon'
+  isOpen: boolean
 }
 
 export type ServiceCategory =

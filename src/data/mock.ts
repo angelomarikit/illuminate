@@ -18,18 +18,21 @@ export const branches: Branch[] = [
     name: 'BGC Flagship',
     address: '5th Ave, Bonifacio Global City',
     status: 'active',
+    isOpen: true,
   },
   {
     id: 'br-makati',
     name: 'Makati Avenue',
     address: 'Makati Ave, Makati City',
     status: 'active',
+    isOpen: true,
   },
   {
     id: 'br-qc',
     name: 'Quezon City',
     address: 'Eastwood City, Quezon City',
     status: 'coming-soon',
+    isOpen: false,
   },
 ]
 
