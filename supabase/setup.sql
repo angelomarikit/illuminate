@@ -14,14 +14,24 @@ create table if not exists public.branches (
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   full_name text not null,
-  role text not null default 'Staff',
+  email text,
+  role text not null default 'Staff' check (role in ('Owner', 'Admin', 'Staff', 'Client')),
   branch_id uuid references public.branches (id),
+  employment_status text not null default 'probation'
+    check (employment_status in ('probation', 'regular', 'contract', 'separated')),
+  duty_status text not null default 'off-duty'
+    check (duty_status in ('on-duty', 'off-duty', 'on-leave')),
+  leave_credits_vacation integer not null default 10,
+  leave_credits_sick integer not null default 5,
+  leave_credits_personal integer not null default 3,
+  leave_credits_emergency integer not null default 2,
   created_at timestamptz not null default now()
 );
 
 create table if not exists public.customers (
   id uuid primary key default gen_random_uuid(),
   branch_id uuid references public.branches (id),
+  user_id uuid references auth.users (id) on delete set null,
   full_name text not null,
   phone text,
   email text,
@@ -126,15 +136,23 @@ create table if not exists public.consultations (
 create table if not exists public.staff (
   id uuid primary key default gen_random_uuid(),
   branch_id uuid references public.branches (id),
+  profile_id uuid references public.profiles (id) on delete set null,
   full_name text not null,
   role text not null,
+  employment_status text not null default 'regular'
+    check (employment_status in ('probation', 'regular', 'contract', 'separated')),
   status text not null default 'off-duty',
+  leave_credits_vacation integer not null default 10,
+  leave_credits_sick integer not null default 5,
+  leave_credits_personal integer not null default 3,
+  leave_credits_emergency integer not null default 2,
   created_at timestamptz not null default now()
 );
 
 create table if not exists public.attendance (
   id uuid primary key default gen_random_uuid(),
   staff_id uuid references public.staff (id) on delete cascade,
+  profile_id uuid references public.profiles (id) on delete cascade,
   work_date date not null default current_date,
   time_in time,
   time_out time,
@@ -143,10 +161,14 @@ create table if not exists public.attendance (
 
 create table if not exists public.leave_requests (
   id uuid primary key default gen_random_uuid(),
+  staff_id uuid references public.staff (id) on delete set null,
+  profile_id uuid references public.profiles (id) on delete set null,
   staff_name text not null,
   leave_type text not null,
   date_from date not null,
   date_to date not null,
+  days integer not null default 1,
+  reason text,
   status text not null default 'pending',
   created_at timestamptz not null default now()
 );
@@ -183,6 +205,81 @@ create table if not exists public.chat_messages (
 alter table public.sales add column if not exists wallet_used numeric(12,2) not null default 0;
 alter table public.sales add column if not exists customer_id uuid references public.customers (id);
 alter table public.branches add column if not exists is_open boolean not null default true;
+alter table public.customers add column if not exists user_id uuid references auth.users (id) on delete set null;
+alter table public.staff add column if not exists profile_id uuid references public.profiles (id) on delete set null;
+alter table public.staff add column if not exists employment_status text not null default 'regular';
+alter table public.staff add column if not exists leave_credits_vacation integer not null default 10;
+alter table public.staff add column if not exists leave_credits_sick integer not null default 5;
+alter table public.staff add column if not exists leave_credits_personal integer not null default 3;
+alter table public.staff add column if not exists leave_credits_emergency integer not null default 2;
+alter table public.leave_requests add column if not exists staff_id uuid references public.staff (id) on delete set null;
+alter table public.leave_requests add column if not exists profile_id uuid references public.profiles (id) on delete set null;
+alter table public.leave_requests add column if not exists reason text;
+alter table public.leave_requests add column if not exists days integer not null default 1;
+alter table public.attendance add column if not exists profile_id uuid references public.profiles (id) on delete cascade;
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists employment_status text not null default 'probation';
+alter table public.profiles add column if not exists duty_status text not null default 'off-duty';
+alter table public.profiles add column if not exists leave_credits_vacation integer not null default 10;
+alter table public.profiles add column if not exists leave_credits_sick integer not null default 5;
+alter table public.profiles add column if not exists leave_credits_personal integer not null default 3;
+alter table public.profiles add column if not exists leave_credits_emergency integer not null default 2;
+
+create unique index if not exists customers_user_id_uidx
+  on public.customers (user_id)
+  where user_id is not null;
+
+create unique index if not exists attendance_staff_date_uidx
+  on public.attendance (staff_id, work_date)
+  where staff_id is not null;
+
+create unique index if not exists attendance_profile_date_uidx
+  on public.attendance (profile_id, work_date)
+  where profile_id is not null;
+
+-- ========== ROLE HELPERS (for app + future Expo / RLS) ==========
+create or replace function public.current_app_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (select role from public.profiles where id = auth.uid()),
+    'Staff'
+  );
+$$;
+
+create or replace function public.is_owner_or_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.current_app_role() in ('Owner', 'Admin');
+$$;
+
+create or replace function public.is_clinic_user()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.current_app_role() in ('Owner', 'Admin', 'Staff');
+$$;
+
+create or replace function public.is_client_user()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.current_app_role() = 'Client';
+$$;
 
 -- ========== PROFILE TRIGGER ==========
 create or replace function public.handle_new_user()
@@ -190,14 +287,34 @@ returns trigger
 language plpgsql
 security definer set search_path = public
 as $$
+declare
+  requested_role text := coalesce(new.raw_user_meta_data->>'role', 'Staff');
+  safe_role text;
 begin
-  insert into public.profiles (id, full_name, role)
+  if requested_role in ('Staff', 'Client') then
+    safe_role := requested_role;
+  else
+    safe_role := 'Staff';
+  end if;
+
+  insert into public.profiles (
+    id, full_name, role, email,
+    employment_status, duty_status,
+    leave_credits_vacation, leave_credits_sick,
+    leave_credits_personal, leave_credits_emergency
+  )
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
-    coalesce(new.raw_user_meta_data->>'role', 'Staff')
+    safe_role,
+    new.email,
+    'probation',
+    'off-duty',
+    10, 5, 3, 2
   )
-  on conflict (id) do nothing;
+  on conflict (id) do update
+    set email = excluded.email
+  where public.profiles.email is distinct from excluded.email;
   return new;
 end;
 $$;
@@ -273,25 +390,6 @@ select * from (values
   ('Luxe Renewal Package', 'Packages', 45000, 180, 500, 4000, true, '3 facial + 1 laser + skincare starter set.')
 ) as v(name, category, price, duration_min, points_earn, points_cost, active, description)
 where not exists (select 1 from public.services limit 1);
-
-insert into public.staff (branch_id, full_name, role, status)
-select b.id, s.full_name, s.role, s.status
-from public.branches b
-cross join (values
-  ('Dr. Elise Tan', 'Aesthetic Physician', 'off-duty'),
-  ('Nurse Patrice', 'Clinic Nurse', 'off-duty'),
-  ('Front Desk Ana', 'Reception', 'off-duty')
-) as s(full_name, role, status)
-where b.name = 'BGC Flagship'
-  and not exists (select 1 from public.staff limit 1);
-
-insert into public.chat_threads (customer_name, preview, unread)
-select * from (values
-  ('Ava Mendoza', 'Can I reschedule my HydraGlow to Friday?', 2),
-  ('Lara Villanueva', 'Thank you for the aftercare kit!', 0),
-  ('Mia Santos', 'Do you have openings for filler this week?', 1)
-) as v(customer_name, preview, unread)
-where not exists (select 1 from public.chat_threads limit 1);
 
 -- ========== STORAGE ==========
 insert into storage.buckets (id, name, public)

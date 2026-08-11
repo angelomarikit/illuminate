@@ -36,18 +36,27 @@ VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
 
-Restart:
+## 5. App roles + staff HR
+
+After setup.sql, also run (in order):
+
+1. `supabase/add_roles.sql`
+2. `supabase/add_staff_hr.sql`
+3. `supabase/add_profiles_hr.sql` (registered accounts + HR fields; clears demo staff/chat)
+
+Then promote your owner account (see `docs/ROLES.md`).
+
+## 6. Restart and test
 
 ```bash
 npm run dev
 ```
 
-## 5. Test
-
 1. Register / login
-2. Customers → Add Client
-3. Services → Add Service
-4. POS → complete a sale
-5. Sales → Export CSV
+2. Promote Owner via SQL (`docs/ROLES.md`)
+3. Customers → Add Client
+4. Services → Add Service
+5. POS → complete a sale
+6. Sales → Export CSV
 
 If a button shows an RLS / permission error, re-run `setup.sql` and confirm you are logged in.

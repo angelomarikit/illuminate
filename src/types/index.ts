@@ -107,16 +107,26 @@ export type StaffMember = {
   role: string
   branchId: string
   status: 'on-duty' | 'off-duty' | 'on-leave'
+  employmentStatus?: 'probation' | 'regular' | 'contract' | 'separated'
   timeIn?: string
   timeOut?: string
+  leaveCredits?: {
+    vacation: number
+    sick: number
+    personal: number
+    emergency: number
+  }
 }
 
 export type LeaveRequest = {
   id: string
   staffName: string
+  staffId?: string
   type: 'Vacation' | 'Sick' | 'Personal' | 'Emergency'
   from: string
   to: string
+  days?: number
+  reason?: string
   status: 'pending' | 'approved' | 'rejected'
 }
 

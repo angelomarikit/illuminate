@@ -362,6 +362,401 @@ table.data-table tbody tr:hover {
   gap: 16px;
 }
 
+/* ===== Confirm modal ===== */
+.confirm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(10, 10, 10, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+.confirm-modal {
+  width: min(480px, 100%);
+  max-height: min(90vh, 720px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 18px 48px rgba(10, 10, 10, 0.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.confirm-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 0;
+}
+
+.confirm-modal-kicker {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.confirm-modal-title {
+  margin: 6px 0 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.confirm-modal-body {
+  padding: 16px 18px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.confirm-modal-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.confirm-modal-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.confirm-modal-label {
+  display: block;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 650;
+  margin-bottom: 4px;
+}
+
+.confirm-modal-role-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.confirm-modal-role {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  font-size: 0.85rem;
+}
+
+.confirm-modal-role.is-next {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.confirm-modal-arrow {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.confirm-modal-note {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.confirm-modal-note p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+}
+
+@media (max-width: 640px) {
+  .confirm-modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .confirm-modal {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 18px 18px 0 0;
+    border-bottom: none;
+  }
+
+  .confirm-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .confirm-modal-actions .btn {
+    width: 100%;
+  }
+
+  .confirm-modal-role-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .confirm-modal-arrow {
+    transform: rotate(90deg);
+    margin-left: 8px;
+  }
+}
+
+/* ===== My Work (staff self-service) ===== */
+.my-work {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.my-work-hero {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(145deg, #111 0%, #0a0a0a 55%, #1c1c1c 100%);
+  color: #fff;
+  padding: 22px 24px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.my-work-hero-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.my-work-eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 650;
+  margin: 0;
+}
+
+.my-work-hero-title {
+  margin: 8px 0 0;
+  font-size: clamp(1.35rem, 2vw, 1.7rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.my-work-hero-sub {
+  margin: 8px 0 0;
+  max-width: 46ch;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.my-work-hero-btn {
+  border-radius: 999px;
+  min-height: 42px;
+}
+
+.my-work-hero .btn-primary {
+  background: #fff;
+  color: var(--ink);
+}
+
+.my-work-hero .btn-primary:hover {
+  background: #f3f3f3;
+}
+
+.my-work-hero .btn-ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+.my-work-hero .btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.my-work-hero-times {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.my-work-time-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.my-work-time-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 600;
+}
+
+.my-work-time-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.my-work-time-divider {
+  width: 1px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.my-work-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.my-work-stat {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.my-work-stat-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  flex-shrink: 0;
+}
+
+.my-work-stat-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.my-work-stat-label {
+  display: block;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.my-work-stat-value {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.my-work-credits {
+  margin: 0;
+}
+
+.my-work-credit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.my-work-credit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, #fff 0%, var(--surface-soft) 100%);
+}
+
+.my-work-credit-value {
+  display: block;
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.my-work-credit-unit {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.my-work-leave-form {
+  margin: 0;
+}
+
+.my-work-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.my-work-form-full {
+  grid-column: 1 / -1;
+}
+
+.my-work-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 @media (max-width: 1100px) {
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -370,6 +765,12 @@ table.data-table tbody tr:hover {
   .grid-2,
   .grid-3 {
     grid-template-columns: 1fr;
+  }
+
+  .my-work-stats,
+  .my-work-credit-grid,
+  .my-work-split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -380,5 +781,39 @@ table.data-table tbody tr:hover {
 
   .page-title {
     font-size: 1.7rem;
+  }
+
+  .my-work {
+    gap: 14px;
+  }
+
+  .my-work-hero {
+    padding: 18px 16px;
+  }
+
+  .my-work-hero-times {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .my-work-time-divider {
+    width: 100%;
+    height: 1px;
+  }
+
+  .my-work-stats,
+  .my-work-credit-grid,
+  .my-work-split,
+  .my-work-form {
+    grid-template-columns: 1fr;
+  }
+
+  .my-work-hero-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .my-work-time-value {
+    font-size: 1.2rem;
   }
 }

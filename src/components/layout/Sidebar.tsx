@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import logo from '../../assets/logo-sidebar.png'
 import { useAuth } from '../../context/AuthContext'
-import { navSections } from '../../navigation'
+import { navForRole } from '../../navigation'
 
 type SidebarProps = {
   open: boolean
@@ -32,7 +32,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
       </div>
 
       <nav>
-        {navSections.map((section) => (
+        {navForRole(user?.role).map((section) => (
           <div className="nav-section" key={section.title}>
             <div className="nav-section-label">{section.title}</div>
             {section.items.map((item) => {
@@ -41,7 +41,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
                 <NavLink
                   key={item.path}
                   to={item.path}
-                  end={item.path === '/'}
+                  end={item.path === '/' || item.path === '/portal'}
                   className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                   onClick={onNavigate}
                 >

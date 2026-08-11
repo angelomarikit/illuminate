@@ -5,6 +5,7 @@ import coverMobile from '../assets/cover-mobile.png'
 import facebook from '../assets/facebook.svg'
 import google from '../assets/google.svg'
 import { useAuth } from '../context/AuthContext'
+import { homePathForRole } from '../lib/roles'
 import { supabase } from '../lib/supabase'
 import './auth.css'
 
@@ -50,7 +51,7 @@ export function Register() {
       return
     }
 
-    navigate('/', { replace: true })
+    navigate(homePathForRole(result.user.role), { replace: true })
   }
 
   return (
@@ -61,8 +62,8 @@ export function Register() {
             <p className="auth-kicker">Illuminate Medical Aesthetics</p>
             <h1>Create Account</h1>
             <p>
-              Join the Illuminate clinic workspace. Register to access POS, bookings, inventory, and
-              client care tools.
+              Create a clinic Staff account for POS, bookings, inventory, and client care. Owner /
+              Admin roles are assigned by the clinic (not via public signup).
             </p>
           </div>
 

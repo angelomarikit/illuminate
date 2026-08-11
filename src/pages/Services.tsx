@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
-import { formatCurrency } from '../data/mock'
+import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import type { ServiceCategory, ServiceItem } from '../types'
 

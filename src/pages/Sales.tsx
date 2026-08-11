@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
-import { formatCurrency } from '../data/mock'
+import { formatCurrency } from '../lib/utils'
 import { useBranch } from '../context/BranchContext'
 import { supabase } from '../lib/supabase'
 import { downloadCsv, isUuid } from '../lib/utils'

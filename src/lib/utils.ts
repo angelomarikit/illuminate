@@ -4,6 +4,14 @@ export function isUuid(value: string) {
   )
 }
 
+export function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
 export function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number>>) {
   const escape = (value: string | number) => {
     const text = String(value ?? '')

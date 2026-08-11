@@ -7,7 +7,6 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { branches as mockBranches } from '../data/mock'
 import { supabase } from '../lib/supabase'
 import { isUuid } from '../lib/utils'
 import type { Branch } from '../types'
@@ -23,20 +22,11 @@ type BranchContextValue = {
   storeToggleSaving: boolean
 }
 
-const LOCAL_OPEN_KEY = 'illuminate-store-open'
-
 const BranchContext = createContext<BranchContextValue | null>(null)
 
-function withOpenDefaults(list: Branch[]): Branch[] {
-  return list.map((branch) => ({
-    ...branch,
-    isOpen: branch.isOpen ?? true,
-  }))
-}
-
 export function BranchProvider({ children }: { children: ReactNode }) {
-  const [list, setList] = useState<Branch[]>(() => withOpenDefaults(mockBranches))
-  const [branchId, setBranchId] = useState(mockBranches[0]?.id ?? '')
+  const [list, setList] = useState<Branch[]>([])
+  const [branchId, setBranchId] = useState('')
   const [loading, setLoading] = useState(true)
   const [storeToggleSaving, setStoreToggleSaving] = useState(false)
 
@@ -60,19 +50,8 @@ export function BranchProvider({ children }: { children: ReactNode }) {
         return next.find((b) => b.status === 'active')?.id ?? next[0].id
       })
     } else {
-      // Fallback mock branches — restore local open state if present
-      try {
-        const raw = localStorage.getItem(LOCAL_OPEN_KEY)
-        const map = raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
-        setList(
-          withOpenDefaults(mockBranches).map((b) => ({
-            ...b,
-            isOpen: map[b.id] ?? b.isOpen,
-          })),
-        )
-      } catch {
-        setList(withOpenDefaults(mockBranches))
-      }
+      setList([])
+      setBranchId('')
     }
 
     setLoading(false)
@@ -85,26 +64,18 @@ export function BranchProvider({ children }: { children: ReactNode }) {
   const setStoreOpen = useCallback(
     async (open: boolean) => {
       const currentId = branchId
+      if (!isUuid(currentId)) {
+        throw new Error('No branch selected. Add a branch in Settings or Supabase first.')
+      }
+
       setList((prev) => prev.map((b) => (b.id === currentId ? { ...b, isOpen: open } : b)))
       setStoreToggleSaving(true)
 
-      if (isUuid(currentId)) {
-        const { error } = await supabase.from('branches').update({ is_open: open }).eq('id', currentId)
-        if (error) {
-          // Revert on failure
-          setList((prev) => prev.map((b) => (b.id === currentId ? { ...b, isOpen: !open } : b)))
-          setStoreToggleSaving(false)
-          throw error
-        }
-      } else {
-        try {
-          const raw = localStorage.getItem(LOCAL_OPEN_KEY)
-          const map = raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
-          map[currentId] = open
-          localStorage.setItem(LOCAL_OPEN_KEY, JSON.stringify(map))
-        } catch {
-          // ignore local persistence errors
-        }
+      const { error } = await supabase.from('branches').update({ is_open: open }).eq('id', currentId)
+      if (error) {
+        setList((prev) => prev.map((b) => (b.id === currentId ? { ...b, isOpen: !open } : b)))
+        setStoreToggleSaving(false)
+        throw error
       }
 
       setStoreToggleSaving(false)

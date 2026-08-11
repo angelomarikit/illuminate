@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Search } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
-import { formatCurrency } from '../data/mock'
+import { formatCurrency } from '../lib/utils'
 import { useBranch } from '../context/BranchContext'
 import { supabase } from '../lib/supabase'
 import type { Customer } from '../types'

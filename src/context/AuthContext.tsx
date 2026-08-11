@@ -9,12 +9,13 @@ import {
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { type AppRole, normalizeRole } from '../lib/roles'
 
 export type AuthUser = {
   id: string
   name: string
   email: string
-  role: string
+  role: AppRole
   branchId?: string | null
 }
 
@@ -28,8 +29,13 @@ type AuthContextValue = {
   user: AuthUser | null
   isAuthenticated: boolean
   loading: boolean
-  login: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>
-  register: (input: RegisterInput) => Promise<{ ok: true } | { ok: false; error: string }>
+  login: (
+    email: string,
+    password: string,
+  ) => Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }>
+  register: (
+    input: RegisterInput,
+  ) => Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }>
   logout: () => Promise<void>
 }
 
@@ -38,19 +44,21 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 async function loadAuthUser(authUser: User): Promise<AuthUser> {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('full_name, role, branch_id')
+    .select('full_name, role, branch_id, email')
     .eq('id', authUser.id)
     .maybeSingle()
 
   return {
     id: authUser.id,
-    email: authUser.email ?? '',
+    email: profile?.email || authUser.email || '',
     name:
       profile?.full_name ||
       (authUser.user_metadata?.full_name as string | undefined) ||
       authUser.email?.split('@')[0] ||
       'Staff',
-    role: profile?.role || (authUser.user_metadata?.role as string | undefined) || 'Staff',
+    role: normalizeRole(
+      profile?.role || (authUser.user_metadata?.role as string | undefined) || 'Staff',
+    ),
     branchId: profile?.branch_id ?? null,
   }
 }
@@ -103,11 +111,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) {
           return { ok: false, error: error.message }
         }
-        if (data.user) {
-          const next = await loadAuthUser(data.user)
-          setUser(next)
+        if (!data.user) {
+          return { ok: false, error: 'Login failed. Please try again.' }
         }
-        return { ok: true }
+        const next = await loadAuthUser(data.user)
+        setUser(next)
+        return { ok: true, user: next }
       },
       async register({ name, email, password }) {
         if (password.length < 8) {
@@ -130,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         // If email confirmation is required, session may be null.
-        if (!data.session) {
+        if (!data.session || !data.user) {
           return {
             ok: false,
             error:
@@ -138,11 +147,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        if (data.user) {
-          const next = await loadAuthUser(data.user)
-          setUser(next)
-        }
-        return { ok: true }
+        const next = await loadAuthUser(data.user)
+        setUser(next)
+        return { ok: true, user: next }
       },
       async logout() {
         await supabase.auth.signOut()

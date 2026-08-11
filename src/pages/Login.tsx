@@ -5,6 +5,7 @@ import coverMobile from '../assets/cover-mobile.png'
 import facebook from '../assets/facebook.svg'
 import google from '../assets/google.svg'
 import { useAuth } from '../context/AuthContext'
+import { canAccessPath, homePathForRole } from '../lib/roles'
 import { supabase } from '../lib/supabase'
 import './auth.css'
 
@@ -57,7 +58,10 @@ export function Login() {
       setError(result.error)
       return
     }
-    navigate(from, { replace: true })
+    const destination = canAccessPath(result.user.role, from)
+      ? from
+      : homePathForRole(result.user.role)
+    navigate(destination, { replace: true })
   }
 
   return (
