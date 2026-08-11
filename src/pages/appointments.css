@@ -63,6 +63,12 @@
   border: 1px solid var(--ink);
 }
 
+.calendar-event.is-pending {
+  background: #fff8eb;
+  color: var(--ink);
+  border: 1px solid #e6c27a;
+}
+
 .calendar-event strong {
   font-size: 0.78rem;
 }

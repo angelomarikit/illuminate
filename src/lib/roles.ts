@@ -36,7 +36,7 @@ export function homePathForRole(role: string | null | undefined): string {
   const appRole = normalizeRole(role)
   if (appRole === 'Client') return '/portal'
   if (appRole === 'Staff') return '/pos'
-  return '/'
+  return '/dashboard'
 }
 
 /**
@@ -46,7 +46,7 @@ export function homePathForRole(role: string | null | undefined): string {
  * Client: portal only (Expo client app will reuse these routes/APIs).
  */
 const PATH_ROLES: Record<string, AppRole[]> = {
-  '/': ['Owner', 'Admin'],
+  '/dashboard': ['Owner', 'Admin'],
   '/pos': ['Owner', 'Admin', 'Staff'],
   '/sales': ['Owner', 'Admin', 'Staff'],
   '/appointments': ['Owner', 'Admin', 'Staff'],
@@ -58,6 +58,7 @@ const PATH_ROLES: Record<string, AppRole[]> = {
   '/inventory': ['Owner', 'Admin', 'Staff'],
   '/expenses': ['Owner', 'Admin', 'Staff'],
   '/staff': ['Owner', 'Admin'],
+  '/feedback': ['Owner', 'Admin'],
   '/my-work': ['Staff'],
   '/chat': ['Owner', 'Admin', 'Staff'],
   '/settings': ['Owner', 'Admin'],

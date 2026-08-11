@@ -1,9 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import cover from '../assets/cover.png'
-import coverMobile from '../assets/cover-mobile.png'
 import facebook from '../assets/facebook.svg'
 import google from '../assets/google.svg'
+import logo from '../assets/logo-transparent.png'
 import { useAuth } from '../context/AuthContext'
 import { canAccessPath, homePathForRole } from '../lib/roles'
 import { supabase } from '../lib/supabase'
@@ -13,7 +12,7 @@ export function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from ?? '/'
+  const from = (location.state as { from?: string } | null)?.from
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -58,28 +57,30 @@ export function Login() {
       setError(result.error)
       return
     }
-    const destination = canAccessPath(result.user.role, from)
-      ? from
-      : homePathForRole(result.user.role)
+    const destination =
+      from && canAccessPath(result.user.role, from)
+        ? from
+        : homePathForRole(result.user.role)
     navigate(destination, { replace: true })
   }
 
   return (
     <div className="auth-page">
-      <div className="auth-form-col">
-        <form className="auth-form" onSubmit={onSubmit}>
+      <div className="auth-shell">
+        <Link to="/" className="auth-brand" aria-label="Back to Illuminate home">
+          <img src={logo} alt="Illuminate" />
+        </Link>
+
+        <form className="auth-card" onSubmit={onSubmit}>
           <div className="auth-intro">
             <p className="auth-kicker">Illuminate Medical Aesthetics</p>
-            <h1>Welcome Back</h1>
-            <p>
-              Today is a new day for your clinic. Sign in to manage appointments, sales, and client
-              care.
-            </p>
+            <h1>Welcome back</h1>
+            <p>Sign in to manage appointments, sales, and client care.</p>
           </div>
 
           <div className="auth-fields">
             {error ? <p className="auth-error">{error}</p> : null}
-            {info ? <p className="auth-hint">{info}</p> : null}
+            {info ? <p className="auth-info">{info}</p> : null}
 
             <div className="auth-field">
               <label htmlFor="login-email">Email</label>
@@ -87,7 +88,7 @@ export function Login() {
                 id="login-email"
                 className="auth-input"
                 type="email"
-                placeholder="Example@email.com"
+                placeholder="you@clinic.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -101,7 +102,7 @@ export function Login() {
                 id="login-password"
                 className="auth-input"
                 type="password"
-                placeholder="at least 8 characters"
+                placeholder="At least 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -112,41 +113,39 @@ export function Login() {
 
             <div className="auth-row">
               <button type="button" className="auth-link" onClick={forgotPassword}>
-                Forgot Password?
+                Forgot password?
               </button>
             </div>
 
             <button className="auth-submit" type="submit" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? 'Signing in…' : 'Sign in'}
             </button>
-
-            <p className="auth-hint">Sign in with your Supabase clinic account.</p>
           </div>
 
           <div className="auth-social">
-            <div className="auth-divider">Or</div>
+            <div className="auth-divider">
+              <span>Or continue with</span>
+            </div>
             <button type="button" className="auth-social-btn" onClick={() => socialLogin('google')}>
-              <img src={google} alt="" width={28} height={28} />
-              Sign in with Google
+              <img src={google} alt="" width={20} height={20} />
+              Google
             </button>
-            <button type="button" className="auth-social-btn" onClick={() => socialLogin('facebook')}>
-              <img src={facebook} alt="" width={28} height={28} />
-              Sign in with Facebook
+            <button
+              type="button"
+              className="auth-social-btn"
+              onClick={() => socialLogin('facebook')}
+            >
+              <img src={facebook} alt="" width={20} height={20} />
+              Facebook
             </button>
           </div>
 
           <p className="auth-switch">
-            Don&apos;t have an account? <Link to="/register">Sign up</Link>
+            Don&apos;t have an account? <Link to="/register">Register</Link>
           </p>
-          <p className="auth-copy">© {new Date().getFullYear()} ILLUMINATE MEDICAL AESTHETICS</p>
         </form>
-      </div>
 
-      <div className="auth-art-col" aria-hidden="true">
-        <div className="auth-art-frame">
-          <img src={cover} alt="" className="auth-art auth-art-desktop" />
-          <img src={coverMobile} alt="" className="auth-art auth-art-mobile" />
-        </div>
+        <p className="auth-copy">© {new Date().getFullYear()} Illuminate Medical Aesthetics</p>
       </div>
     </div>
   )

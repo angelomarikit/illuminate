@@ -17,6 +17,7 @@ import {
   HeartPulse,
   LifeBuoy,
   UserRound,
+  Star,
 } from 'lucide-react'
 import { type AppRole, canAccessPath, normalizeRole } from './lib/roles'
 
@@ -36,7 +37,7 @@ export const navSections: NavSection[] = [
   {
     title: 'Main',
     items: [
-      { label: 'Dashboard', path: '/', icon: LayoutDashboard, roles: ['Owner', 'Admin'] },
+      { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Owner', 'Admin'] },
       { label: 'POS / Sales', path: '/pos', icon: ShoppingBag, roles: ['Owner', 'Admin', 'Staff'] },
       { label: 'Sales Proof', path: '/sales', icon: Receipt, roles: ['Owner', 'Admin', 'Staff'] },
       {
@@ -84,7 +85,10 @@ export const navSections: NavSection[] = [
   },
   {
     title: 'System',
-    items: [{ label: 'Settings', path: '/settings', icon: Settings, roles: ['Owner', 'Admin'] }],
+    items: [
+      { label: 'Feedback', path: '/feedback', icon: Star, roles: ['Owner', 'Admin'] },
+      { label: 'Settings', path: '/settings', icon: Settings, roles: ['Owner', 'Admin'] },
+    ],
   },
   {
     title: 'My Illuminate',

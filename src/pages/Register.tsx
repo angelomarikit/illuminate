@@ -1,9 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import cover from '../assets/cover.png'
-import coverMobile from '../assets/cover-mobile.png'
 import facebook from '../assets/facebook.svg'
 import google from '../assets/google.svg'
+import logo from '../assets/logo-transparent.png'
 import { useAuth } from '../context/AuthContext'
 import { homePathForRole } from '../lib/roles'
 import { supabase } from '../lib/supabase'
@@ -56,14 +55,17 @@ export function Register() {
 
   return (
     <div className="auth-page">
-      <div className="auth-form-col">
-        <form className="auth-form" onSubmit={onSubmit}>
+      <div className="auth-shell">
+        <Link to="/" className="auth-brand" aria-label="Back to Illuminate home">
+          <img src={logo} alt="Illuminate" />
+        </Link>
+
+        <form className="auth-card" onSubmit={onSubmit}>
           <div className="auth-intro">
             <p className="auth-kicker">Illuminate Medical Aesthetics</p>
-            <h1>Create Account</h1>
+            <h1>Create account</h1>
             <p>
-              Create a clinic Staff account for POS, bookings, inventory, and client care. Owner /
-              Admin roles are assigned by the clinic (not via public signup).
+              Register as Staff for clinic access. Owner and Admin roles are assigned by the clinic.
             </p>
           </div>
 
@@ -90,7 +92,7 @@ export function Register() {
                 id="reg-email"
                 className="auth-input"
                 type="email"
-                placeholder="Example@email.com"
+                placeholder="you@clinic.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -104,7 +106,7 @@ export function Register() {
                 id="reg-password"
                 className="auth-input"
                 type="password"
-                placeholder="at least 8 characters"
+                placeholder="At least 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -119,7 +121,7 @@ export function Register() {
                 id="reg-confirm"
                 className="auth-input"
                 type="password"
-                placeholder="re-enter password"
+                placeholder="Re-enter password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 required
@@ -129,38 +131,34 @@ export function Register() {
             </div>
 
             <button className="auth-submit" type="submit" disabled={loading}>
-              {loading ? 'Creating account...' : 'Sign up'}
+              {loading ? 'Creating account…' : 'Create account'}
             </button>
           </div>
 
           <div className="auth-social">
-            <div className="auth-divider">Or</div>
+            <div className="auth-divider">
+              <span>Or continue with</span>
+            </div>
             <button type="button" className="auth-social-btn" onClick={() => socialSignup('google')}>
-              <img src={google} alt="" width={28} height={28} />
-              Sign up with Google
+              <img src={google} alt="" width={20} height={20} />
+              Google
             </button>
             <button
               type="button"
               className="auth-social-btn"
               onClick={() => socialSignup('facebook')}
             >
-              <img src={facebook} alt="" width={28} height={28} />
-              Sign up with Facebook
+              <img src={facebook} alt="" width={20} height={20} />
+              Facebook
             </button>
           </div>
 
           <p className="auth-switch">
             Already have an account? <Link to="/login">Sign in</Link>
           </p>
-          <p className="auth-copy">© {new Date().getFullYear()} ILLUMINATE MEDICAL AESTHETICS</p>
         </form>
-      </div>
 
-      <div className="auth-art-col" aria-hidden="true">
-        <div className="auth-art-frame">
-          <img src={cover} alt="" className="auth-art auth-art-desktop" />
-          <img src={coverMobile} alt="" className="auth-art auth-art-mobile" />
-        </div>
+        <p className="auth-copy">© {new Date().getFullYear()} Illuminate Medical Aesthetics</p>
       </div>
     </div>
   )

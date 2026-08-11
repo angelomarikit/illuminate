@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Search } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { formatCurrency } from '../lib/utils'
 import { useBranch } from '../context/BranchContext'
@@ -23,6 +23,22 @@ type CustomerRow = {
   cash_in_balance: number | string
   visits: number
   last_visit: string | null
+  age: number | null
+  sex: string | null
+  address: string | null
+  medical_history: string | null
+  notes: string | null
+}
+
+type VisitRow = {
+  id: string
+  appointment_date: string
+  appointment_time: string
+  service_name: string
+  status: string
+  source: string | null
+  special_note: string | null
+  medical_history: string | null
 }
 
 function mapCustomer(row: CustomerRow): Customer {
@@ -37,6 +53,11 @@ function mapCustomer(row: CustomerRow): Customer {
     visits: row.visits ?? 0,
     lastVisit: row.last_visit ?? '—',
     branchId: row.branch_id ?? '',
+    age: row.age,
+    sex: row.sex ?? '',
+    address: row.address ?? '',
+    medicalHistory: row.medical_history ?? '',
+    notes: row.notes ?? '',
   }
 }
 
@@ -56,6 +77,14 @@ export function Customers() {
   const [showForm, setShowForm] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(emptyForm)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [visits, setVisits] = useState<VisitRow[]>([])
+  const [visitsLoading, setVisitsLoading] = useState(false)
+
+  const selected = useMemo(
+    () => rows.find((c) => c.id === selectedId) ?? null,
+    [rows, selectedId],
+  )
 
   const loadCustomers = useCallback(async () => {
     setLoading(true)
@@ -64,18 +93,22 @@ export function Customers() {
     let request = supabase
       .from('customers')
       .select(
-        'id, branch_id, full_name, phone, email, membership, points, cash_in_balance, visits, last_visit',
+        'id, branch_id, full_name, phone, email, membership, points, cash_in_balance, visits, last_visit, age, sex, address, medical_history, notes',
       )
       .order('full_name')
 
     if (branchId && isUuid(branchId)) {
-      request = request.eq('branch_id', branchId)
+      request = request.or(`branch_id.eq.${branchId},branch_id.is.null`)
     }
 
     const { data, error: fetchError } = await request
 
     if (fetchError) {
-      setError(fetchError.message)
+      setError(
+        fetchError.message.includes('age') || fetchError.message.includes('medical_history')
+          ? `${fetchError.message} — run supabase/fix_public_booking_flow.sql in Supabase.`
+          : fetchError.message,
+      )
       setRows([])
     } else {
       setRows((data as CustomerRow[] | null)?.map(mapCustomer) ?? [])
@@ -87,6 +120,52 @@ export function Customers() {
   useEffect(() => {
     loadCustomers()
   }, [loadCustomers])
+
+  useEffect(() => {
+    async function loadVisits() {
+      if (!selected) {
+        setVisits([])
+        return
+      }
+      setVisitsLoading(true)
+      let q = supabase
+        .from('appointments')
+        .select(
+          'id, appointment_date, appointment_time, service_name, status, source, special_note, medical_history',
+        )
+        .order('appointment_date', { ascending: false })
+        .order('appointment_time', { ascending: false })
+        .limit(20)
+
+      q = q.or(
+        [
+          `customer_id.eq.${selected.id}`,
+          selected.email ? `customer_email.ilike.${selected.email}` : null,
+          selected.phone ? `customer_phone.eq.${selected.phone}` : null,
+        ]
+          .filter(Boolean)
+          .join(','),
+      )
+
+      const { data, error: visitErr } = await q
+      if (visitErr) {
+        // Fallback: match by customer name if email/phone filters fail
+        const { data: byName } = await supabase
+          .from('appointments')
+          .select(
+            'id, appointment_date, appointment_time, service_name, status, source, special_note, medical_history',
+          )
+          .eq('customer_name', selected.name)
+          .order('appointment_date', { ascending: false })
+          .limit(20)
+        setVisits((byName as VisitRow[] | null) ?? [])
+      } else {
+        setVisits((data as VisitRow[] | null) ?? [])
+      }
+      setVisitsLoading(false)
+    }
+    loadVisits()
+  }, [selected])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -132,7 +211,7 @@ export function Customers() {
       <PageHeader
         kicker="CRM"
         title="Client Management"
-        subtitle="Profiles, visit history, membership tiers, loyalty points, and cash-in wallet balances."
+        subtitle="Profiles, website booking details, visit history, membership, points, and cash-in balances."
         actions={
           <button className="btn btn-primary" type="button" onClick={() => setShowForm((v) => !v)}>
             {showForm ? 'Cancel' : 'Add Client'}
@@ -223,54 +302,158 @@ export function Customers() {
         </div>
       </div>
 
-      <div className="panel">
-        <div className="panel-body">
-          {loading ? (
-            <div className="empty-state">Loading clients from Supabase...</div>
-          ) : filtered.length === 0 ? (
-            <div className="empty-state">
-              No clients yet for this branch. Click <strong>Add Client</strong> to create one.
-            </div>
-          ) : (
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Client</th>
-                    <th>Contact</th>
-                    <th>Membership</th>
-                    <th>Points</th>
-                    <th>Cash-in Wallet</th>
-                    <th>Visits</th>
-                    <th>Last Visit</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((client) => (
-                    <tr key={client.id}>
-                      <td>
-                        <strong>{client.name}</strong>
-                      </td>
-                      <td>
-                        <div>{client.phone || '—'}</div>
-                        <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
-                          {client.email || '—'}
-                        </div>
-                      </td>
-                      <td>
-                        <span className="badge badge-neutral">{client.membership}</span>
-                      </td>
-                      <td>{client.points}</td>
-                      <td>{formatCurrency(client.cashInBalance)}</td>
-                      <td>{client.visits}</td>
-                      <td>{client.lastVisit}</td>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: selected ? 'minmax(0, 1.2fr) minmax(280px, 0.9fr)' : '1fr',
+          gap: 16,
+          alignItems: 'start',
+        }}
+      >
+        <div className="panel">
+          <div className="panel-body">
+            {loading ? (
+              <div className="empty-state">Loading clients from Supabase...</div>
+            ) : filtered.length === 0 ? (
+              <div className="empty-state">
+                No clients yet for this branch. Website bookings create clients automatically —
+                or click <strong>Add Client</strong>.
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Client</th>
+                      <th>Contact</th>
+                      <th>Membership</th>
+                      <th>Points</th>
+                      <th>Cash-in Wallet</th>
+                      <th>Visits</th>
+                      <th>Last Visit</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {filtered.map((client) => (
+                      <tr
+                        key={client.id}
+                        onClick={() => setSelectedId(client.id)}
+                        style={{
+                          cursor: 'pointer',
+                          background:
+                            selectedId === client.id ? 'rgba(184, 149, 74, 0.08)' : undefined,
+                        }}
+                      >
+                        <td>
+                          <strong>{client.name}</strong>
+                          {client.sex || client.age ? (
+                            <div style={{ color: 'var(--muted)', fontSize: '0.78rem' }}>
+                              {[client.sex, client.age ? `${client.age}y` : ''].filter(Boolean).join(' · ')}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td>
+                          <div>{client.phone || '—'}</div>
+                          <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
+                            {client.email || '—'}
+                          </div>
+                        </td>
+                        <td>
+                          <span className="badge badge-neutral">{client.membership}</span>
+                        </td>
+                        <td>{client.points}</td>
+                        <td>{formatCurrency(client.cashInBalance)}</td>
+                        <td>{client.visits}</td>
+                        <td>{client.lastVisit}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
+
+        {selected ? (
+          <div className="panel">
+            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <h2 className="panel-title">{selected.name}</h2>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close details"
+                onClick={() => setSelectedId(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="panel-body" style={{ display: 'grid', gap: 14 }}>
+              <div>
+                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
+                  Profile from booking
+                </div>
+                <div style={{ display: 'grid', gap: 8, fontSize: '0.92rem' }}>
+                  <div>
+                    <strong>Email:</strong> {selected.email || '—'}
+                  </div>
+                  <div>
+                    <strong>Phone:</strong> {selected.phone || '—'}
+                  </div>
+                  <div>
+                    <strong>Age / Sex:</strong>{' '}
+                    {[selected.age ? `${selected.age}` : null, selected.sex || null]
+                      .filter(Boolean)
+                      .join(' · ') || '—'}
+                  </div>
+                  <div>
+                    <strong>Address:</strong> {selected.address || '—'}
+                  </div>
+                  <div>
+                    <strong>Medical history:</strong> {selected.medicalHistory || '—'}
+                  </div>
+                  <div>
+                    <strong>Notes / goals:</strong> {selected.notes || '—'}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+                  Appointments
+                </div>
+                {visitsLoading ? (
+                  <p style={{ color: 'var(--muted)', margin: 0 }}>Loading visits…</p>
+                ) : visits.length === 0 ? (
+                  <p style={{ color: 'var(--muted)', margin: 0 }}>No linked appointments yet.</p>
+                ) : (
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {visits.map((v) => (
+                      <div
+                        key={v.id}
+                        style={{
+                          padding: '10px 12px',
+                          border: '1px solid var(--line)',
+                          borderRadius: 12,
+                          background: 'var(--surface-muted, #fafafa)',
+                        }}
+                      >
+                        <strong>
+                          {v.appointment_date} · {String(v.appointment_time).slice(0, 5)}
+                        </strong>
+                        <div style={{ fontSize: '0.88rem' }}>{v.service_name}</div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: 4 }}>
+                          {v.status}
+                          {v.source === 'web' ? ' · website' : ''}
+                          {v.special_note ? ` · ${v.special_note}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )

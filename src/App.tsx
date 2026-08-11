@@ -6,6 +6,7 @@ import { GuestRoute } from './components/auth/GuestRoute'
 import { ProtectedRoute } from './components/auth/ProtectedRoute'
 import { RoleRoute } from './components/auth/RoleRoute'
 import { AppShell } from './components/layout/AppShell'
+import { Landing } from './pages/Landing'
 import { Dashboard } from './pages/Dashboard'
 import { POS } from './pages/POS'
 import { Sales } from './pages/Sales'
@@ -21,6 +22,7 @@ import { Staff } from './pages/Staff'
 import { MyWork } from './pages/MyWork'
 import { Chat } from './pages/Chat'
 import { Settings } from './pages/Settings'
+import { FeedbackAdmin } from './pages/FeedbackAdmin'
 import {
   ClientHome,
   ClientLoyalty,
@@ -40,6 +42,8 @@ export default function App() {
         <StaffSessionProvider>
           <BrowserRouter>
             <Routes>
+              <Route path="/" element={<Landing />} />
+
               <Route element={<GuestRoute />}>
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
@@ -48,7 +52,7 @@ export default function App() {
               <Route element={<ProtectedRoute />}>
                 <Route element={<RoleRoute />}>
                   <Route element={<AppShell />}>
-                    <Route index element={<Dashboard />} />
+                    <Route path="dashboard" element={<Dashboard />} />
                     <Route path="pos" element={<POS />} />
                     <Route path="sales" element={<Sales />} />
                     <Route path="appointments" element={<Appointments />} />
@@ -62,6 +66,7 @@ export default function App() {
                     <Route path="staff" element={<Staff />} />
                     <Route path="my-work" element={<MyWork />} />
                     <Route path="chat" element={<Chat />} />
+                    <Route path="feedback" element={<FeedbackAdmin />} />
                     <Route path="settings" element={<Settings />} />
 
                     <Route path="portal" element={<ClientHome />} />

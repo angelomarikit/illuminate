@@ -49,9 +49,22 @@ export type Customer = {
   lastVisit: string
   membership: 'Standard' | 'Glow' | 'Luxe'
   branchId: string
+  age?: number | null
+  sex?: string
+  address?: string
+  medicalHistory?: string
+  notes?: string
 }
 
-export type AppointmentStatus = 'confirmed' | 'checked-in' | 'in-progress' | 'completed' | 'cancelled' | 'walk-in'
+export type AppointmentStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'declined'
+  | 'checked-in'
+  | 'in-progress'
+  | 'completed'
+  | 'cancelled'
+  | 'walk-in'
 
 export type Appointment = {
   id: string
@@ -64,6 +77,14 @@ export type Appointment = {
   status: AppointmentStatus
   branchId: string
   type: 'appointment' | 'walk-in'
+  customerEmail?: string
+  customerPhone?: string
+  customerAge?: number | null
+  customerSex?: string
+  customerAddress?: string
+  medicalHistory?: string
+  specialNote?: string
+  source?: string
 }
 
 export type SaleRecord = {

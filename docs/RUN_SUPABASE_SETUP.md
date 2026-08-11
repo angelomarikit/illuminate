@@ -43,6 +43,9 @@ After setup.sql, also run (in order):
 1. `supabase/add_roles.sql`
 2. `supabase/add_staff_hr.sql`
 3. `supabase/add_profiles_hr.sql` (registered accounts + HR fields; clears demo staff/chat)
+4. `supabase/add_public_booking.sql` (landing page booking → appointments approvals)
+5. `supabase/fix_public_booking_flow.sql` (website booking RPC + customer profile sync)
+6. `supabase/add_client_feedback.sql` (landing feedback slider; Owner/Admin manage in app)
 
 Then promote your owner account (see `docs/ROLES.md`).
 

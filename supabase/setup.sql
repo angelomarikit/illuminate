@@ -80,6 +80,14 @@ create table if not exists public.appointments (
   duration_min integer not null default 60,
   status text not null default 'confirmed',
   type text not null default 'appointment' check (type in ('appointment', 'walk-in')),
+  customer_email text,
+  customer_phone text,
+  customer_age integer,
+  customer_sex text,
+  customer_address text,
+  medical_history text,
+  special_note text,
+  source text not null default 'clinic',
   created_at timestamptz not null default now()
 );
 
@@ -182,6 +190,9 @@ create table if not exists public.clinic_settings (
   earn_rate text not null default '1 point per ₱10 spent',
   redeem_rate text not null default '1 point = ₱10 service credit',
   cash_in_rule text not null default 'Enabled for all memberships',
+  promo_bar_text text default 'New clients: enjoy complimentary skin analysis with your first facial this month.',
+  promo_bar_active boolean not null default true,
+  promo_bar_link text default '#book',
   updated_at timestamptz not null default now()
 );
 
