@@ -43,9 +43,18 @@ After setup.sql, also run (in order):
 1. `supabase/add_roles.sql`
 2. `supabase/add_staff_hr.sql`
 3. `supabase/add_profiles_hr.sql` (registered accounts + HR fields; clears demo staff/chat)
-4. `supabase/add_public_booking.sql` (landing page booking → appointments approvals)
-5. `supabase/fix_public_booking_flow.sql` (website booking RPC + customer profile sync)
-6. `supabase/add_client_feedback.sql` (landing feedback slider; Owner/Admin manage in app)
+4. `supabase/add_store_open.sql` (branch open/closed toggle column)
+5. `supabase/add_public_booking.sql` (landing page booking → appointments approvals)
+6. `supabase/fix_public_booking_flow.sql` (website booking RPC + customer profile sync)
+7. `supabase/add_client_feedback.sql` (landing feedback slider; Owner/Admin manage in app)
+8. `supabase/add_delete_account.sql` (Owner/Admin delete accounts from Staff & Attendance)
+9. `supabase/add_client_sessions.sql` (doctor-advised session packages from POS + Client Sessions page)
+10. `supabase/add_pos_attribution.sql` (discount, doctor notes, administered/consult/sales by + care comments)
+11. `supabase/add_customer_birthday.sql` (birthday on customers + public booking RPC)
+12. `supabase/add_hr_role.sql` (HR role + payroll / incentive tables)
+13. `supabase/add_account_self_view.sql` (each account can view own salary & incentives)
+14. `supabase/add_membership_subscription.sql` (VIP ₱5,000 / VVIP ₱10,000 POS products + membership expiry)
+15. `supabase/add_inventory_role.sql` (Inventory Specialist role + stocktake / receiving / reorder + service links)
 
 Then promote your owner account (see `docs/ROLES.md`).
 

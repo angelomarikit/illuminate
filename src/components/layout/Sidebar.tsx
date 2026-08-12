@@ -41,7 +41,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
                 <NavLink
                   key={item.path}
                   to={item.path}
-                  end={item.path === '/dashboard' || item.path === '/portal'}
+                  end
                   className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                   onClick={onNavigate}
                 >

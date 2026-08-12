@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { MembershipBadge } from '../../components/MembershipBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { useAuth } from '../../context/AuthContext'
 import { useLinkedCustomer } from '../../hooks/useLinkedCustomer'
@@ -77,7 +78,17 @@ export function ClientHome() {
         </div>
         <div className="stat-card">
           <span>Membership</span>
-          <strong>{customer?.membership ?? '—'}</strong>
+          <strong style={{ display: 'block', marginTop: 6 }}>
+            {customer ? (
+              <MembershipBadge
+                membership={customer.membership}
+                expiresAt={customer.membership_expires_at}
+                showExpiry
+              />
+            ) : (
+              '—'
+            )}
+          </strong>
         </div>
         <div className="stat-card">
           <span>Visits</span>
@@ -416,7 +427,15 @@ export function ClientSettings() {
               </div>
               <div>
                 <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>Membership</div>
-                <strong>{customer?.membership ?? '—'}</strong>
+                {customer ? (
+                  <MembershipBadge
+                    membership={customer.membership}
+                    expiresAt={customer.membership_expires_at}
+                    showExpiry
+                  />
+                ) : (
+                  <strong>—</strong>
+                )}
               </div>
             </div>
           )}

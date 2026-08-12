@@ -1,15 +1,29 @@
-export type AppRole = 'Owner' | 'Admin' | 'Staff' | 'Client'
+export type AppRole = 'Owner' | 'Admin' | 'Staff' | 'HR' | 'Inventory' | 'Client'
 
-/** Clinic operators (web admin + Expo staff app later). */
+/** Front-desk / clinical operators (POS and clinic tools). */
 export const CLINIC_ROLES: AppRole[] = ['Owner', 'Admin', 'Staff']
 
-/** Full approval / HR / dashboard responsibility. */
+/** Payroll, incentives, staff accounts & attendance. */
+export const HR_ACCESS_ROLES: AppRole[] = ['Owner', 'Admin', 'HR']
+
+/** Stock catalog, stocktake, receiving, reorder. */
+export const INVENTORY_ACCESS_ROLES: AppRole[] = ['Owner', 'Admin', 'Inventory']
+
+/** Anyone who uses the internal app shell (not Client portal). */
+export const INTERNAL_ROLES: AppRole[] = ['Owner', 'Admin', 'Staff', 'HR', 'Inventory']
+
+/** Full approval / settings / dashboard. */
 export const ELEVATED_ROLES: AppRole[] = ['Owner', 'Admin']
 
 const ROLE_ALIASES: Record<string, AppRole> = {
   owner: 'Owner',
   admin: 'Admin',
   staff: 'Staff',
+  hr: 'HR',
+  'human resources': 'HR',
+  inventory: 'Inventory',
+  'inventory specialist': 'Inventory',
+  'inventory specialists': 'Inventory',
   client: 'Client',
   customer: 'Client',
   member: 'Client',
@@ -28,6 +42,18 @@ export function isClinicRole(role: string | null | undefined): boolean {
   return CLINIC_ROLES.includes(normalizeRole(role))
 }
 
+export function isHrAccessRole(role: string | null | undefined): boolean {
+  return HR_ACCESS_ROLES.includes(normalizeRole(role))
+}
+
+export function isInventoryAccessRole(role: string | null | undefined): boolean {
+  return INVENTORY_ACCESS_ROLES.includes(normalizeRole(role))
+}
+
+export function isInternalRole(role: string | null | undefined): boolean {
+  return INTERNAL_ROLES.includes(normalizeRole(role))
+}
+
 export function isClientRole(role: string | null | undefined): boolean {
   return normalizeRole(role) === 'Client'
 }
@@ -36,30 +62,41 @@ export function homePathForRole(role: string | null | undefined): string {
   const appRole = normalizeRole(role)
   if (appRole === 'Client') return '/portal'
   if (appRole === 'Staff') return '/pos'
+  if (appRole === 'HR') return '/payroll'
+  if (appRole === 'Inventory') return '/inventory'
   return '/dashboard'
 }
 
 /**
  * Path access matrix.
- * Owner/Admin: everything.
- * Staff: clinic operations (no Owner dashboard / HR approvals / full settings).
- * Client: portal only (Expo client app will reuse these routes/APIs).
+ * Owner/Admin: full clinic + HR + inventory + system.
+ * Staff: clinic operations (no dashboard / HR / inventory / settings).
+ * HR: payroll, incentives, staff & attendance only.
+ * Inventory: stock catalog, stocktake, receiving, reorder (+ account).
+ * Client: portal only.
  */
 const PATH_ROLES: Record<string, AppRole[]> = {
   '/dashboard': ['Owner', 'Admin'],
   '/pos': ['Owner', 'Admin', 'Staff'],
   '/sales': ['Owner', 'Admin', 'Staff'],
+  '/sessions': ['Owner', 'Admin', 'Staff'],
   '/appointments': ['Owner', 'Admin', 'Staff'],
   '/customers': ['Owner', 'Admin', 'Staff'],
   '/consultations': ['Owner', 'Admin', 'Staff'],
   '/services': ['Owner', 'Admin', 'Staff'],
   '/loyalty': ['Owner', 'Admin', 'Staff'],
   '/qr-checkin': ['Owner', 'Admin', 'Staff'],
-  '/inventory': ['Owner', 'Admin', 'Staff'],
+  '/inventory': ['Owner', 'Admin', 'Inventory'],
+  '/inventory/stocktake': ['Owner', 'Admin', 'Inventory'],
+  '/inventory/receiving': ['Owner', 'Admin', 'Inventory'],
+  '/inventory/reorder': ['Owner', 'Admin', 'Inventory'],
   '/expenses': ['Owner', 'Admin', 'Staff'],
-  '/staff': ['Owner', 'Admin'],
+  '/staff': ['Owner', 'Admin', 'HR'],
+  '/payroll': ['Owner', 'Admin', 'HR'],
+  '/incentives': ['Owner', 'Admin', 'HR'],
   '/feedback': ['Owner', 'Admin'],
   '/my-work': ['Staff'],
+  '/my-account': ['Owner', 'Admin', 'Staff', 'HR', 'Inventory'],
   '/chat': ['Owner', 'Admin', 'Staff'],
   '/settings': ['Owner', 'Admin'],
   '/portal': ['Client'],
@@ -73,6 +110,7 @@ export function rolesForPath(pathname: string): AppRole[] | null {
   const clean = pathname.replace(/\/+$/, '') || '/'
   if (PATH_ROLES[clean]) return PATH_ROLES[clean]
   if (clean.startsWith('/portal')) return ['Client']
+  if (clean.startsWith('/inventory')) return INVENTORY_ACCESS_ROLES
   return null
 }
 

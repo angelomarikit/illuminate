@@ -17,10 +17,14 @@ type Row = {
   payment_method: string
   points_used: number
   staff_name: string | null
+  sales_by: string | null
+  discount_amount?: number | string | null
   sold_at: string
 }
 
-function mapRow(row: Row): SaleRecord {
+type SaleView = SaleRecord & { salesBy: string; discountAmount: number }
+
+function mapRow(row: Row): SaleView {
   return {
     id: row.id,
     receiptNo: row.receipt_no,
@@ -32,12 +36,14 @@ function mapRow(row: Row): SaleRecord {
     date: new Date(row.sold_at).toLocaleString(),
     staffName: row.staff_name ?? '',
     branchId: row.branch_id ?? '',
+    salesBy: row.sales_by ?? '',
+    discountAmount: Number(row.discount_amount ?? 0),
   }
 }
 
 export function Sales() {
   const { branchId } = useBranch()
-  const [rows, setRows] = useState<SaleRecord[]>([])
+  const [rows, setRows] = useState<SaleView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -62,15 +68,17 @@ export function Sales() {
   function exportCsv() {
     downloadCsv(
       `illuminate-sales-${new Date().toISOString().slice(0, 10)}.csv`,
-      ['Receipt', 'Date', 'Client', 'Items', 'Total', 'Payment', 'Points Used', 'Staff'],
+      ['Receipt', 'Date', 'Client', 'Items', 'Total', 'Discount', 'Payment', 'Points Used', 'Sales by', 'Logged staff'],
       rows.map((s) => [
         s.receiptNo,
         s.date,
         s.customerName,
         s.items,
         s.total,
+        s.discountAmount,
         s.paymentMethod,
         s.pointsUsed,
+        s.salesBy,
         s.staffName,
       ]),
     )
@@ -109,8 +117,9 @@ export function Sales() {
                     <th>Client</th>
                     <th>Items</th>
                     <th>Total</th>
+                    <th>Discount</th>
                     <th>Payment</th>
-                    <th>Points Used</th>
+                    <th>Sales by</th>
                     <th>Staff</th>
                   </tr>
                 </thead>
@@ -125,9 +134,14 @@ export function Sales() {
                       <td>{sale.items}</td>
                       <td>{formatCurrency(sale.total)}</td>
                       <td>
+                        {sale.discountAmount > 0
+                          ? formatCurrency(sale.discountAmount)
+                          : '—'}
+                      </td>
+                      <td>
                         <span className="badge">{sale.paymentMethod}</span>
                       </td>
-                      <td>{sale.pointsUsed || '—'}</td>
+                      <td>{sale.salesBy || '—'}</td>
                       <td>{sale.staffName || '—'}</td>
                     </tr>
                   ))}

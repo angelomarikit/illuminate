@@ -1,8 +1,24 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Mail, MessageCircle, Phone, X } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react'
+import { ChevronLeft, ChevronRight, Mail, MessageCircle, Phone, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useBranch } from '../context/BranchContext'
+import {
+  addDays,
+  buildMonthCells,
+  formatShortDate,
+  inDateRange,
+  parseLocalISODate,
+  startOfMonth,
+  toLocalISODate,
+} from '../lib/dates'
 import { supabase } from '../lib/supabase'
 import { isUuid } from '../lib/utils'
 import type { Appointment, AppointmentStatus } from '../types'
@@ -10,13 +26,12 @@ import './appointments.css'
 
 const hours = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
 
-function weekDays() {
-  const start = new Date()
-  start.setHours(0, 0, 0, 0)
-  return Array.from({ length: 5 }, (_, i) => {
-    const d = new Date(start)
-    d.setDate(start.getDate() + i)
-    const key = d.toISOString().slice(0, 10)
+type BoardMode = 'day' | 'week' | 'month'
+
+function boardDaysFrom(startIso: string, count: number) {
+  return Array.from({ length: count }, (_, i) => {
+    const key = addDays(startIso, i)
+    const d = parseLocalISODate(key)
     const label = d.toLocaleDateString('en-PH', { weekday: 'short', day: 'numeric' })
     return { key, label }
   })
@@ -70,7 +85,7 @@ const emptyForm = {
   customerName: '',
   serviceName: '',
   staffName: '',
-  date: new Date().toISOString().slice(0, 10),
+  date: toLocalISODate(),
   time: '10:00',
   durationMin: '60',
 }
@@ -118,7 +133,18 @@ export function Appointments() {
   const [message, setMessage] = useState('')
   const [decision, setDecision] = useState<DecisionModal | null>(null)
   const [decisionSaving, setDecisionSaving] = useState(false)
-  const days = useMemo(() => weekDays(), [])
+  const [boardMode, setBoardMode] = useState<BoardMode>('week')
+  const [focusDate, setFocusDate] = useState(toLocalISODate)
+  const [monthCursor, setMonthCursor] = useState(() => startOfMonth(new Date()))
+  const [rangeFrom, setRangeFrom] = useState('')
+  const [rangeTo, setRangeTo] = useState('')
+
+  const boardDays = useMemo(() => {
+    if (boardMode === 'day') return boardDaysFrom(focusDate, 1)
+    return boardDaysFrom(focusDate, 7)
+  }, [boardMode, focusDate])
+
+  const monthCells = useMemo(() => buildMonthCells(monthCursor), [monthCursor])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -131,6 +157,8 @@ export function Appointments() {
     if (isUuid(branchId)) {
       q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
     }
+    if (rangeFrom) q = q.gte('appointment_date', rangeFrom)
+    if (rangeTo) q = q.lte('appointment_date', rangeTo)
     const { data, error: err } = await q
     if (err) setError(err.message)
     else {
@@ -138,7 +166,7 @@ export function Appointments() {
       setRows((data as Row[] | null)?.map(mapRow) ?? [])
     }
     setLoading(false)
-  }, [branchId])
+  }, [branchId, rangeFrom, rangeTo])
 
   useEffect(() => {
     load()
@@ -160,12 +188,45 @@ export function Appointments() {
   const pending = useMemo(() => rows.filter((a) => a.status === 'pending'), [rows])
 
   const filtered = useMemo(() => {
-    if (filter === 'pending') return pending
-    return rows.filter((a) => {
-      if (filter === 'all') return a.status !== 'pending'
-      return a.type === filter && a.status !== 'pending'
-    })
-  }, [rows, filter, pending])
+    const base =
+      filter === 'pending'
+        ? pending
+        : rows.filter((a) => {
+            if (filter === 'all') return a.status !== 'pending'
+            return a.type === filter && a.status !== 'pending'
+          })
+    return base.filter((a) => inDateRange(a.date, rangeFrom, rangeTo))
+  }, [rows, filter, pending, rangeFrom, rangeTo])
+
+  const boardAppointments = useMemo(
+    () =>
+      rows.filter(
+        (a) => a.status !== 'declined' && a.status !== 'cancelled' && inDateRange(a.date, rangeFrom, rangeTo),
+      ),
+    [rows, rangeFrom, rangeTo],
+  )
+
+  const countByDay = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const a of boardAppointments) {
+      map.set(a.date, (map.get(a.date) ?? 0) + 1)
+    }
+    return map
+  }, [boardAppointments])
+
+  function shiftBoard(delta: number) {
+    if (boardMode === 'month') {
+      setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1))
+      return
+    }
+    setFocusDate((d) => addDays(d, boardMode === 'day' ? delta : delta * 7))
+  }
+
+  function goToday() {
+    const today = toLocalISODate()
+    setFocusDate(today)
+    setMonthCursor(startOfMonth(new Date()))
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -250,7 +311,7 @@ export function Appointments() {
 
     const { data, error: insErr } = await supabase
       .from('customers')
-      .insert({ ...payload, membership: 'Standard', points: 0, cash_in_balance: 0, visits: 0 })
+      .insert({ ...payload, membership: 'Regular', points: 0, cash_in_balance: 0, visits: 0 })
       .select('id')
       .single()
     if (insErr) throw insErr
@@ -496,73 +557,219 @@ export function Appointments() {
         </div>
       ) : null}
 
-      <div className="chips" style={{ marginBottom: 16 }}>
-        {(['all', 'pending', 'appointment', 'walk-in'] as const).map((item) => (
-          <button
-            key={item}
-            className={`chip ${filter === item ? 'active' : ''}`}
-            onClick={() => setFilter(item)}
-            type="button"
-          >
-            {item === 'all'
-              ? 'Scheduled'
-              : item === 'pending'
-                ? `Pending (${pending.length})`
-                : item === 'walk-in'
-                  ? 'Walk-in'
-                  : 'Appointments'}
-          </button>
-        ))}
+      <div className="appt-toolbar">
+        <div className="chips" style={{ marginBottom: 0 }}>
+          {(['all', 'pending', 'appointment', 'walk-in'] as const).map((item) => (
+            <button
+              key={item}
+              className={`chip ${filter === item ? 'active' : ''}`}
+              onClick={() => setFilter(item)}
+              type="button"
+            >
+              {item === 'all'
+                ? 'Scheduled'
+                : item === 'pending'
+                  ? `Pending (${pending.length})`
+                  : item === 'walk-in'
+                    ? 'Walk-in'
+                    : 'Appointments'}
+            </button>
+          ))}
+        </div>
+        <div className="appt-range">
+          <div className="field" style={{ margin: 0 }}>
+            <label>From</label>
+            <input
+              className="input"
+              type="date"
+              value={rangeFrom}
+              onChange={(e) => setRangeFrom(e.target.value)}
+            />
+          </div>
+          <div className="field" style={{ margin: 0 }}>
+            <label>To</label>
+            <input
+              className="input"
+              type="date"
+              value={rangeTo}
+              min={rangeFrom || undefined}
+              onChange={(e) => setRangeTo(e.target.value)}
+            />
+          </div>
+          {rangeFrom || rangeTo ? (
+            <button
+              className="btn btn-ghost btn-sm"
+              type="button"
+              style={{ alignSelf: 'end' }}
+              onClick={() => {
+                setRangeFrom('')
+                setRangeTo('')
+              }}
+            >
+              Clear range
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="panel" style={{ marginBottom: 16 }}>
-        <div className="panel-header">
-          <h2 className="panel-title">Week Board</h2>
+        <div className="panel-header appt-board-header">
+          <h2 className="panel-title">
+            {boardMode === 'day'
+              ? 'Daily board'
+              : boardMode === 'month'
+                ? 'Month board'
+                : 'Week board'}
+          </h2>
+          <div className="appt-board-controls">
+            <div className="chips" style={{ margin: 0 }}>
+              {(['day', 'week', 'month'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`chip ${boardMode === mode ? 'active' : ''}`}
+                  onClick={() => {
+                    setBoardMode(mode)
+                    if (mode === 'month') {
+                      setMonthCursor(startOfMonth(parseLocalISODate(focusDate)))
+                    }
+                  }}
+                >
+                  {mode === 'day' ? 'Day' : mode === 'week' ? 'Week' : 'Month'}
+                </button>
+              ))}
+            </div>
+            <div className="appt-board-nav">
+              <button className="btn-icon" type="button" aria-label="Previous" onClick={() => shiftBoard(-1)}>
+                <ChevronLeft size={16} />
+              </button>
+              {boardMode === 'day' ? (
+                <input
+                  className="input appt-focus-date"
+                  type="date"
+                  value={focusDate}
+                  onChange={(e) => setFocusDate(e.target.value || toLocalISODate())}
+                />
+              ) : (
+                <strong className="appt-board-label">
+                  {boardMode === 'month'
+                    ? monthCursor.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
+                    : `${formatShortDate(boardDays[0]?.key || focusDate)} – ${formatShortDate(
+                        boardDays[boardDays.length - 1]?.key || focusDate,
+                      )}`}
+                </strong>
+              )}
+              <button className="btn-icon" type="button" aria-label="Next" onClick={() => shiftBoard(1)}>
+                <ChevronRight size={16} />
+              </button>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={goToday}>
+                Today
+              </button>
+            </div>
+          </div>
         </div>
         <div className="panel-body calendar-wrap">
-          <div className="calendar-grid">
-            <div className="calendar-corner" />
-            {days.map((day) => (
-              <div className="calendar-day-head" key={day.key}>
-                {day.label}
+          {boardMode === 'month' ? (
+            <div className="month-board">
+              <div className="month-board-head">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                  <div key={d}>{d}</div>
+                ))}
               </div>
-            ))}
-            {hours.map((hour) => (
-              <div className="calendar-row" key={hour}>
-                <div className="calendar-hour">{hour}</div>
-                {days.map((day) => {
-                  const slot = rows.find(
-                    (a) =>
-                      a.date === day.key &&
-                      a.time === hour &&
-                      a.status !== 'declined' &&
-                      a.status !== 'cancelled',
-                  )
+              <div className="month-board-grid">
+                {monthCells.map((cell) => {
+                  if (!cell.date) {
+                    return <div className="month-board-cell is-empty" key={cell.key} />
+                  }
+                  const count = countByDay.get(cell.key) ?? 0
+                  const isFocus = cell.key === focusDate
+                  const isToday = cell.key === toLocalISODate()
+                  const inRange = inDateRange(cell.key, rangeFrom, rangeTo)
                   return (
-                    <div className="calendar-cell" key={`${day.key}-${hour}`}>
-                      {slot ? (
-                        <div
-                          className={`calendar-event ${slot.type} ${
-                            slot.status === 'pending' ? 'is-pending' : ''
-                          }`}
-                        >
-                          <strong>{slot.customerName}</strong>
-                          <span>{slot.serviceName}</span>
-                          <em>{slot.status}</em>
-                        </div>
-                      ) : null}
-                    </div>
+                    <button
+                      type="button"
+                      key={cell.key}
+                      className={`month-board-cell ${isFocus ? 'is-focus' : ''} ${
+                        isToday ? 'is-today' : ''
+                      } ${rangeFrom || rangeTo ? (inRange ? 'in-range' : 'out-range') : ''}`}
+                      onClick={() => {
+                        setFocusDate(cell.key)
+                        setBoardMode('day')
+                      }}
+                    >
+                      <span className="month-board-day">{cell.date.getDate()}</span>
+                      {count > 0 ? (
+                        <span className="month-board-count">
+                          {count} booking{count === 1 ? '' : 's'}
+                        </span>
+                      ) : (
+                        <span className="month-board-count is-muted">—</span>
+                      )}
+                    </button>
                   )
                 })}
               </div>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div
+              className={`calendar-grid ${boardMode === 'day' ? 'is-day' : 'is-week'}`}
+              style={{ '--cal-cols': boardDays.length } as CSSProperties}
+            >
+              <div className="calendar-corner" />
+              {boardDays.map((day) => (
+                <button
+                  type="button"
+                  className={`calendar-day-head is-clickable ${
+                    day.key === focusDate ? 'is-focus' : ''
+                  }`}
+                  key={day.key}
+                  onClick={() => {
+                    setFocusDate(day.key)
+                    setBoardMode('day')
+                  }}
+                >
+                  {day.label}
+                </button>
+              ))}
+              {hours.map((hour) => (
+                <div className="calendar-row" key={hour}>
+                  <div className="calendar-hour">{hour}</div>
+                  {boardDays.map((day) => {
+                    const slots = boardAppointments.filter(
+                      (a) => a.date === day.key && a.time === hour,
+                    )
+                    return (
+                      <div className="calendar-cell" key={`${day.key}-${hour}`}>
+                        {slots.map((slot) => (
+                          <div
+                            key={slot.id}
+                            className={`calendar-event ${slot.type} ${
+                              slot.status === 'pending' ? 'is-pending' : ''
+                            }`}
+                          >
+                            <strong>{slot.customerName}</strong>
+                            <span>{slot.serviceName}</span>
+                            <em>{slot.status}</em>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="panel">
         <div className="panel-header">
-          <h2 className="panel-title">Booking List</h2>
+          <h2 className="panel-title">
+            Booking List
+            {rangeFrom || rangeTo
+              ? ` · ${rangeFrom || '…'} → ${rangeTo || '…'}`
+              : ''}
+          </h2>
         </div>
         <div className="panel-body">
           {loading ? (

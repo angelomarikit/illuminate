@@ -174,12 +174,24 @@ const emptyForm = {
   fullName: '',
   email: '',
   phone: '',
+  birthday: '',
   age: '',
   sex: '',
   address: '',
   serviceName: '',
   medicalHistory: '',
   specialNote: '',
+}
+
+function ageFromBirthday(iso: string): string {
+  if (!iso) return ''
+  const born = new Date(`${iso}T12:00:00`)
+  if (Number.isNaN(born.getTime())) return ''
+  const today = new Date()
+  let years = today.getFullYear() - born.getFullYear()
+  const monthDiff = today.getMonth() - born.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < born.getDate())) years -= 1
+  return years >= 0 && years <= 120 ? String(years) : ''
 }
 
 function toKey(d: Date) {
@@ -384,16 +396,26 @@ export function Landing() {
       setError('Please choose a date and time.')
       return
     }
+    const email = form.email.trim().toLowerCase()
+    const phone = form.phone.trim()
+    if (!email || !phone) {
+      setError('Email address and phone number are required.')
+      return
+    }
     setSaving(true)
     setError('')
 
     const duration = services.find((s) => s.name === form.serviceName)?.duration_min || 60
 
+    const birthday = form.birthday || null
+    const ageNum = form.age ? Number(form.age) : Number(ageFromBirthday(birthday || ''))
+    const age = Number.isFinite(ageNum) && ageNum > 0 ? ageNum : null
+
     const { error: err } = await supabase.rpc('submit_public_booking', {
       p_full_name: form.fullName.trim(),
-      p_email: form.email.trim().toLowerCase(),
-      p_phone: form.phone.trim(),
-      p_age: form.age ? Number(form.age) : null,
+      p_email: email,
+      p_phone: phone,
+      p_age: age && !Number.isNaN(age) ? age : null,
       p_sex: form.sex || null,
       p_address: form.address.trim() || null,
       p_service_name: form.serviceName.trim(),
@@ -402,13 +424,17 @@ export function Landing() {
       p_appointment_date: selectedDate,
       p_appointment_time: selectedTime,
       p_duration_min: duration,
+      p_birthday: birthday,
     })
 
     setSaving(false)
     if (err) {
       setError(
-        err.message.includes('function') || err.message.includes('schema cache')
-          ? `${err.message} — run supabase/fix_public_booking_flow.sql in Supabase.`
+        err.message.includes('p_birthday') ||
+          err.message.includes('birthday') ||
+          err.message.includes('function') ||
+          err.message.includes('schema cache')
+          ? `${err.message} — run supabase/add_customer_birthday.sql in Supabase.`
           : err.message.includes('policy')
             ? `${err.message} — run supabase/add_public_booking.sql then fix_public_booking_flow.sql.`
             : err.message,
@@ -644,51 +670,91 @@ export function Landing() {
               <form className="landing-form" onSubmit={submitBooking}>
                 {error ? <p className="landing-error">{error}</p> : null}
 
+                <p className="landing-req-note">
+                  Fields marked with <span className="req" aria-hidden="true">*</span> are required.
+                </p>
+
                 <div className="landing-field">
-                  <label htmlFor="bk-name">Full name</label>
+                  <label htmlFor="bk-name">
+                    Full name <span className="req" aria-hidden="true">*</span>
+                  </label>
                   <input
                     id="bk-name"
                     required
+                    aria-required="true"
                     value={form.fullName}
                     onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
                   />
                 </div>
                 <div className="landing-field">
-                  <label htmlFor="bk-email">Email</label>
+                  <label htmlFor="bk-email">
+                    Email <span className="req" aria-hidden="true">*</span>
+                  </label>
                   <input
                     id="bk-email"
                     type="email"
                     required
+                    aria-required="true"
                     value={form.email}
                     onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                   />
                 </div>
                 <div className="landing-field">
-                  <label htmlFor="bk-phone">Phone</label>
+                  <label htmlFor="bk-phone">
+                    Phone <span className="req" aria-hidden="true">*</span>
+                  </label>
                   <input
                     id="bk-phone"
                     required
+                    aria-required="true"
                     value={form.phone}
                     onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
                   />
                 </div>
                 <div className="landing-field">
-                  <label htmlFor="bk-age">Age</label>
+                  <label htmlFor="bk-birthday">
+                    Birthday <span className="req" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="bk-birthday"
+                    type="date"
+                    required
+                    aria-required="true"
+                    max={new Date().toISOString().slice(0, 10)}
+                    value={form.birthday}
+                    onChange={(e) => {
+                      const birthday = e.target.value
+                      setForm((f) => ({
+                        ...f,
+                        birthday,
+                        age: ageFromBirthday(birthday) || f.age,
+                      }))
+                    }}
+                  />
+                </div>
+                <div className="landing-field">
+                  <label htmlFor="bk-age">
+                    Age <span className="req" aria-hidden="true">*</span>
+                  </label>
                   <input
                     id="bk-age"
                     type="number"
                     min={1}
                     max={120}
                     required
+                    aria-required="true"
                     value={form.age}
                     onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))}
                   />
                 </div>
                 <div className="landing-field">
-                  <label htmlFor="bk-sex">Sex</label>
+                  <label htmlFor="bk-sex">
+                    Sex <span className="req" aria-hidden="true">*</span>
+                  </label>
                   <select
                     id="bk-sex"
                     required
+                    aria-required="true"
                     value={form.sex}
                     onChange={(e) => setForm((f) => ({ ...f, sex: e.target.value }))}
                   >
@@ -699,19 +765,25 @@ export function Landing() {
                   </select>
                 </div>
                 <div className="landing-field landing-field-full">
-                  <label htmlFor="bk-address">Address</label>
+                  <label htmlFor="bk-address">
+                    Address <span className="req" aria-hidden="true">*</span>
+                  </label>
                   <input
                     id="bk-address"
                     required
+                    aria-required="true"
                     value={form.address}
                     onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
                   />
                 </div>
                 <div className="landing-field landing-field-full">
-                  <label htmlFor="bk-service">Service</label>
+                  <label htmlFor="bk-service">
+                    Service <span className="req" aria-hidden="true">*</span>
+                  </label>
                   <select
                     id="bk-service"
                     required
+                    aria-required="true"
                     value={form.serviceName}
                     onChange={(e) => setForm((f) => ({ ...f, serviceName: e.target.value }))}
                   >

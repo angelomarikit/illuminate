@@ -1,51 +1,22 @@
--- Illuminate — Fix public booking → appointments + customers
+-- Illuminate — Customer birthday (booking + CRM)
 -- Run in Supabase → SQL Editor (safe to re-run)
--- Requires: add_public_booking.sql (columns) and setup.sql
+-- Requires: fix_public_booking_flow.sql (submit_public_booking)
 
--- 1) Link appointments to CRM customers + store booking profile on customers
+alter table public.customers
+  add column if not exists birthday date;
+
 alter table public.appointments
-  add column if not exists customer_id uuid references public.customers (id) on delete set null;
+  add column if not exists customer_birthday date;
 
-alter table public.customers add column if not exists age integer;
-alter table public.customers add column if not exists sex text;
-alter table public.customers add column if not exists address text;
-alter table public.customers add column if not exists medical_history text;
-alter table public.customers add column if not exists notes text;
+-- Replace public booking RPC to accept birthday (drops prior signature)
+drop function if exists public.submit_public_booking(
+  text, text, text, integer, text, text, text, text, text, date, time, integer
+);
 
-create index if not exists appointments_customer_id_idx
-  on public.appointments (customer_id);
+drop function if exists public.submit_public_booking(
+  text, text, text, integer, text, text, text, text, text, date, time, integer, date
+);
 
-create index if not exists customers_email_idx
-  on public.customers (lower(email));
-
-create index if not exists customers_phone_idx
-  on public.customers (phone);
-
--- 2) Ensure anon can insert pending web bookings (policy + grants)
-grant select, insert on public.appointments to anon;
-grant select on public.services to anon;
-grant select on public.clinic_settings to anon;
-
-drop policy if exists "anon_insert_booking_requests" on public.appointments;
-create policy "anon_insert_booking_requests"
-  on public.appointments for insert to anon
-  with check (
-    status = 'pending'
-    and type = 'appointment'
-    and coalesce(source, 'web') = 'web'
-  );
-
--- Authenticated visitors on the landing page can also submit web bookings
-drop policy if exists "auth_insert_web_booking_requests" on public.appointments;
-create policy "auth_insert_web_booking_requests"
-  on public.appointments for insert to authenticated
-  with check (
-    status = 'pending'
-    and type = 'appointment'
-    and coalesce(source, 'web') = 'web'
-  );
-
--- 3) Atomic public booking: upsert customer + create pending appointment
 create or replace function public.submit_public_booking(
   p_full_name text,
   p_email text,
@@ -58,7 +29,8 @@ create or replace function public.submit_public_booking(
   p_special_note text,
   p_appointment_date date,
   p_appointment_time time,
-  p_duration_min integer default 60
+  p_duration_min integer default 60,
+  p_birthday date default null
 )
 returns uuid
 language plpgsql
@@ -73,15 +45,26 @@ declare
   v_phone text := nullif(trim(p_phone), '');
   v_name text := trim(p_full_name);
   v_service text := trim(p_service_name);
+  v_age integer := p_age;
 begin
   if v_name is null or v_name = '' then
     raise exception 'Full name is required';
+  end if;
+  if v_email is null then
+    raise exception 'Email address is required';
+  end if;
+  if v_phone is null then
+    raise exception 'Phone number is required';
   end if;
   if v_service is null or v_service = '' then
     raise exception 'Service is required';
   end if;
   if p_appointment_date is null or p_appointment_time is null then
     raise exception 'Date and time are required';
+  end if;
+
+  if v_age is null and p_birthday is not null then
+    v_age := date_part('year', age(current_date, p_birthday))::integer;
   end if;
 
   select id into v_branch_id
@@ -121,6 +104,7 @@ begin
       email,
       membership,
       age,
+      birthday,
       sex,
       address,
       medical_history,
@@ -132,7 +116,8 @@ begin
       v_phone,
       v_email,
       'Regular',
-      p_age,
+      v_age,
+      p_birthday,
       nullif(trim(coalesce(p_sex, '')), ''),
       nullif(trim(coalesce(p_address, '')), ''),
       nullif(trim(coalesce(p_medical_history, '')), ''),
@@ -147,7 +132,8 @@ begin
       phone = coalesce(v_phone, phone),
       email = coalesce(v_email, email),
       branch_id = coalesce(branch_id, v_branch_id),
-      age = coalesce(p_age, age),
+      age = coalesce(v_age, age),
+      birthday = coalesce(p_birthday, birthday),
       sex = coalesce(nullif(trim(coalesce(p_sex, '')), ''), sex),
       address = coalesce(nullif(trim(coalesce(p_address, '')), ''), address),
       medical_history = coalesce(nullif(trim(coalesce(p_medical_history, '')), ''), medical_history),
@@ -163,6 +149,7 @@ begin
     customer_email,
     customer_phone,
     customer_age,
+    customer_birthday,
     customer_sex,
     customer_address,
     service_name,
@@ -180,7 +167,8 @@ begin
     v_name,
     v_email,
     v_phone,
-    p_age,
+    v_age,
+    p_birthday,
     nullif(trim(coalesce(p_sex, '')), ''),
     nullif(trim(coalesce(p_address, '')), ''),
     v_service,
@@ -200,26 +188,9 @@ end;
 $$;
 
 revoke all on function public.submit_public_booking(
-  text, text, text, integer, text, text, text, text, text, date, time, integer
+  text, text, text, integer, text, text, text, text, text, date, time, integer, date
 ) from public;
+
 grant execute on function public.submit_public_booking(
-  text, text, text, integer, text, text, text, text, text, date, time, integer
+  text, text, text, integer, text, text, text, text, text, date, time, integer, date
 ) to anon, authenticated;
-
--- Keep slot helper in sync
-create or replace function public.list_booked_slots(from_date date, to_date date)
-returns table (appointment_date date, appointment_time time)
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select a.appointment_date, a.appointment_time
-  from public.appointments a
-  where a.appointment_date between from_date and to_date
-    and a.status not in ('cancelled', 'declined', 'completed')
-  order by a.appointment_date, a.appointment_time;
-$$;
-
-revoke all on function public.list_booked_slots(date, date) from public;
-grant execute on function public.list_booked_slots(date, date) to anon, authenticated;

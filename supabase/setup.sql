@@ -35,7 +35,7 @@ create table if not exists public.customers (
   full_name text not null,
   phone text,
   email text,
-  membership text not null default 'Standard',
+  membership text not null default 'Regular',
   points integer not null default 0,
   cash_in_balance numeric(12,2) not null default 0,
   visits integer not null default 0,

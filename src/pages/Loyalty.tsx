@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
+import { normalizeMembership } from '../lib/membership'
 import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import type { Customer, LoyaltyTxn } from '../types'
@@ -37,7 +39,8 @@ export function Loyalty() {
         cashInBalance: Number(row.cash_in_balance ?? 0),
         visits: row.visits ?? 0,
         lastVisit: row.last_visit ?? '—',
-        membership: (row.membership as Customer['membership']) || 'Standard',
+        membership: normalizeMembership(row.membership),
+        membershipExpiresAt: row.membership_expires_at ?? null,
         branchId: row.branch_id ?? '',
       })) ?? []
 
@@ -278,7 +281,10 @@ export function Loyalty() {
                     <tr key={client.id}>
                       <td>{client.name}</td>
                       <td>
-                        <span className="badge badge-neutral">{client.membership}</span>
+                        <MembershipBadge
+                          membership={client.membership}
+                          expiresAt={client.membershipExpiresAt}
+                        />
                       </td>
                       <td>{client.points}</td>
                       <td>{formatCurrency(client.cashInBalance)}</td>

@@ -152,7 +152,15 @@ export function Services() {
                     setForm((f) => ({ ...f, category: e.target.value as ServiceCategory }))
                   }
                 >
-                  {['Facials', 'Injectables', 'Laser', 'Body', 'Skincare', 'Packages'].map((c) => (
+                  {[
+                    'Facials',
+                    'Injectables',
+                    'Laser',
+                    'Body',
+                    'Skincare',
+                    'Packages',
+                    'Membership',
+                  ].map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>

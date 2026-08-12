@@ -18,6 +18,13 @@ import {
   LifeBuoy,
   UserRound,
   Star,
+  CalendarCheck2,
+  Banknote,
+  BadgePercent,
+  CircleUserRound,
+  ClipboardCheck,
+  PackagePlus,
+  RefreshCw,
 } from 'lucide-react'
 import { type AppRole, canAccessPath, normalizeRole } from './lib/roles'
 
@@ -33,6 +40,8 @@ export type NavSection = {
   items: NavItem[]
 }
 
+const INV: AppRole[] = ['Owner', 'Admin', 'Inventory']
+
 export const navSections: NavSection[] = [
   {
     title: 'Main',
@@ -40,6 +49,12 @@ export const navSections: NavSection[] = [
       { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Owner', 'Admin'] },
       { label: 'POS / Sales', path: '/pos', icon: ShoppingBag, roles: ['Owner', 'Admin', 'Staff'] },
       { label: 'Sales Proof', path: '/sales', icon: Receipt, roles: ['Owner', 'Admin', 'Staff'] },
+      {
+        label: 'Client Sessions',
+        path: '/sessions',
+        icon: CalendarCheck2,
+        roles: ['Owner', 'Admin', 'Staff'],
+      },
       {
         label: 'Appointments',
         path: '/appointments',
@@ -64,16 +79,18 @@ export const navSections: NavSection[] = [
     ],
   },
   {
+    title: 'Inventory',
+    items: [
+      { label: 'Stock catalog', path: '/inventory', icon: Package, roles: INV },
+      { label: 'Stocktake', path: '/inventory/stocktake', icon: ClipboardCheck, roles: INV },
+      { label: 'Receiving', path: '/inventory/receiving', icon: PackagePlus, roles: INV },
+      { label: 'Reorder', path: '/inventory/reorder', icon: RefreshCw, roles: INV },
+    ],
+  },
+  {
     title: 'Operations',
     items: [
-      { label: 'Inventory', path: '/inventory', icon: Package, roles: ['Owner', 'Admin', 'Staff'] },
       { label: 'Expenses', path: '/expenses', icon: Wallet, roles: ['Owner', 'Admin', 'Staff'] },
-      {
-        label: 'Staff & Attendance',
-        path: '/staff',
-        icon: Clock3,
-        roles: ['Owner', 'Admin'],
-      },
       {
         label: 'My Work',
         path: '/my-work',
@@ -84,10 +101,44 @@ export const navSections: NavSection[] = [
     ],
   },
   {
+    title: 'HR',
+    items: [
+      {
+        label: 'Staff & Attendance',
+        path: '/staff',
+        icon: Clock3,
+        roles: ['Owner', 'Admin', 'HR'],
+      },
+      {
+        label: 'Payroll',
+        path: '/payroll',
+        icon: Banknote,
+        roles: ['Owner', 'Admin', 'HR'],
+      },
+      {
+        label: 'Incentives',
+        path: '/incentives',
+        icon: BadgePercent,
+        roles: ['Owner', 'Admin', 'HR'],
+      },
+    ],
+  },
+  {
+    title: 'My account',
+    items: [
+      {
+        label: 'Account settings',
+        path: '/my-account',
+        icon: CircleUserRound,
+        roles: ['Owner', 'Admin', 'Staff', 'HR', 'Inventory'],
+      },
+    ],
+  },
+  {
     title: 'System',
     items: [
       { label: 'Feedback', path: '/feedback', icon: Star, roles: ['Owner', 'Admin'] },
-      { label: 'Settings', path: '/settings', icon: Settings, roles: ['Owner', 'Admin'] },
+      { label: 'Clinic settings', path: '/settings', icon: Settings, roles: ['Owner', 'Admin'] },
     ],
   },
   {

@@ -1,9 +1,28 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { Trash2, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
+import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
 import { supabase } from '../lib/supabase'
 import type { Branch } from '../types'
+
+const BRANCH_NULL_TABLES = [
+  'profiles',
+  'customers',
+  'inventory_items',
+  'appointments',
+  'sales',
+  'expenses',
+  'consultations',
+  'staff',
+  'client_session_packages',
+  'payroll_entries',
+  'incentive_payouts',
+  'inventory_receipts',
+  'inventory_stocktakes',
+  'inventory_reorder_requests',
+] as const
 
 type SettingsRow = {
   brand_name: string
@@ -16,8 +35,8 @@ type SettingsRow = {
 }
 
 export function Settings() {
-  const { branches: contextBranches } = useBranch()
-  const [branches, setBranches] = useState<Branch[]>(contextBranches)
+  const { user } = useAuth()
+  const { branches, branchId, setBranchId, reloadBranches } = useBranch()
   const [profile, setProfile] = useState({
     brandName: 'Illuminate Medical Aesthetics',
     supportEmail: 'hello@illuminatemedical.ph',
@@ -38,12 +57,17 @@ export function Settings() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteError, setDeleteError] = useState('')
+  const [deleteSaving, setDeleteSaving] = useState(false)
 
   const load = useCallback(async () => {
-    const [{ data: settings }, { data: branchRows }] = await Promise.all([
-      supabase.from('clinic_settings').select('*').eq('id', 1).maybeSingle(),
-      supabase.from('branches').select('*').order('name'),
-    ])
+    const { data: settings } = await supabase
+      .from('clinic_settings')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle()
 
     if (settings) {
       const s = settings as SettingsRow
@@ -60,18 +84,8 @@ export function Settings() {
       })
     }
 
-    if (branchRows?.length) {
-      setBranches(
-        branchRows.map((b) => ({
-          id: b.id,
-          name: b.name,
-          address: b.address ?? '',
-          status: b.status as Branch['status'],
-          isOpen: b.is_open !== false,
-        })),
-      )
-    }
-  }, [])
+    await reloadBranches()
+  }, [reloadBranches])
 
   useEffect(() => {
     load()
@@ -126,8 +140,81 @@ export function Settings() {
     }
     setBranchForm({ name: '', address: '', status: 'active' })
     setShowBranchForm(false)
-    setMessage('Branch added. Refresh if it does not appear in the top bar yet.')
-    await load()
+    setMessage('Branch added.')
+    await reloadBranches()
+  }
+
+  function openDeleteBranch(branch: Branch) {
+    setError('')
+    setMessage('')
+    setDeleteError('')
+    setDeletePassword('')
+    setDeleteTarget(branch)
+  }
+
+  function closeDeleteModal() {
+    if (deleteSaving) return
+    setDeleteTarget(null)
+    setDeletePassword('')
+    setDeleteError('')
+  }
+
+  async function confirmDeleteBranch(e: FormEvent) {
+    e.preventDefault()
+    if (!deleteTarget || !user?.email) {
+      setDeleteError('You must be signed in to delete a branch.')
+      return
+    }
+    if (!deletePassword.trim()) {
+      setDeleteError('Enter your password to confirm.')
+      return
+    }
+    if (branches.length <= 1) {
+      setDeleteError('You cannot delete the last remaining branch.')
+      return
+    }
+
+    setDeleteSaving(true)
+    setDeleteError('')
+
+    const { error: authErr } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: deletePassword,
+    })
+    if (authErr) {
+      setDeleteSaving(false)
+      setDeleteError('Incorrect password. Branch was not deleted.')
+      return
+    }
+
+    const targetId = deleteTarget.id
+
+    // Clear branch references so delete is not blocked by foreign keys
+    for (const table of BRANCH_NULL_TABLES) {
+      await supabase.from(table).update({ branch_id: null }).eq('branch_id', targetId)
+    }
+
+    const { error: delErr } = await supabase.from('branches').delete().eq('id', targetId)
+    setDeleteSaving(false)
+
+    if (delErr) {
+      setDeleteError(
+        delErr.message.includes('foreign key') || delErr.message.includes('violates')
+          ? `${delErr.message} — reassign or clear related records for this branch first.`
+          : delErr.message,
+      )
+      return
+    }
+
+    if (branchId === targetId) {
+      const next = branches.find((b) => b.id !== targetId)
+      if (next) setBranchId(next.id)
+    }
+
+    setDeleteTarget(null)
+    setDeletePassword('')
+    setMessage(`Branch “${deleteTarget.name}” deleted.`)
+    await reloadBranches()
   }
 
   return (
@@ -200,7 +287,9 @@ export function Settings() {
                   <tr>
                     <th>Branch</th>
                     <th>Address</th>
-                    <th>Status</th>
+                    <th>Store</th>
+                    <th>Branch status</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -212,18 +301,45 @@ export function Settings() {
                       <td>{branch.address}</td>
                       <td>
                         <span
+                          className={`badge ${branch.isOpen ? 'badge-success' : 'badge-danger'}`}
+                        >
+                          {branch.isOpen ? 'Open' : 'Closed'}
+                        </span>
+                      </td>
+                      <td>
+                        <span
                           className={`badge ${
-                            branch.status === 'active' ? 'badge-success' : 'badge-warning'
+                            branch.status === 'active' ? 'badge-neutral' : 'badge-warning'
                           }`}
                         >
-                          {branch.status}
+                          {branch.status === 'coming-soon' ? 'Coming soon' : 'Active'}
                         </span>
+                      </td>
+                      <td>
+                        <button
+                          className="btn-icon"
+                          type="button"
+                          aria-label={`Delete ${branch.name}`}
+                          title={
+                            branches.length <= 1
+                              ? 'Cannot delete the last branch'
+                              : `Delete ${branch.name}`
+                          }
+                          disabled={branches.length <= 1}
+                          onClick={() => openDeleteBranch(branch)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            <p className="muted" style={{ marginTop: 10, fontSize: '0.82rem' }}>
+              Store Open/Closed matches the top bar toggle for each branch. Deleting a branch requires
+              your account password.
+            </p>
             <button
               className="btn btn-ghost"
               style={{ marginTop: 14 }}
@@ -334,6 +450,97 @@ export function Settings() {
           </div>
         </div>
       </div>
+
+      {deleteTarget ? (
+        <div
+          className="confirm-modal-overlay"
+          role="presentation"
+          onClick={closeDeleteModal}
+        >
+          <form
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-branch-title"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={confirmDeleteBranch}
+          >
+            <div className="confirm-modal-header">
+              <div>
+                <p className="confirm-modal-kicker">Delete branch</p>
+                <h2 id="delete-branch-title" className="confirm-modal-title">
+                  Remove {deleteTarget.name}?
+                </h2>
+              </div>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close"
+                onClick={closeDeleteModal}
+                disabled={deleteSaving}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="confirm-modal-body">
+              <p className="confirm-modal-text">
+                This permanently deletes the branch. Related records will be unassigned from this
+                branch. Enter your password to continue.
+              </p>
+              <div className="confirm-modal-meta">
+                <div>
+                  <span className="confirm-modal-label">Branch</span>
+                  <strong>{deleteTarget.name}</strong>
+                </div>
+                <div>
+                  <span className="confirm-modal-label">Address</span>
+                  <strong>{deleteTarget.address || '—'}</strong>
+                </div>
+              </div>
+              <div className="field" style={{ marginTop: 14 }}>
+                <label htmlFor="delete-branch-password">Your password</label>
+                <input
+                  id="delete-branch-password"
+                  className="input"
+                  type="password"
+                  autoComplete="current-password"
+                  autoFocus
+                  required
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  placeholder="Enter password to confirm"
+                  disabled={deleteSaving}
+                />
+              </div>
+              {deleteError ? (
+                <p style={{ color: 'var(--danger)', margin: '10px 0 0', fontSize: '0.9rem' }}>
+                  {deleteError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="confirm-modal-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={closeDeleteModal}
+                disabled={deleteSaving}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="submit"
+                disabled={deleteSaving || !deletePassword.trim()}
+                style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}
+              >
+                {deleteSaving ? 'Deleting…' : 'Delete branch'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   )
 }

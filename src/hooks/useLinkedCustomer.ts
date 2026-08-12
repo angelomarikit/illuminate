@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { normalizeMembership } from '../lib/membership'
 import { supabase } from '../lib/supabase'
 
 export type LinkedCustomer = {
@@ -8,11 +9,23 @@ export type LinkedCustomer = {
   email: string | null
   phone: string | null
   membership: string
+  membership_expires_at: string | null
   points: number
   cash_in_balance: number
   visits: number
   last_visit: string | null
 }
+
+function mapLinked(row: LinkedCustomer): LinkedCustomer {
+  return {
+    ...row,
+    membership: normalizeMembership(row.membership),
+    membership_expires_at: row.membership_expires_at ?? null,
+  }
+}
+
+const CUSTOMER_SELECT =
+  'id, full_name, email, phone, membership, membership_expires_at, points, cash_in_balance, visits, last_visit'
 
 export function useLinkedCustomer() {
   const { user } = useAuth()
@@ -34,16 +47,14 @@ export function useLinkedCustomer() {
       setLoading(true)
       const byUser = await supabase
         .from('customers')
-        .select(
-          'id, full_name, email, phone, membership, points, cash_in_balance, visits, last_visit',
-        )
+        .select(CUSTOMER_SELECT)
         .eq('user_id', user.id)
         .maybeSingle()
 
       if (!mounted) return
 
       if (byUser.data) {
-        setCustomer(byUser.data as LinkedCustomer)
+        setCustomer(mapLinked(byUser.data as LinkedCustomer))
         setLoading(false)
         return
       }
@@ -51,14 +62,12 @@ export function useLinkedCustomer() {
       if (user.email) {
         const byEmail = await supabase
           .from('customers')
-          .select(
-            'id, full_name, email, phone, membership, points, cash_in_balance, visits, last_visit',
-          )
+          .select(CUSTOMER_SELECT)
           .ilike('email', user.email)
           .maybeSingle()
 
         if (!mounted) return
-        setCustomer((byEmail.data as LinkedCustomer | null) ?? null)
+        setCustomer(byEmail.data ? mapLinked(byEmail.data as LinkedCustomer) : null)
       } else {
         setCustomer(null)
       }

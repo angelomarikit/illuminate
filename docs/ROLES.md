@@ -1,4 +1,4 @@
-# Illuminate roles (Owner / Admin / Staff / Client)
+# Illuminate roles (Owner / Admin / Staff / HR / Inventory / Client)
 
 This guide sets up app permissions without breaking your current clinic web app. The same model is ready for Expo / React Native later.
 
@@ -6,9 +6,11 @@ This guide sets up app permissions without breaking your current clinic web app.
 
 | Role | Who | Access |
 |------|-----|--------|
-| **Owner** | Business owner | Full app: dashboard, approvals (leaves / attendance), staff HR fields, settings, everything Staff can do |
-| **Admin** | Trusted manager | Same elevated access as Owner (approvals + settings + dashboard) |
-| **Staff** | Front desk / therapists | Day-to-day ops: POS, sales, appointments, customers, services, inventory, expenses, consultations, loyalty, QR, chat, store open/close |
+| **Owner** | Business owner | Full app: dashboard, clinic tools, HR, inventory, settings |
+| **Admin** | Trusted manager | Same elevated access as Owner (clinic + HR + inventory + settings + dashboard) |
+| **Staff** | Front desk / therapists | Day-to-day ops: POS, sales, appointments, customers, services, expenses, consultations, loyalty, QR, chat, store open/close (**no inventory**) |
+| **HR** | Human resources | **HR section only:** Staff & Attendance, Payroll, Incentives. No dashboard, POS, clients, or clinic ops |
+| **Inventory** | Inventory Specialist | **Inventory section only:** Stock catalog, Stocktake, Receiving, Reorder (+ service supply links). Also available to Owner/Admin |
 | **Client** | Patient / member | Portal only: my services, loyalty points, support chat, profile settings |
 
 **Important:** `profiles.role` is the app permission. `staff.role` is only a job title (e.g. Reception). Do not mix them.
@@ -24,7 +26,7 @@ This guide sets up app permissions without breaking your current clinic web app.
 
 That script will:
 
-- constrain `profiles.role` to `Owner | Admin | Staff | Client`
+- constrain `profiles.role` to `Owner | Admin | Staff | Client` (run `add_hr_role.sql` later to add **HR**)
 - add `customers.user_id` (link login → CRM customer for web + mobile)
 - add optional `staff.employment_status` + `staff.profile_id` for Owner HR later
 - create helpers: `current_app_role()`, `is_owner_or_admin()`, `is_clinic_user()`, `is_client_user()`
@@ -55,6 +57,30 @@ where id = (
   where email = 'manager@clinic.com'
 );
 ```
+
+Promote HR (after `supabase/add_hr_role.sql`):
+
+```sql
+update public.profiles
+set role = 'HR'
+where id = (
+  select id from auth.users
+  where email = 'hr@clinic.com'
+);
+```
+
+Promote Inventory Specialist (after `supabase/add_inventory_role.sql`):
+
+```sql
+update public.profiles
+set role = 'Inventory'
+where id = (
+  select id from auth.users
+  where email = 'inventory@clinic.com'
+);
+```
+
+Or change the role from **Staff & Attendance** (Owner/Admin only) → select **HR** or **Inventory Specialist**.
 
 Then **log out and log back in** (or refresh) so the web app reloads `profiles.role`.
 
@@ -110,8 +136,9 @@ Client portal pages use `customers.user_id` first, then fall back to email match
 - Sidebar menu filters by role
 - Routes redirect if the role cannot open that page
 - Homes:
-  - Owner/Admin → `/` (Dashboard)
+  - Owner/Admin → `/dashboard`
   - Staff → `/pos`
+  - HR → `/payroll`
   - Client → `/portal`
 - Store toggle + branch selector + Open POS show for clinic roles only
 - Client portal routes:
@@ -150,12 +177,35 @@ Run after roles SQL:
 1. `supabase/add_staff_hr.sql`
 2. `supabase/add_profiles_hr.sql`
 
-Then in **Staff & Attendance** (Owner/Admin):
+Then in **Staff & Attendance** (Owner/Admin/**HR**):
 
 1. All registered accounts appear automatically (email, name, employment, duty, leave credits, **role**)
-2. Change **Role** to control which pages they can open (Owner / Admin / Staff / Client)
-3. Set employment + leave credits
-4. Approve leave requests (credits deduct on approve)
+2. Change **Role** (Owner/Admin only) — Owner / Admin / **HR** / Staff / Client
+3. Set employment + leave credits; approve leave; **manual time in/out**
+4. **Delete account** (Owner/Admin only) — requires `supabase/add_delete_account.sql`
+
+### HR payroll & incentives
+
+Run `supabase/add_hr_role.sql`, then open:
+
+| Page | Path | What it does |
+|------|------|----------------|
+| Staff & Attendance | `/staff` | Accounts, leave, clock records, manual attendance |
+| Payroll | `/payroll` | Compensation rates, attendance drafts, manual pay entries |
+| Incentives | `/incentives` | Rules + commission from POS **Sales by**, product incentives, manual payouts |
+
+HR users only see the **HR** sidebar section (not Dashboard / POS / Clients / etc.).
+
+### Personal account settings (all internal roles)
+
+Every Owner / Admin / Staff / HR login has **Account settings** (`/my-account`) — separate from clinic **Settings**:
+
+- Own profile (name, email, role, employment, duty)
+- Own salary / compensation (set by HR under Payroll)
+- Own payroll entries + incentive payouts
+- Active clinic incentive rules (read-only)
+
+Requires `supabase/add_account_self_view.sql` so employees can read their own rows.
 
 Staff-only: **My Work** + topbar Time In / Time Out.
 
@@ -174,4 +224,5 @@ Staff-only: **My Work** + topbar Time In / Time Out.
 2. Set your user to `Owner`
 3. Log in → see Dashboard + Staff & Attendance + Settings
 4. Create a second user, leave as `Staff` → no Dashboard / Staff / Settings; has POS + store toggle
-5. Create a Client, link `customers.user_id` → only portal menu
+5. Promote a user to `HR` → only Staff & Attendance, Payroll, Incentives
+6. Create a Client, link `customers.user_id` → only portal menu

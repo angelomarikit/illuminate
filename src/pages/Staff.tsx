@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { Trash2, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
-import { type AppRole, normalizeRole } from '../lib/roles'
+import { useAuth } from '../context/AuthContext'
+import { type AppRole, isElevatedRole, normalizeRole } from '../lib/roles'
 import {
   type DutyStatus,
   type EmploymentStatus,
@@ -54,13 +55,18 @@ type RoleChangePending = {
 }
 
 const ROLE_ACCESS: Record<AppRole, string> = {
-  Owner: 'Full access — dashboard, HR approvals, settings, and all clinic tools.',
-  Admin: 'Elevated access — dashboard, HR approvals, settings, and all clinic tools.',
-  Staff: 'Clinic operations — POS, bookings, inventory, expenses, chat, and My Work.',
+  Owner: 'Full access — dashboard, clinic tools, HR, inventory, and settings.',
+  Admin: 'Elevated access — dashboard, clinic tools, HR, inventory, and settings.',
+  Staff: 'Clinic operations — POS, bookings, expenses, chat, and My Work (no inventory).',
+  HR: 'HR only — Staff & Attendance, Payroll, and Incentives (no POS, clients, or dashboard).',
+  Inventory:
+    'Inventory Specialist — stock catalog, stocktake, receiving, reorder, and service supply links.',
   Client: 'Client portal only — services, loyalty points, support, and profile.',
 }
 
 export function Staff() {
+  const { user } = useAuth()
+  const canManageRoles = isElevatedRole(user?.role)
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [leaves, setLeaves] = useState<LeaveRow[]>([])
   const [attendance, setAttendance] = useState<AttendanceRow[]>([])
@@ -69,6 +75,14 @@ export function Staff() {
   const [message, setMessage] = useState('')
   const [roleChange, setRoleChange] = useState<RoleChangePending | null>(null)
   const [roleSaving, setRoleSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<AccountRow | null>(null)
+  const [deleteSaving, setDeleteSaving] = useState(false)
+  const [manualAtt, setManualAtt] = useState({
+    profileId: '',
+    workDate: todayDateString(),
+    timeIn: '09:00',
+    timeOut: '18:00',
+  })
 
   const load = useCallback(async () => {
     const today = todayDateString()
@@ -111,9 +125,12 @@ export function Staff() {
   }, [load])
 
   useEffect(() => {
-    if (!roleChange) return
+    if (!roleChange && !deleteTarget) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && !roleSaving) setRoleChange(null)
+      if (e.key !== 'Escape') return
+      if (roleSaving || deleteSaving) return
+      setRoleChange(null)
+      setDeleteTarget(null)
     }
     document.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
@@ -121,7 +138,7 @@ export function Staff() {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [roleChange, roleSaving])
+  }, [roleChange, roleSaving, deleteTarget, deleteSaving])
 
   async function patchAccount(id: string, patch: Record<string, unknown>, success: string) {
     const { error: err } = await supabase.from('profiles').update(patch).eq('id', id)
@@ -134,9 +151,66 @@ export function Staff() {
   }
 
   function requestRoleChange(account: AccountRow, nextRole: AppRole) {
+    if (!canManageRoles) {
+      setError('Only Owner or Admin can change account roles.')
+      return
+    }
     if (nextRole === account.role) return
     setError('')
     setRoleChange({ account, nextRole })
+  }
+
+  async function saveManualAttendance(e: FormEvent) {
+    e.preventDefault()
+    if (!manualAtt.profileId) {
+      setError('Select an account for manual attendance.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    const timeIn = manualAtt.timeIn.length === 5 ? `${manualAtt.timeIn}:00` : manualAtt.timeIn
+    const timeOut = manualAtt.timeOut
+      ? manualAtt.timeOut.length === 5
+        ? `${manualAtt.timeOut}:00`
+        : manualAtt.timeOut
+      : null
+
+    const { data: existing } = await supabase
+      .from('attendance')
+      .select('id')
+      .eq('profile_id', manualAtt.profileId)
+      .eq('work_date', manualAtt.workDate)
+      .maybeSingle()
+
+    let err
+    if (existing?.id) {
+      ;({ error: err } = await supabase
+        .from('attendance')
+        .update({ time_in: timeIn, time_out: timeOut })
+        .eq('id', existing.id))
+    } else {
+      ;({ error: err } = await supabase.from('attendance').insert({
+        profile_id: manualAtt.profileId,
+        work_date: manualAtt.workDate,
+        time_in: timeIn,
+        time_out: timeOut,
+      }))
+    }
+
+    if (!err) {
+      await supabase
+        .from('profiles')
+        .update({ duty_status: timeOut ? 'off-duty' : 'on-duty' })
+        .eq('id', manualAtt.profileId)
+    }
+
+    setSaving(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setMessage('Attendance saved (manual).')
+    await load()
   }
 
   function closeRoleModal() {
@@ -162,6 +236,41 @@ export function Staff() {
     setMessage(
       `Role updated: ${account.full_name} is now ${nextRole}. They should log out and back in to refresh pages.`,
     )
+    await load()
+  }
+
+  function requestDeleteAccount(account: AccountRow) {
+    setError('')
+    if (account.id === user?.id) {
+      setError('You cannot delete your own account.')
+      return
+    }
+    setDeleteTarget(account)
+  }
+
+  function closeDeleteModal() {
+    if (deleteSaving) return
+    setDeleteTarget(null)
+  }
+
+  async function confirmDeleteAccount() {
+    if (!deleteTarget) return
+    setDeleteSaving(true)
+    setError('')
+    const { error: err } = await supabase.rpc('delete_clinic_account', {
+      target_user_id: deleteTarget.id,
+    })
+    setDeleteSaving(false)
+    if (err) {
+      setError(
+        err.message.includes('function') || err.message.includes('schema cache')
+          ? `${err.message} — run supabase/add_delete_account.sql in Supabase.`
+          : err.message,
+      )
+      return
+    }
+    setMessage(`Account deleted: ${deleteTarget.full_name}.`)
+    setDeleteTarget(null)
     await load()
   }
 
@@ -257,6 +366,7 @@ export function Staff() {
                     <th>Personal</th>
                     <th>Emergency</th>
                     <th>Role</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -333,19 +443,45 @@ export function Staff() {
                         </td>
                       ))}
                       <td>
-                        <select
-                          className="select"
-                          style={{ minWidth: 120, height: 34 }}
-                          value={account.role}
-                          onChange={(e) =>
-                            requestRoleChange(account, normalizeRole(e.target.value))
-                          }
-                        >
-                          <option value="Owner">Owner</option>
-                          <option value="Admin">Admin</option>
-                          <option value="Staff">Staff</option>
-                          <option value="Client">Client</option>
-                        </select>
+                        {canManageRoles ? (
+                          <select
+                            className="select"
+                            style={{ minWidth: 120, height: 34 }}
+                            value={account.role}
+                            onChange={(e) =>
+                              requestRoleChange(account, normalizeRole(e.target.value))
+                            }
+                          >
+                            <option value="Owner">Owner</option>
+                            <option value="Admin">Admin</option>
+                            <option value="HR">HR</option>
+                            <option value="Inventory">Inventory Specialist</option>
+                            <option value="Staff">Staff</option>
+                            <option value="Client">Client</option>
+                          </select>
+                        ) : (
+                          <span className="badge badge-neutral">{account.role}</span>
+                        )}
+                      </td>
+                      <td>
+                        {canManageRoles ? (
+                          <button
+                            className="btn-icon"
+                            type="button"
+                            aria-label={`Delete ${account.full_name}`}
+                            title={
+                              account.id === user?.id
+                                ? 'You cannot delete your own account'
+                                : 'Delete account'
+                            }
+                            disabled={account.id === user?.id}
+                            onClick={() => requestDeleteAccount(account)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -355,6 +491,77 @@ export function Staff() {
           )}
         </div>
       </div>
+
+      {deleteTarget ? (
+        <div
+          className="confirm-modal-overlay"
+          role="presentation"
+          onClick={closeDeleteModal}
+        >
+          <div
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-modal-header">
+              <div>
+                <p className="confirm-modal-kicker">Delete account</p>
+                <h2 id="delete-account-title" className="confirm-modal-title">
+                  Remove {deleteTarget.full_name}?
+                </h2>
+              </div>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close"
+                onClick={closeDeleteModal}
+                disabled={deleteSaving}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="confirm-modal-body">
+              <p className="confirm-modal-text">
+                This permanently deletes their login and profile. Attendance and leave history linked
+                to this account may also be removed. This cannot be undone.
+              </p>
+              <div className="confirm-modal-meta">
+                <div>
+                  <span className="confirm-modal-label">Email</span>
+                  <strong>{deleteTarget.email || '—'}</strong>
+                </div>
+                <div>
+                  <span className="confirm-modal-label">Role</span>
+                  <strong>{deleteTarget.role}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="confirm-modal-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={closeDeleteModal}
+                disabled={deleteSaving}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={confirmDeleteAccount}
+                disabled={deleteSaving}
+                style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}
+              >
+                {deleteSaving ? 'Deleting…' : 'Delete account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {roleChange ? (
         <div
@@ -443,6 +650,69 @@ export function Staff() {
           </div>
         </div>
       ) : null}
+
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="panel-header">
+          <h2 className="panel-title">Manual time in / time out</h2>
+        </div>
+        <div className="panel-body">
+          <form
+            onSubmit={saveManualAttendance}
+            style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}
+          >
+            <div className="field">
+              <label>Account</label>
+              <select
+                className="select"
+                required
+                value={manualAtt.profileId}
+                onChange={(e) => setManualAtt((f) => ({ ...f, profileId: e.target.value }))}
+              >
+                <option value="">Select…</option>
+                {clinicAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.full_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Date</label>
+              <input
+                className="input"
+                type="date"
+                required
+                value={manualAtt.workDate}
+                onChange={(e) => setManualAtt((f) => ({ ...f, workDate: e.target.value }))}
+              />
+            </div>
+            <div className="field">
+              <label>Time in</label>
+              <input
+                className="input"
+                type="time"
+                required
+                value={manualAtt.timeIn}
+                onChange={(e) => setManualAtt((f) => ({ ...f, timeIn: e.target.value }))}
+              />
+            </div>
+            <div className="field">
+              <label>Time out</label>
+              <input
+                className="input"
+                type="time"
+                value={manualAtt.timeOut}
+                onChange={(e) => setManualAtt((f) => ({ ...f, timeOut: e.target.value }))}
+              />
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <button className="btn btn-primary" type="submit" disabled={saving}>
+                Save attendance
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       <div className="grid-2">
         <div className="panel">

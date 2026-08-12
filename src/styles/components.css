@@ -111,6 +111,21 @@
   text-transform: uppercase;
 }
 
+.field .req,
+.form-req-note .req {
+  color: #b45309;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.form-req-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .input,
 .select,
 .search-input {
@@ -171,6 +186,23 @@
 .badge-neutral {
   background: var(--ink);
   color: white;
+}
+
+.badge-regular {
+  background: #f0f0f0;
+  color: #555;
+}
+
+.badge-vip {
+  background: linear-gradient(135deg, #f5e6c8, #e8d5a3);
+  color: #6b5420;
+  border: 1px solid rgba(184, 149, 74, 0.45);
+}
+
+.badge-vvip {
+  background: linear-gradient(135deg, #1a1a1a, #2c2c2c);
+  color: #e8d5a3;
+  border: 1px solid rgba(184, 149, 74, 0.65);
 }
 
 .panel {
@@ -359,6 +391,8 @@ table.data-table tbody tr:hover {
 }
 
 .chip {
+  display: inline-flex;
+  align-items: center;
   height: 34px;
   padding: 0 14px;
   border-radius: 999px;
@@ -367,6 +401,8 @@ table.data-table tbody tr:hover {
   font-size: 0.84rem;
   font-weight: 600;
   color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
 }
 
 .chip.active {

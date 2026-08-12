@@ -13,6 +13,7 @@ export type ServiceCategory =
   | 'Body'
   | 'Skincare'
   | 'Packages'
+  | 'Membership'
 
 export type ServiceItem = {
   id: string
@@ -24,6 +25,8 @@ export type ServiceItem = {
   pointsCost: number
   active: boolean
   description: string
+  /** When set, POS checkout applies this tier + expiry on the customer. */
+  membershipTier?: 'VIP' | 'VVIP' | null
 }
 
 export type InventoryItem = {
@@ -47,9 +50,11 @@ export type Customer = {
   cashInBalance: number
   visits: number
   lastVisit: string
-  membership: 'Standard' | 'Glow' | 'Luxe'
+  membership: 'Regular' | 'VIP' | 'VVIP'
+  membershipExpiresAt?: string | null
   branchId: string
   age?: number | null
+  birthday?: string | null
   sex?: string
   address?: string
   medicalHistory?: string

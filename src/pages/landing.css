@@ -600,6 +600,21 @@
   font-weight: 600;
 }
 
+.landing-field .req,
+.landing-req-note .req {
+  color: #b45309;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.landing-req-note {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+  font-size: 0.82rem;
+  color: var(--lg-muted);
+  line-height: 1.4;
+}
+
 .landing-field input,
 .landing-field select,
 .landing-field textarea {
