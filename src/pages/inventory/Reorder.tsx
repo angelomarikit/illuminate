@@ -16,6 +16,8 @@ type ItemRow = {
   unit: string
 }
 
+type ItemSnap = { name: string; sku: string; unit: string; stock: number }
+
 type ReorderRow = {
   id: string
   inventory_item_id: string
@@ -24,7 +26,14 @@ type ReorderRow = {
   notes: string | null
   requested_by: string | null
   created_at: string
-  inventory_items?: { name: string; sku: string; unit: string; stock: number } | null
+  /** Supabase may return the embed as object or array depending on relationship inference. */
+  inventory_items?: ItemSnap | ItemSnap[] | null
+}
+
+function itemFromReorder(row: ReorderRow): ItemSnap | null {
+  const snap = row.inventory_items
+  if (!snap) return null
+  return Array.isArray(snap) ? snap[0] ?? null : snap
 }
 
 export function Reorder() {
@@ -70,7 +79,7 @@ export function Reorder() {
     }
     const mappedItems = (itemData as ItemRow[] | null) ?? []
     setItems(mappedItems)
-    setRequests((reqData as ReorderRow[] | null) ?? [])
+    setRequests((reqData as unknown as ReorderRow[] | null) ?? [])
     setItemId((current) => {
       if (current && mappedItems.some((i) => i.id === current)) return current
       const low = mappedItems.find((i) => i.stock <= i.reorder_level)
@@ -258,9 +267,7 @@ export function Reorder() {
                 </thead>
                 <tbody>
                   {requests.map((row) => {
-                    const item = Array.isArray(row.inventory_items)
-                      ? row.inventory_items[0]
-                      : row.inventory_items
+                    const item = itemFromReorder(row)
                     return (
                       <tr key={row.id}>
                         <td>
