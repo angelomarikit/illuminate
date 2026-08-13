@@ -28,8 +28,7 @@ type CartLine = {
 type ProfileOption = { id: string; full_name: string; role: string }
 type CartSection = 'items' | 'staff' | 'pay'
 
-const categories: Array<ServiceCategory | 'All'> = [
-  'All',
+const FALLBACK_CATEGORIES = [
   'Facials',
   'Injectables',
   'Laser',
@@ -51,9 +50,10 @@ export function POS() {
   const { branchId } = useBranch()
   const { user } = useAuth()
   const navigate = useNavigate()
-  const [category, setCategory] = useState<(typeof categories)[number]>('All')
+  const [category, setCategory] = useState<string>('All')
   const [cart, setCart] = useState<CartLine[]>([])
   const [services, setServices] = useState<ServiceItem[]>([])
+  const [catalogCategories, setCatalogCategories] = useState<string[]>(FALLBACK_CATEGORIES)
   const [customers, setCustomers] = useState<Customer[]>([])
   const [profiles, setProfiles] = useState<ProfileOption[]>([])
   const [customerId, setCustomerId] = useState('')
@@ -72,7 +72,7 @@ export function POS() {
   const [sessionOpenIds, setSessionOpenIds] = useState<Record<string, boolean>>({})
 
   const load = useCallback(async () => {
-    const [{ data: svc }, { data: cus }, { data: prof }] = await Promise.all([
+    const [svcRes, cusRes, profRes, catsRes] = await Promise.all([
       supabase.from('services').select('*').eq('active', true).order('name'),
       supabase.from('customers').select('*').order('full_name'),
       supabase
@@ -80,7 +80,18 @@ export function POS() {
         .select('id, full_name, role')
         .in('role', ['Owner', 'Admin', 'Staff'])
         .order('full_name'),
+      supabase
+        .from('service_categories')
+        .select('name')
+        .eq('active', true)
+        .order('sort_order')
+        .order('name'),
     ])
+
+    const svc = svcRes.data
+    const cus = cusRes.data
+    const prof = profRes.data
+    const cats = catsRes.error ? null : catsRes.data
 
     const mappedServices: ServiceItem[] =
       svc?.map((row) => ({
@@ -120,12 +131,22 @@ export function POS() {
       mappedCustomers = mappedCustomers.filter((c) => !c.branchId || c.branchId === branchId)
     }
 
+    const fromTable = (cats ?? []).map((row) => row.name as string).filter(Boolean)
+    const fromServices = [...new Set(mappedServices.map((s) => s.category).filter(Boolean))]
+    const merged = [...fromTable]
+    for (const name of fromServices) {
+      if (!merged.some((c) => c.toLowerCase() === name.toLowerCase())) merged.push(name)
+    }
+    setCatalogCategories(merged.length ? merged : FALLBACK_CATEGORIES)
+
     setServices(mappedServices)
     setCustomers(mappedCustomers)
     setProfiles((prof as ProfileOption[] | null) ?? [])
     setCustomerId((current) => current || mappedCustomers[0]?.id || '')
     setSalesBy((current) => current || user?.name || '')
   }, [branchId, user?.name])
+
+  const categories = useMemo(() => ['All', ...catalogCategories], [catalogCategories])
 
   useEffect(() => {
     load()

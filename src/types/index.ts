@@ -6,14 +6,8 @@ export type Branch = {
   isOpen: boolean
 }
 
-export type ServiceCategory =
-  | 'Facials'
-  | 'Injectables'
-  | 'Laser'
-  | 'Body'
-  | 'Skincare'
-  | 'Packages'
-  | 'Membership'
+/** Service catalog category name (custom categories allowed). */
+export type ServiceCategory = string
 
 export type ServiceItem = {
   id: string

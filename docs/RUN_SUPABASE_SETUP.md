@@ -59,6 +59,7 @@ After setup.sql, also run (in order):
 17. `supabase/add_appointment_calendar_color.sql` (calendar color tags on appointments)
 18. `supabase/add_appointment_cancellation_reason.sql` (cancel reason for cancelled appointments)
 19. `supabase/add_notifications.sql` (role-scoped notification acknowledgments / unread state)
+20. `supabase/add_service_categories.sql` (Owner/Admin custom service categories)
 
 Then promote your owner account (see `docs/ROLES.md`).
 
