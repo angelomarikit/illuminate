@@ -55,6 +55,10 @@ After setup.sql, also run (in order):
 13. `supabase/add_account_self_view.sql` (each account can view own salary & incentives)
 14. `supabase/add_membership_subscription.sql` (VIP ₱5,000 / VVIP ₱10,000 POS products + membership expiry)
 15. `supabase/add_inventory_role.sql` (Inventory Specialist role + stocktake / receiving / reorder + service links)
+16. `supabase/add_create_account.sql` (Owner/Admin/HR create clinic accounts + password vault)
+17. `supabase/add_appointment_calendar_color.sql` (calendar color tags on appointments)
+18. `supabase/add_appointment_cancellation_reason.sql` (cancel reason for cancelled appointments)
+19. `supabase/add_notifications.sql` (role-scoped notification acknowledgments / unread state)
 
 Then promote your owner account (see `docs/ROLES.md`).
 

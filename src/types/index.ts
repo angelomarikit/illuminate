@@ -90,6 +90,10 @@ export type Appointment = {
   medicalHistory?: string
   specialNote?: string
   source?: string
+  /** Hex color for calendar board chips */
+  calendarColor?: string
+  /** Why the appointment was cancelled */
+  cancellationReason?: string
 }
 
 export type SaleRecord = {

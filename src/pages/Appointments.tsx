@@ -2,11 +2,22 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
 } from 'react'
-import { ChevronLeft, ChevronRight, Mail, MessageCircle, Phone, X } from 'lucide-react'
+import {
+  Ban,
+  CalendarClock,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Mail,
+  MessageCircle,
+  Phone,
+  X,
+} from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useBranch } from '../context/BranchContext'
@@ -26,7 +37,47 @@ import './appointments.css'
 
 const hours = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
 
+const CALENDAR_COLORS = [
+  '#b8954a',
+  '#1a1a1a',
+  '#7a9e7e',
+  '#c4787a',
+  '#6b8cae',
+  '#d4a017',
+  '#8b6b8b',
+  '#5a9a8a',
+] as const
+
+const CANCEL_REASON_PRESETS = [
+  'Client request',
+  'No-show',
+  'Schedule conflict',
+  'Staff unavailable',
+  'Medical / health',
+  'Other',
+] as const
+
 type BoardMode = 'day' | 'week' | 'month'
+
+function formatStandardTime(hhmm: string): string {
+  const [hs, ms = '00'] = String(hhmm).slice(0, 5).split(':')
+  let h = Number(hs)
+  if (!Number.isFinite(h)) return hhmm
+  const period = h >= 12 ? 'PM' : 'AM'
+  h = h % 12
+  if (h === 0) h = 12
+  return `${h}:${ms} ${period}`
+}
+
+function contrastingInk(hex: string): string {
+  const raw = hex.replace('#', '')
+  if (raw.length !== 6) return '#111111'
+  const r = parseInt(raw.slice(0, 2), 16)
+  const g = parseInt(raw.slice(2, 4), 16)
+  const b = parseInt(raw.slice(4, 6), 16)
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.62 ? '#111111' : '#ffffff'
+}
 
 function boardDaysFrom(startIso: string, count: number) {
   return Array.from({ length: count }, (_, i) => {
@@ -56,6 +107,8 @@ type Row = {
   medical_history: string | null
   special_note: string | null
   source: string | null
+  calendar_color?: string | null
+  cancellation_reason?: string | null
 }
 
 function mapRow(row: Row): Appointment {
@@ -78,6 +131,8 @@ function mapRow(row: Row): Appointment {
     medicalHistory: row.medical_history ?? '',
     specialNote: row.special_note ?? '',
     source: row.source ?? 'clinic',
+    calendarColor: row.calendar_color || CALENDAR_COLORS[0],
+    cancellationReason: row.cancellation_reason ?? '',
   }
 }
 
@@ -88,7 +143,12 @@ const emptyForm = {
   date: toLocalISODate(),
   time: '10:00',
   durationMin: '60',
+  notes: '',
+  calendarColor: CALENDAR_COLORS[0] as string,
 }
+
+type ServiceOption = { id: string; name: string; durationMin: number }
+type StaffOption = { id: string; fullName: string }
 
 type DecisionModal = {
   appointment: Appointment
@@ -102,20 +162,22 @@ function phoneDigits(phone: string) {
 }
 
 function buildEmail(apt: Appointment, approved: boolean) {
+  const when = `${apt.date} ${formatStandardTime(apt.time)}`
   const subject = approved
-    ? `Illuminate appointment confirmed — ${apt.date} ${apt.time}`
-    : `Illuminate appointment update — ${apt.date} ${apt.time}`
+    ? `Illuminate appointment confirmed — ${when}`
+    : `Illuminate appointment update — ${when}`
   const body = approved
-    ? `Hi ${apt.customerName},\n\nYour ${apt.serviceName} appointment is confirmed for ${apt.date} at ${apt.time}.\n\nPlease arrive 10 minutes early.\n\n— Illuminate Medical Aesthetics`
-    : `Hi ${apt.customerName},\n\nThank you for your interest in ${apt.serviceName}. Unfortunately we cannot confirm ${apt.date} at ${apt.time}. Please reply to choose another schedule.\n\n— Illuminate Medical Aesthetics`
+    ? `Hi ${apt.customerName},\n\nYour ${apt.serviceName} appointment is confirmed for ${apt.date} at ${formatStandardTime(apt.time)}.\n\nPlease arrive 10 minutes early.\n\n— Illuminate Medical Aesthetics`
+    : `Hi ${apt.customerName},\n\nThank you for your interest in ${apt.serviceName}. Unfortunately we cannot confirm ${apt.date} at ${formatStandardTime(apt.time)}. Please reply to choose another schedule.\n\n— Illuminate Medical Aesthetics`
   return `mailto:${encodeURIComponent(apt.customerEmail || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
 
 function buildSms(apt: Appointment, approved: boolean) {
   const to = phoneDigits(apt.customerPhone || '')
+  const when = `${apt.date} ${formatStandardTime(apt.time)}`
   const body = approved
-    ? `Hi ${apt.customerName}, your Illuminate ${apt.serviceName} is confirmed for ${apt.date} at ${apt.time}. See you soon!`
-    : `Hi ${apt.customerName}, we couldn't confirm ${apt.date} ${apt.time} for ${apt.serviceName}. Please message us to reschedule. — Illuminate`
+    ? `Hi ${apt.customerName}, your Illuminate ${apt.serviceName} is confirmed for ${when}. See you soon!`
+    : `Hi ${apt.customerName}, we couldn't confirm ${when} for ${apt.serviceName}. Please message us to reschedule. — Illuminate`
   return to
     ? `sms:${to}?&body=${encodeURIComponent(body)}`
     : `sms:?&body=${encodeURIComponent(body)}`
@@ -127,7 +189,10 @@ export function Appointments() {
   const [rows, setRows] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
   const [formType, setFormType] = useState<'none' | 'appointment' | 'walk-in'>('none')
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([])
+  const [staffOptions, setStaffOptions] = useState<StaffOption[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -138,6 +203,23 @@ export function Appointments() {
   const [monthCursor, setMonthCursor] = useState(() => startOfMonth(new Date()))
   const [rangeFrom, setRangeFrom] = useState('')
   const [rangeTo, setRangeTo] = useState('')
+  const [listTab, setListTab] = useState<'active' | 'completed' | 'cancelled'>('active')
+  const [completedFrom, setCompletedFrom] = useState('')
+  const [completedTo, setCompletedTo] = useState('')
+  const [cancelledFrom, setCancelledFrom] = useState('')
+  const [cancelledTo, setCancelledTo] = useState('')
+  const [historyApt, setHistoryApt] = useState<Appointment | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelSaving, setCancelSaving] = useState(false)
+  const [rescheduleMode, setRescheduleMode] = useState(false)
+  const dateInputRef = useRef<HTMLInputElement | null>(null)
+  const isEditing = Boolean(editingId)
+  const editingAppointment = useMemo(
+    () => (editingId ? rows.find((row) => row.id === editingId) ?? null : null),
+    [editingId, rows],
+  )
+  const isCompleted = editingAppointment?.status === 'completed'
 
   const boardDays = useMemo(() => {
     if (boardMode === 'day') return boardDaysFrom(focusDate, 1)
@@ -157,8 +239,6 @@ export function Appointments() {
     if (isUuid(branchId)) {
       q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
     }
-    if (rangeFrom) q = q.gte('appointment_date', rangeFrom)
-    if (rangeTo) q = q.lte('appointment_date', rangeTo)
     const { data, error: err } = await q
     if (err) setError(err.message)
     else {
@@ -166,16 +246,57 @@ export function Appointments() {
       setRows((data as Row[] | null)?.map(mapRow) ?? [])
     }
     setLoading(false)
-  }, [branchId, rangeFrom, rangeTo])
+  }, [branchId])
 
   useEffect(() => {
     load()
   }, [load])
 
   useEffect(() => {
-    if (!decision) return
+    let cancelled = false
+    async function loadOptions() {
+      const [{ data: svc }, { data: staff }] = await Promise.all([
+        supabase.from('services').select('id, name, duration_min').eq('active', true).order('name'),
+        supabase
+          .from('profiles')
+          .select('id, full_name')
+          .eq('role', 'Staff')
+          .order('full_name'),
+      ])
+      if (cancelled) return
+      setServiceOptions(
+        (svc ?? []).map((row) => ({
+          id: row.id as string,
+          name: row.name as string,
+          durationMin: Number(row.duration_min) || 60,
+        })),
+      )
+      setStaffOptions(
+        (staff ?? []).map((row) => ({
+          id: row.id as string,
+          fullName: (row.full_name as string) || 'Staff',
+        })),
+      )
+    }
+    void loadOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!decision && formType === 'none' && !historyApt && !cancelTarget) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && !decisionSaving) setDecision(null)
+      if (e.key !== 'Escape') return
+      if (cancelTarget && !cancelSaving) closeCancelModal()
+      else if (decision && !decisionSaving) setDecision(null)
+      else if (historyApt) setHistoryApt(null)
+      else if (formType !== 'none' && !saving) {
+        setFormType('none')
+        setEditingId(null)
+        setForm(emptyForm)
+        setRescheduleMode(false)
+      }
     }
     document.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
@@ -183,20 +304,119 @@ export function Appointments() {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [decision, decisionSaving])
+  }, [decision, decisionSaving, formType, saving, historyApt, cancelTarget, cancelSaving])
+
+  function openBookingForm(
+    type: 'appointment' | 'walk-in',
+    opts?: { date?: string; time?: string },
+  ) {
+    setError('')
+    setMessage('')
+    setEditingId(null)
+    setRescheduleMode(false)
+    setForm({
+      ...emptyForm,
+      date: opts?.date || toLocalISODate(),
+      time: opts?.time || '10:00',
+      calendarColor: CALENDAR_COLORS[0],
+    })
+    setFormType(type)
+  }
+
+  function openEditBooking(apt: Appointment) {
+    setError('')
+    setMessage('')
+    setEditingId(apt.id)
+    setRescheduleMode(false)
+    setFormType(apt.type === 'walk-in' ? 'walk-in' : 'appointment')
+    setForm({
+      customerName: apt.customerName,
+      serviceName: apt.serviceName,
+      staffName: apt.staffName || '',
+      date: apt.date,
+      time: apt.time,
+      durationMin: String(apt.durationMin || 60),
+      notes: apt.specialNote || '',
+      calendarColor: apt.calendarColor || CALENDAR_COLORS[0],
+    })
+  }
+
+  function closeBookingForm() {
+    if (saving) return
+    setFormType('none')
+    setEditingId(null)
+    setForm(emptyForm)
+    setRescheduleMode(false)
+  }
+
+  function startReschedule() {
+    setRescheduleMode(true)
+    window.setTimeout(() => dateInputRef.current?.focus(), 40)
+  }
+
+  function openCancelModal(apt?: Appointment | null) {
+    const target = apt ?? editingAppointment
+    if (!target) return
+    setCancelTarget(target)
+    setCancelReason('')
+    setError('')
+  }
+
+  function closeCancelModal() {
+    if (cancelSaving) return
+    setCancelTarget(null)
+    setCancelReason('')
+  }
+
+  function applyService(name: string) {
+    const match = serviceOptions.find((s) => s.name === name)
+    setForm((f) => ({
+      ...f,
+      serviceName: name,
+      durationMin: match ? String(match.durationMin) : f.durationMin,
+    }))
+  }
 
   const pending = useMemo(() => rows.filter((a) => a.status === 'pending'), [rows])
 
   const filtered = useMemo(() => {
+    const isActiveStatus = (status: string) =>
+      status !== 'pending' &&
+      status !== 'completed' &&
+      status !== 'cancelled' &&
+      status !== 'declined'
+
     const base =
       filter === 'pending'
         ? pending
         : rows.filter((a) => {
-            if (filter === 'all') return a.status !== 'pending'
-            return a.type === filter && a.status !== 'pending'
+            if (filter === 'all') return isActiveStatus(a.status)
+            return a.type === filter && isActiveStatus(a.status)
           })
     return base.filter((a) => inDateRange(a.date, rangeFrom, rangeTo))
   }, [rows, filter, pending, rangeFrom, rangeTo])
+
+  const completedBookings = useMemo(() => {
+    return rows
+      .filter((a) => a.status === 'completed' && inDateRange(a.date, completedFrom, completedTo))
+      .slice()
+      .sort((a, b) => {
+        const byDate = b.date.localeCompare(a.date)
+        if (byDate !== 0) return byDate
+        return b.time.localeCompare(a.time)
+      })
+  }, [rows, completedFrom, completedTo])
+
+  const cancelledBookings = useMemo(() => {
+    return rows
+      .filter((a) => a.status === 'cancelled' && inDateRange(a.date, cancelledFrom, cancelledTo))
+      .slice()
+      .sort((a, b) => {
+        const byDate = b.date.localeCompare(a.date)
+        if (byDate !== 0) return byDate
+        return b.time.localeCompare(a.time)
+      })
+  }, [rows, cancelledFrom, cancelledTo])
 
   const boardAppointments = useMemo(
     () =>
@@ -233,18 +453,29 @@ export function Appointments() {
     setSaving(true)
     setError('')
     const type = formType === 'walk-in' ? 'walk-in' : 'appointment'
-    const { error: err } = await supabase.from('appointments').insert({
+    const wasEditing = Boolean(editingId)
+    const wasRescheduling = rescheduleMode
+    const payload = {
       customer_name: form.customerName.trim(),
       service_name: form.serviceName.trim(),
       staff_name: form.staffName.trim() || null,
       appointment_date: form.date,
       appointment_time: form.time,
       duration_min: Number(form.durationMin) || 60,
-      status: type === 'walk-in' ? 'walk-in' : 'confirmed',
-      type,
-      source: 'clinic',
-      branch_id: isUuid(branchId) ? branchId : null,
-    })
+      special_note: form.notes.trim() || null,
+      calendar_color: form.calendarColor || CALENDAR_COLORS[0],
+    }
+
+    const { error: err } = editingId
+      ? await supabase.from('appointments').update(payload).eq('id', editingId)
+      : await supabase.from('appointments').insert({
+          ...payload,
+          status: type === 'walk-in' ? 'walk-in' : 'confirmed',
+          type,
+          source: 'clinic',
+          branch_id: isUuid(branchId) ? branchId : null,
+        })
+
     setSaving(false)
     if (err) {
       setError(err.message)
@@ -252,7 +483,17 @@ export function Appointments() {
     }
     setForm(emptyForm)
     setFormType('none')
-    setMessage(type === 'walk-in' ? 'Walk-in added.' : 'Booking created.')
+    setEditingId(null)
+    setRescheduleMode(false)
+    setMessage(
+      wasEditing
+        ? wasRescheduling
+          ? 'Booking rescheduled.'
+          : 'Booking updated.'
+        : type === 'walk-in'
+          ? 'Walk-in added.'
+          : 'Booking created.',
+    )
     await load()
   }
 
@@ -263,6 +504,60 @@ export function Appointments() {
       setMessage(`Status updated to ${status}.`)
       await load()
     }
+  }
+
+  async function markBookingCompleted() {
+    if (!editingId || saving) return
+    setSaving(true)
+    setError('')
+    const { error: err } = await supabase
+      .from('appointments')
+      .update({ status: 'completed' })
+      .eq('id', editingId)
+    setSaving(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setFormType('none')
+    setEditingId(null)
+    setForm(emptyForm)
+    setRescheduleMode(false)
+    setMessage('Booking marked completed.')
+    await load()
+  }
+
+  async function confirmCancelAppointment(e: FormEvent) {
+    e.preventDefault()
+    if (!cancelTarget || cancelSaving) return
+    const reason = cancelReason.trim()
+    if (!reason) {
+      setError('Please share why this appointment is cancelled.')
+      return
+    }
+    setCancelSaving(true)
+    setError('')
+    const { error: err } = await supabase
+      .from('appointments')
+      .update({
+        status: 'cancelled',
+        cancellation_reason: reason,
+      })
+      .eq('id', cancelTarget.id)
+    setCancelSaving(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setCancelTarget(null)
+    setCancelReason('')
+    setFormType('none')
+    setEditingId(null)
+    setForm(emptyForm)
+    setRescheduleMode(false)
+    setListTab('cancelled')
+    setMessage('Appointment cancelled.')
+    await load()
   }
 
   async function upsertCustomerFromAppointment(apt: Appointment) {
@@ -382,14 +677,14 @@ export function Appointments() {
             <button
               className="btn btn-ghost"
               type="button"
-              onClick={() => setFormType((t) => (t === 'walk-in' ? 'none' : 'walk-in'))}
+              onClick={() => openBookingForm('walk-in')}
             >
               Walk-in
             </button>
             <button
               className="btn btn-primary"
               type="button"
-              onClick={() => setFormType((t) => (t === 'appointment' ? 'none' : 'appointment'))}
+              onClick={() => openBookingForm('appointment')}
             >
               New Booking
             </button>
@@ -423,7 +718,7 @@ export function Appointments() {
                     <tr key={apt.id}>
                       <td>
                         <strong>
-                          {apt.date} · {apt.time}
+                          {apt.date} · {formatStandardTime(apt.time)}
                         </strong>
                       </td>
                       <td>
@@ -472,87 +767,6 @@ export function Appointments() {
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
-      ) : null}
-
-      {formType !== 'none' ? (
-        <div className="panel" style={{ marginBottom: 16 }}>
-          <div className="panel-header">
-            <h2 className="panel-title">
-              {formType === 'walk-in' ? 'New walk-in' : 'New booking'}
-            </h2>
-          </div>
-          <div className="panel-body">
-            <form
-              onSubmit={onSubmit}
-              style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}
-            >
-              <div className="field">
-                <label>Client</label>
-                <input
-                  className="input"
-                  required
-                  value={form.customerName}
-                  onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))}
-                />
-              </div>
-              <div className="field">
-                <label>Service</label>
-                <input
-                  className="input"
-                  required
-                  value={form.serviceName}
-                  onChange={(e) => setForm((f) => ({ ...f, serviceName: e.target.value }))}
-                />
-              </div>
-              <div className="field">
-                <label>Staff</label>
-                <input
-                  className="input"
-                  value={form.staffName}
-                  onChange={(e) => setForm((f) => ({ ...f, staffName: e.target.value }))}
-                />
-              </div>
-              <div className="field">
-                <label>Duration (min)</label>
-                <input
-                  className="input"
-                  type="number"
-                  value={form.durationMin}
-                  onChange={(e) => setForm((f) => ({ ...f, durationMin: e.target.value }))}
-                />
-              </div>
-              <div className="field">
-                <label>Date</label>
-                <input
-                  className="input"
-                  type="date"
-                  required
-                  value={form.date}
-                  onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                />
-              </div>
-              <div className="field">
-                <label>Time</label>
-                <select
-                  className="select"
-                  value={form.time}
-                  onChange={(e) => setForm((f) => ({ ...f, time: e.target.value }))}
-                >
-                  {hours.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <button className="btn btn-primary" type="submit" disabled={saving}>
-                  {saving ? 'Saving...' : 'Save'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       ) : null}
@@ -733,25 +947,68 @@ export function Appointments() {
               ))}
               {hours.map((hour) => (
                 <div className="calendar-row" key={hour}>
-                  <div className="calendar-hour">{hour}</div>
+                  <div className="calendar-hour">{formatStandardTime(hour)}</div>
                   {boardDays.map((day) => {
                     const slots = boardAppointments.filter(
                       (a) => a.date === day.key && a.time === hour,
                     )
+                    const compact = slots.length >= 3
                     return (
-                      <div className="calendar-cell" key={`${day.key}-${hour}`}>
-                        {slots.map((slot) => (
-                          <div
-                            key={slot.id}
-                            className={`calendar-event ${slot.type} ${
-                              slot.status === 'pending' ? 'is-pending' : ''
-                            }`}
-                          >
-                            <strong>{slot.customerName}</strong>
-                            <span>{slot.serviceName}</span>
-                            <em>{slot.status}</em>
+                      <div
+                        className={`calendar-cell ${slots.length ? 'has-bookings' : ''}`}
+                        key={`${day.key}-${hour}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Add booking ${formatShortDate(day.key)} ${formatStandardTime(hour)}`}
+                        onClick={() => openBookingForm('appointment', { date: day.key, time: hour })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            openBookingForm('appointment', { date: day.key, time: hour })
+                          }
+                        }}
+                      >
+                        {slots.length > 1 ? (
+                          <div className="calendar-cell-meta">
+                            <span className="calendar-cell-count">{slots.length}</span>
                           </div>
-                        ))}
+                        ) : null}
+                        <div className="calendar-cell-stack">
+                          {slots.map((slot) => {
+                            const bg = slot.calendarColor || CALENDAR_COLORS[0]
+                            const done = slot.status === 'completed'
+                            return (
+                              <button
+                                key={slot.id}
+                                type="button"
+                                className={`calendar-event ${compact ? 'is-compact' : ''} ${
+                                  slot.status === 'pending' ? 'is-pending' : ''
+                                } ${done ? 'is-completed' : ''}`}
+                                style={{
+                                  background: bg,
+                                  color: contrastingInk(bg),
+                                }}
+                                title={`${done ? 'Completed · ' : ''}Edit ${slot.customerName} · ${slot.serviceName}`}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  openEditBooking(slot)
+                                }}
+                              >
+                                {done ? (
+                                  <span className="calendar-event-check" aria-label="Completed">
+                                    <Check size={10} strokeWidth={2.75} />
+                                  </span>
+                                ) : null}
+                                <strong>{slot.customerName}</strong>
+                                <span>{slot.serviceName}</span>
+                                <em>{done ? 'Completed' : slot.status}</em>
+                              </button>
+                            )
+                          })}
+                        </div>
+                        {!slots.length ? (
+                          <span className="calendar-cell-hint">Book</span>
+                        ) : null}
                       </div>
                     )
                   })}
@@ -763,17 +1020,188 @@ export function Appointments() {
       </div>
 
       <div className="panel">
-        <div className="panel-header">
-          <h2 className="panel-title">
-            Booking List
-            {rangeFrom || rangeTo
-              ? ` · ${rangeFrom || '…'} → ${rangeTo || '…'}`
-              : ''}
-          </h2>
+        <div className="panel-header booking-list-header">
+          <h2 className="panel-title">Booking List</h2>
+          <div className="chips booking-list-tabs" style={{ margin: 0 }}>
+            <button
+              type="button"
+              className={`chip ${listTab === 'active' ? 'active' : ''}`}
+              onClick={() => setListTab('active')}
+            >
+              Active
+              {rangeFrom || rangeTo ? ` · ${rangeFrom || '…'} → ${rangeTo || '…'}` : ''}
+            </button>
+            <button
+              type="button"
+              className={`chip ${listTab === 'completed' ? 'active' : ''}`}
+              onClick={() => setListTab('completed')}
+            >
+              Completed services ({completedBookings.length})
+            </button>
+            <button
+              type="button"
+              className={`chip ${listTab === 'cancelled' ? 'active' : ''}`}
+              onClick={() => setListTab('cancelled')}
+            >
+              Cancelled ({cancelledBookings.length})
+            </button>
+          </div>
         </div>
         <div className="panel-body">
+          {listTab === 'completed' || listTab === 'cancelled' ? (
+            <div className="completed-list-toolbar">
+              <div className="field" style={{ margin: 0 }}>
+                <label>From</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={listTab === 'completed' ? completedFrom : cancelledFrom}
+                  onChange={(e) =>
+                    listTab === 'completed'
+                      ? setCompletedFrom(e.target.value)
+                      : setCancelledFrom(e.target.value)
+                  }
+                />
+              </div>
+              <div className="field" style={{ margin: 0 }}>
+                <label>To</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={listTab === 'completed' ? completedTo : cancelledTo}
+                  min={
+                    (listTab === 'completed' ? completedFrom : cancelledFrom) || undefined
+                  }
+                  onChange={(e) =>
+                    listTab === 'completed'
+                      ? setCompletedTo(e.target.value)
+                      : setCancelledTo(e.target.value)
+                  }
+                />
+              </div>
+              {(listTab === 'completed' ? completedFrom || completedTo : cancelledFrom || cancelledTo) ? (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  type="button"
+                  style={{ alignSelf: 'end' }}
+                  onClick={() => {
+                    if (listTab === 'completed') {
+                      setCompletedFrom('')
+                      setCompletedTo('')
+                    } else {
+                      setCancelledFrom('')
+                      setCancelledTo('')
+                    }
+                  }}
+                >
+                  Clear range
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
           {loading ? (
             <div className="empty-state">Loading appointments...</div>
+          ) : listTab === 'completed' ? (
+            completedBookings.length === 0 ? (
+              <div className="empty-state">No completed services in this date range.</div>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Time</th>
+                      <th>Client</th>
+                      <th>Service</th>
+                      <th>Staff</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {completedBookings.map((apt) => (
+                      <tr
+                        key={apt.id}
+                        className="completed-row"
+                        onClick={() => setHistoryApt(apt)}
+                      >
+                        <td>{apt.date}</td>
+                        <td>{formatStandardTime(apt.time)}</td>
+                        <td>
+                          <strong>{apt.customerName}</strong>
+                        </td>
+                        <td>{apt.serviceName}</td>
+                        <td>{apt.staffName || '—'}</td>
+                        <td>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setHistoryApt(apt)
+                            }}
+                          >
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          ) : listTab === 'cancelled' ? (
+            cancelledBookings.length === 0 ? (
+              <div className="empty-state">No cancelled appointments in this date range.</div>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Time</th>
+                      <th>Client</th>
+                      <th>Service</th>
+                      <th>Reason</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cancelledBookings.map((apt) => (
+                      <tr
+                        key={apt.id}
+                        className="completed-row"
+                        onClick={() => setHistoryApt(apt)}
+                      >
+                        <td>{apt.date}</td>
+                        <td>{formatStandardTime(apt.time)}</td>
+                        <td>
+                          <strong>{apt.customerName}</strong>
+                        </td>
+                        <td>{apt.serviceName}</td>
+                        <td style={{ maxWidth: 220 }}>
+                          <span className="cancelled-reason-preview">
+                            {apt.cancellationReason || '—'}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setHistoryApt(apt)
+                            }}
+                          >
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           ) : filtered.length === 0 ? (
             <div className="empty-state">No bookings in this view yet.</div>
           ) : (
@@ -794,7 +1222,7 @@ export function Appointments() {
                   {filtered.map((apt) => (
                     <tr key={apt.id}>
                       <td>{apt.date}</td>
-                      <td>{apt.time}</td>
+                      <td>{formatStandardTime(apt.time)}</td>
                       <td>
                         <strong>{apt.customerName}</strong>
                         {apt.customerPhone ? (
@@ -833,6 +1261,13 @@ export function Appointments() {
                             <button
                               className="btn btn-ghost btn-sm"
                               type="button"
+                              onClick={() => openEditBooking(apt)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              type="button"
                               onClick={() => updateStatus(apt.id, 'checked-in')}
                             >
                               Check in
@@ -855,6 +1290,503 @@ export function Appointments() {
           )}
         </div>
       </div>
+
+      {formType !== 'none' ? (
+        <div className="confirm-modal-overlay booking-modal-overlay" role="presentation">
+          <div
+            className="booking-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="booking-modal-title"
+          >
+            <div className="booking-modal-top">
+              <div className="booking-modal-accent" aria-hidden />
+              <div className="booking-modal-head">
+                <div>
+                  <p className="booking-modal-kicker">
+                    {isEditing
+                      ? 'Edit booking'
+                      : formType === 'walk-in'
+                        ? 'Walk-in'
+                        : 'New booking'}
+                  </p>
+                  <h2 id="booking-modal-title" className="booking-modal-title">
+                    {isEditing ? form.customerName || 'Update booking' : 'Schedule a session'}
+                  </h2>
+                </div>
+                <button
+                  className="btn-icon"
+                  type="button"
+                  aria-label="Close"
+                  disabled={saving}
+                  onClick={closeBookingForm}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="booking-modal-schedule">
+                <span>{formatShortDate(form.date)}</span>
+                <span className="booking-modal-dot" aria-hidden />
+                <span>{formatStandardTime(form.time)}</span>
+                {formType === 'walk-in' ? (
+                  <>
+                    <span className="booking-modal-dot" aria-hidden />
+                    <span>Walk-in</span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+
+            <form className="booking-modal-form" onSubmit={onSubmit}>
+              <div className="booking-modal-body">
+                {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+                {isEditing && rescheduleMode ? (
+                  <div className="booking-reschedule-banner">
+                    <CalendarClock size={16} />
+                    <span>Choose a new date and time, then save to reschedule this booking.</span>
+                  </div>
+                ) : null}
+                <div className="booking-modal-grid">
+                  <div className="field booking-span-2">
+                    <label>Client</label>
+                    <input
+                      className="input"
+                      required
+                      autoFocus={!rescheduleMode}
+                      placeholder="Client full name"
+                      value={form.customerName}
+                      onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))}
+                    />
+                  </div>
+
+                  <div className="field booking-span-2">
+                    <label>Service</label>
+                    <select
+                      className="select"
+                      required
+                      value={form.serviceName}
+                      onChange={(e) => applyService(e.target.value)}
+                    >
+                      <option value="" disabled>
+                        Select a service
+                      </option>
+                      {form.serviceName &&
+                      !serviceOptions.some((s) => s.name === form.serviceName) ? (
+                        <option value={form.serviceName}>{form.serviceName}</option>
+                      ) : null}
+                      {serviceOptions.map((svc) => (
+                        <option key={svc.id} value={svc.name}>
+                          {svc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field booking-span-2">
+                    <label>Staff</label>
+                    {staffOptions.length ? (
+                      <div className="booking-staff-grid" role="group" aria-label="Staff">
+                        {staffOptions.map((member) => {
+                          const selected = form.staffName === member.fullName
+                          return (
+                            <button
+                              key={member.id}
+                              type="button"
+                              className={`booking-staff-swatch ${selected ? 'is-selected' : ''}`}
+                              aria-pressed={selected}
+                              onClick={() =>
+                                setForm((f) => ({
+                                  ...f,
+                                  staffName: selected ? '' : member.fullName,
+                                }))
+                              }
+                            >
+                              <span className="booking-staff-initial" aria-hidden>
+                                {member.fullName.trim().charAt(0).toUpperCase() || 'S'}
+                              </span>
+                              <span className="booking-staff-name">{member.fullName}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <p className="booking-field-hint">No Staff role accounts found yet.</p>
+                    )}
+                    {form.staffName &&
+                    !staffOptions.some((s) => s.fullName === form.staffName) ? (
+                      <p className="booking-field-hint">
+                        Current: {form.staffName} (not in Staff list)
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className={`field ${rescheduleMode ? 'is-reschedule-focus' : ''}`}>
+                    <label>Date</label>
+                    <input
+                      ref={dateInputRef}
+                      className="input"
+                      type="date"
+                      required
+                      value={form.date}
+                      onChange={(e) => {
+                        setRescheduleMode(true)
+                        setForm((f) => ({ ...f, date: e.target.value }))
+                      }}
+                    />
+                  </div>
+                  <div className={`field ${rescheduleMode ? 'is-reschedule-focus' : ''}`}>
+                    <label>Time</label>
+                    <select
+                      className="select"
+                      value={form.time}
+                      onChange={(e) => {
+                        setRescheduleMode(true)
+                        setForm((f) => ({ ...f, time: e.target.value }))
+                      }}
+                    >
+                      {!hours.includes(form.time) ? (
+                        <option value={form.time}>{formatStandardTime(form.time)}</option>
+                      ) : null}
+                      {hours.map((h) => (
+                        <option key={h} value={h}>
+                          {formatStandardTime(h)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Duration (min)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={15}
+                      step={15}
+                      value={form.durationMin}
+                      onChange={(e) => setForm((f) => ({ ...f, durationMin: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Calendar color</label>
+                    <div className="booking-color-grid" role="group" aria-label="Calendar color">
+                      {CALENDAR_COLORS.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          className={`booking-color-swatch ${
+                            form.calendarColor === color ? 'is-selected' : ''
+                          }`}
+                          style={{ background: color }}
+                          aria-label={`Color ${color}`}
+                          aria-pressed={form.calendarColor === color}
+                          onClick={() => setForm((f) => ({ ...f, calendarColor: color }))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="field booking-span-2">
+                    <label>Notes</label>
+                    <textarea
+                      className="input booking-notes"
+                      rows={3}
+                      placeholder="Allergies, preferences, prep notes…"
+                      value={form.notes}
+                      onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="booking-modal-actions">
+                {isEditing ? (
+                  <div className="booking-modal-actions-start">
+                    {!isCompleted ? (
+                      <button
+                        className="btn booking-complete-btn"
+                        type="button"
+                        disabled={saving}
+                        onClick={() => void markBookingCompleted()}
+                      >
+                        <Check size={15} strokeWidth={2.75} />
+                        Completed
+                      </button>
+                    ) : (
+                      <span className="booking-completed-badge">
+                        <Check size={14} strokeWidth={2.75} />
+                        Completed
+                      </span>
+                    )}
+                    <button
+                      className={`btn btn-ghost booking-reschedule-btn ${
+                        rescheduleMode ? 'is-active' : ''
+                      }`}
+                      type="button"
+                      disabled={saving}
+                      onClick={startReschedule}
+                    >
+                      <CalendarClock size={15} />
+                      Reschedule
+                    </button>
+                    <button
+                      className="btn btn-ghost booking-cancel-ghost"
+                      type="button"
+                      disabled={saving || isCompleted}
+                      onClick={() => openCancelModal()}
+                    >
+                      <Ban size={15} />
+                      Cancel appointment
+                    </button>
+                  </div>
+                ) : null}
+                <div className="booking-modal-actions-end">
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    disabled={saving}
+                    onClick={closeBookingForm}
+                  >
+                    Close
+                  </button>
+                  <button className="btn btn-primary" type="submit" disabled={saving}>
+                    {saving
+                      ? 'Saving...'
+                      : isEditing
+                        ? rescheduleMode
+                          ? 'Save reschedule'
+                          : 'Save changes'
+                        : 'Save booking'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {historyApt ? (
+        <div
+          className="confirm-modal-overlay booking-modal-overlay"
+          role="presentation"
+          onClick={() => setHistoryApt(null)}
+        >
+          <div
+            className="booking-modal history-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="booking-modal-top">
+              <div className="booking-modal-accent" aria-hidden />
+              <div className="booking-modal-head">
+                <div>
+                  <p className="booking-modal-kicker">
+                    {historyApt.status === 'cancelled' ? 'Cancelled appointment' : 'Completed service'}
+                  </p>
+                  <h2 id="history-modal-title" className="booking-modal-title">
+                    {historyApt.customerName}
+                  </h2>
+                </div>
+                <button
+                  className="btn-icon"
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setHistoryApt(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="booking-modal-schedule">
+                {historyApt.status === 'cancelled' ? (
+                  <span className="history-cancelled-pill">
+                    <Ban size={12} strokeWidth={2.75} />
+                    Cancelled
+                  </span>
+                ) : (
+                  <span className="history-done-pill">
+                    <Check size={12} strokeWidth={2.75} />
+                    Completed
+                  </span>
+                )}
+                <span className="booking-modal-dot" aria-hidden />
+                <span>{formatShortDate(historyApt.date)}</span>
+                <span className="booking-modal-dot" aria-hidden />
+                <span>{formatStandardTime(historyApt.time)}</span>
+              </div>
+            </div>
+
+            <div className="booking-modal-body">
+              <div className="history-meta">
+                <div>
+                  <span className="history-label">Service</span>
+                  <strong>{historyApt.serviceName}</strong>
+                </div>
+                <div>
+                  <span className="history-label">Staff</span>
+                  <strong>{historyApt.staffName || '—'}</strong>
+                </div>
+                <div>
+                  <span className="history-label">Duration</span>
+                  <strong>{historyApt.durationMin || 60} min</strong>
+                </div>
+                <div>
+                  <span className="history-label">Type</span>
+                  <strong>{historyApt.source === 'web' ? 'Website' : historyApt.type}</strong>
+                </div>
+                {historyApt.customerPhone ? (
+                  <div>
+                    <span className="history-label">Phone</span>
+                    <strong>{historyApt.customerPhone}</strong>
+                  </div>
+                ) : null}
+                {historyApt.customerEmail ? (
+                  <div>
+                    <span className="history-label">Email</span>
+                    <strong>{historyApt.customerEmail}</strong>
+                  </div>
+                ) : null}
+                {historyApt.status === 'cancelled' && historyApt.cancellationReason ? (
+                  <div className="history-span-2">
+                    <span className="history-label">Cancellation reason</span>
+                    <strong className="history-notes">{historyApt.cancellationReason}</strong>
+                  </div>
+                ) : null}
+                {historyApt.specialNote ? (
+                  <div className="history-span-2">
+                    <span className="history-label">Notes</span>
+                    <strong className="history-notes">{historyApt.specialNote}</strong>
+                  </div>
+                ) : null}
+                {historyApt.medicalHistory ? (
+                  <div className="history-span-2">
+                    <span className="history-label">Medical history</span>
+                    <strong className="history-notes">{historyApt.medicalHistory}</strong>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="booking-modal-actions">
+              {historyApt.status !== 'cancelled' ? (
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => {
+                    const apt = historyApt
+                    setHistoryApt(null)
+                    openEditBooking(apt)
+                  }}
+                >
+                  Open in editor
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="booking-modal-actions-end">
+                <button className="btn btn-primary" type="button" onClick={() => setHistoryApt(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cancelTarget ? (
+        <div className="confirm-modal-overlay booking-modal-overlay" role="presentation">
+          <div
+            className="booking-modal cancel-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cancel-modal-title"
+          >
+            <div className="booking-modal-top">
+              <div className="booking-modal-accent" aria-hidden />
+              <div className="booking-modal-head">
+                <div>
+                  <p className="booking-modal-kicker">Cancel appointment</p>
+                  <h2 id="cancel-modal-title" className="booking-modal-title">
+                    {cancelTarget.customerName}
+                  </h2>
+                </div>
+                <button
+                  className="btn-icon"
+                  type="button"
+                  aria-label="Close"
+                  disabled={cancelSaving}
+                  onClick={closeCancelModal}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="booking-modal-schedule">
+                <span>{formatShortDate(cancelTarget.date)}</span>
+                <span className="booking-modal-dot" aria-hidden />
+                <span>{formatStandardTime(cancelTarget.time)}</span>
+                <span className="booking-modal-dot" aria-hidden />
+                <span>{cancelTarget.serviceName}</span>
+              </div>
+            </div>
+
+            <form className="booking-modal-form" onSubmit={confirmCancelAppointment}>
+              <div className="booking-modal-body">
+                {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+                <p className="cancel-modal-copy">
+                  Tell us why this appointment is being cancelled. This is saved for clinic records.
+                </p>
+                <div className="cancel-reason-presets" role="group" aria-label="Common reasons">
+                  {CANCEL_REASON_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      className={`cancel-reason-chip ${
+                        cancelReason === preset ||
+                        (preset !== 'Other' && cancelReason.startsWith(`${preset} —`))
+                          ? 'is-selected'
+                          : ''
+                      }`}
+                      onClick={() =>
+                        setCancelReason(preset === 'Other' ? '' : preset)
+                      }
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+                <div className="field" style={{ marginTop: 12 }}>
+                  <label>Reason</label>
+                  <textarea
+                    className="input booking-notes"
+                    required
+                    rows={4}
+                    autoFocus
+                    placeholder="Why is this appointment cancelled?"
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="booking-modal-actions">
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  disabled={cancelSaving}
+                  onClick={closeCancelModal}
+                >
+                  Keep appointment
+                </button>
+                <div className="booking-modal-actions-end">
+                  <button className="btn booking-delete-btn" type="submit" disabled={cancelSaving}>
+                    <Ban size={15} />
+                    {cancelSaving ? 'Cancelling...' : 'Confirm cancel'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
 
       {decision ? (
         <div className="confirm-modal-overlay" role="presentation" onClick={() => !decisionSaving && setDecision(null)}>
@@ -896,7 +1828,8 @@ export function Appointments() {
                 <div>
                   <span className="confirm-modal-label">Schedule</span>
                   <strong>
-                    {decision.appointment.date} at {decision.appointment.time}
+                    {decision.appointment.date} at{' '}
+                    {formatStandardTime(decision.appointment.time)}
                   </strong>
                 </div>
                 <div>

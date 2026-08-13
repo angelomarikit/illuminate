@@ -9,7 +9,7 @@ This guide sets up app permissions without breaking your current clinic web app.
 | **Owner** | Business owner | Full app: dashboard, clinic tools, HR, inventory, settings |
 | **Admin** | Trusted manager | Same elevated access as Owner (clinic + HR + inventory + settings + dashboard) |
 | **Staff** | Front desk / therapists | Day-to-day ops: POS, sales, appointments, customers, services, expenses, consultations, loyalty, QR, chat, store open/close (**no inventory**) |
-| **HR** | Human resources | **HR section only:** Staff & Attendance, Payroll, Incentives. No dashboard, POS, clients, or clinic ops |
+| **HR** | Human resources | **HR section only:** Staff & Attendance, Create account, Payroll, Incentives. No dashboard, POS, clients, or clinic ops |
 | **Inventory** | Inventory Specialist | **Inventory section only:** Stock catalog, Stocktake, Receiving, Reorder (+ service supply links). Also available to Owner/Admin |
 | **Client** | Patient / member | Portal only: my services, loyalty points, support chat, profile settings |
 
@@ -191,10 +191,17 @@ Run `supabase/add_hr_role.sql`, then open:
 | Page | Path | What it does |
 |------|------|----------------|
 | Staff & Attendance | `/staff` | Accounts, leave, clock records, manual attendance |
+| Create account | `/create-account` | Provision logins (name, phone, email, role, password). Requires `supabase/add_create_account.sql` |
 | Payroll | `/payroll` | Compensation rates, attendance drafts, manual pay entries |
 | Incentives | `/incentives` | Rules + commission from POS **Sales by**, product incentives, manual payouts |
 
 HR users only see the **HR** sidebar section (not Dashboard / POS / Clients / etc.).
+
+**Create account notes**
+
+- Email is confirmed immediately so the user can sign in right away.
+- Password is stored encrypted in `provisioned_accounts`; the table shows `••••` until Owner/Admin/HR use the eye icon to reveal.
+- HR cannot create Owner or Admin. Admin cannot create Owner.
 
 ### Personal account settings (all internal roles)
 

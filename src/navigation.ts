@@ -25,6 +25,7 @@ import {
   ClipboardCheck,
   PackagePlus,
   RefreshCw,
+  UserPlus,
 } from 'lucide-react'
 import { type AppRole, canAccessPath, normalizeRole } from './lib/roles'
 
@@ -107,6 +108,12 @@ export const navSections: NavSection[] = [
         label: 'Staff & Attendance',
         path: '/staff',
         icon: Clock3,
+        roles: ['Owner', 'Admin', 'HR'],
+      },
+      {
+        label: 'Create account',
+        path: '/create-account',
+        icon: UserPlus,
         roles: ['Owner', 'Admin', 'HR'],
       },
       {

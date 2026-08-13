@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Bell, ChevronDown, LogOut, Menu, Search, ShoppingBag } from 'lucide-react'
+import { ChevronDown, LogOut, Menu, Search, ShoppingBag } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
 import { useStaffSession } from '../../context/StaffSessionContext'
 import {
   homePathForRole,
   isClinicRole,
+  isHrAccessRole,
   isInternalRole,
-  isInventoryAccessRole,
   normalizeRole,
 } from '../../lib/roles'
-import { supabase } from '../../lib/supabase'
-import { isUuid } from '../../lib/utils'
+import { NotificationBell } from './NotificationBell'
 
 type TopbarProps = {
   onMenu: () => void
@@ -32,52 +31,15 @@ export function Topbar({ onMenu }: TopbarProps) {
     clockOut,
   } = useStaffSession()
   const navigate = useNavigate()
-  const [openNotes, setOpenNotes] = useState(false)
   const [openBranchMenu, setOpenBranchMenu] = useState(false)
-  const [notes, setNotes] = useState<string[]>([])
   const [toggleError, setToggleError] = useState('')
   const branchMenuRef = useRef<HTMLDivElement>(null)
   const appRole = normalizeRole(user?.role)
   const showClinicControls = isClinicRole(user?.role)
   const showInternalShell = isInternalRole(user?.role)
-  const showInventoryAlerts = isInventoryAccessRole(user?.role)
+  const showHrShortcut = isHrAccessRole(user?.role) && !showClinicControls
   const showTimeClock = appRole === 'Staff' && Boolean(staffRecord)
   const activeBranch = branches.find((b) => b.id === branchId) ?? branches[0]
-
-  useEffect(() => {
-    async function loadNotes() {
-      const today = new Date().toISOString().slice(0, 10)
-      const next: string[] = []
-
-      if (showClinicControls) {
-        let aptQ = supabase
-          .from('appointments')
-          .select('customer_name, appointment_time, status')
-          .eq('appointment_date', today)
-          .limit(5)
-        if (isUuid(branchId)) aptQ = aptQ.eq('branch_id', branchId)
-        const { data: appts } = await aptQ
-        appts?.forEach((a) => {
-          next.push(
-            `${String(a.appointment_time).slice(0, 5)} · ${a.customer_name} (${a.status})`,
-          )
-        })
-      }
-
-      if (showInventoryAlerts) {
-        let invQ = supabase.from('inventory_items').select('name, stock, reorder_level').limit(20)
-        if (isUuid(branchId)) invQ = invQ.eq('branch_id', branchId)
-        const { data: inv } = await invQ
-        inv
-          ?.filter((i) => i.stock <= i.reorder_level)
-          .slice(0, 5)
-          .forEach((i) => next.push(`Low stock: ${i.name} (${i.stock})`))
-      }
-
-      setNotes(next.length ? next : ['No alerts right now.'])
-    }
-    loadNotes()
-  }, [branchId, showClinicControls, showInventoryAlerts])
 
   useEffect(() => {
     if (!openBranchMenu) return
@@ -234,61 +196,23 @@ export function Topbar({ onMenu }: TopbarProps) {
 
               {toggleError ? <span className="store-toggle-error">{toggleError}</span> : null}
             </div>
+
             {showClinicControls ? (
-              <>
-                <Link to="/pos" className="btn btn-primary btn-sm">
-                  <ShoppingBag size={15} />
-                  Open POS
-                </Link>
-                <div style={{ position: 'relative' }}>
-                  <button
-                    className="btn-icon"
-                    aria-label="Notifications"
-                    type="button"
-                    onClick={() => setOpenNotes((v) => !v)}
-                  >
-                    <Bell size={18} />
-                  </button>
-                  {openNotes ? (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        right: 0,
-                        top: 46,
-                        width: 280,
-                        background: '#fff',
-                        border: '1px solid var(--line)',
-                        borderRadius: 12,
-                        boxShadow: 'var(--shadow)',
-                        padding: 10,
-                        zIndex: 50,
-                      }}
-                    >
-                      <strong style={{ fontSize: '0.85rem' }}>Notifications</strong>
-                      <ul style={{ margin: '8px 0 0', padding: 0, listStyle: 'none' }}>
-                        {notes.map((note) => (
-                          <li
-                            key={note}
-                            style={{
-                              fontSize: '0.82rem',
-                              color: 'var(--muted)',
-                              padding: '6px 0',
-                              borderBottom: '1px solid var(--line)',
-                            }}
-                          >
-                            {note}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                </div>
-              </>
-            ) : (
+              <Link to="/pos" className="btn btn-primary btn-sm">
+                <ShoppingBag size={15} />
+                Open POS
+              </Link>
+            ) : showHrShortcut ? (
               <Link to="/payroll" className="btn btn-primary btn-sm">
                 Payroll
               </Link>
+            ) : (
+              <Link to="/inventory" className="btn btn-primary btn-sm">
+                Inventory
+              </Link>
             )}
+
+            <NotificationBell />
           </>
         ) : (
           <Link to={homePathForRole(user?.role)} className="btn btn-ghost btn-sm">

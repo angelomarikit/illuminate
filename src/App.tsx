@@ -23,6 +23,7 @@ import { Receiving } from './pages/inventory/Receiving'
 import { Reorder } from './pages/inventory/Reorder'
 import { Expenses } from './pages/Expenses'
 import { Staff } from './pages/Staff'
+import { CreateAccount } from './pages/CreateAccount'
 import { Payroll } from './pages/Payroll'
 import { Incentives } from './pages/Incentives'
 import { MyWork } from './pages/MyWork'
@@ -75,6 +76,7 @@ export default function App() {
                     <Route path="inventory/reorder" element={<Reorder />} />
                     <Route path="expenses" element={<Expenses />} />
                     <Route path="staff" element={<Staff />} />
+                    <Route path="create-account" element={<CreateAccount />} />
                     <Route path="payroll" element={<Payroll />} />
                     <Route path="incentives" element={<Incentives />} />
                     <Route path="my-work" element={<MyWork />} />
