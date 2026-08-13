@@ -109,31 +109,60 @@ export function useNotifications() {
 
   const unreadCount = useMemo(() => items.filter((n) => n.unread).length, [items])
 
-  const acknowledge = useCallback(
+  const persistAcks = useCallback(
     async (keys: string[]) => {
-      if (!user || !keys.length) return
+      if (!user || !keys.length) return true
       const unique = [...new Set(keys)]
-      const rows = unique.map((notice_key) => ({
-        user_id: user.id,
-        notice_key,
-      }))
-      const { error: err } = await supabase
+      const { data: existing, error: existingErr } = await supabase
         .from('notification_acks')
-        .upsert(rows, { onConflict: 'user_id,notice_key' })
-      if (err) {
-        setError(err.message)
-        return
+        .select('notice_key')
+        .eq('user_id', user.id)
+        .in('notice_key', unique)
+      if (existingErr) {
+        setError(existingErr.message)
+        return false
       }
-      setItems((prev) =>
-        prev.map((n) => (unique.includes(n.key) ? { ...n, unread: false } : n)),
+      const have = new Set((existing ?? []).map((row) => row.notice_key as string))
+      const missing = unique.filter((key) => !have.has(key))
+      if (!missing.length) return true
+      const { error: insertErr } = await supabase.from('notification_acks').insert(
+        missing.map((notice_key) => ({
+          user_id: user.id,
+          notice_key,
+          acked_at: new Date().toISOString(),
+        })),
       )
+      if (insertErr) {
+        setError(insertErr.message)
+        return false
+      }
+      return true
     },
     [user],
   )
 
+  const acknowledge = useCallback(
+    async (keys: string[]) => {
+      if (!keys.length) return false
+      const unique = [...new Set(keys)]
+      const ok = await persistAcks(unique)
+      if (!ok) return false
+      setError('')
+      // Dismiss from inbox (opened / cleared notices leave the list).
+      setItems((prev) => prev.filter((n) => !unique.includes(n.key)))
+      return true
+    },
+    [persistAcks],
+  )
+
   const clearAll = useCallback(async () => {
-    await acknowledge(items.map((n) => n.key))
-  }, [acknowledge, items])
+    if (!items.length) return
+    const keys = items.map((n) => n.key)
+    const ok = await persistAcks(keys)
+    if (!ok) return
+    setError('')
+    setItems([])
+  }, [items, persistAcks])
 
   return {
     enabled,

@@ -68,7 +68,7 @@ export function NotificationBell() {
             <button
               type="button"
               className="btn btn-ghost btn-sm"
-              disabled={!items.length || !unreadCount}
+              disabled={!items.length}
               onClick={() => void clearAll()}
             >
               Clear all

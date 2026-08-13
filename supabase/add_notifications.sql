@@ -26,6 +26,12 @@ create policy "own_notification_acks_insert"
   on public.notification_acks for insert to authenticated
   with check (user_id = auth.uid());
 
+drop policy if exists "own_notification_acks_update" on public.notification_acks;
+create policy "own_notification_acks_update"
+  on public.notification_acks for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
 drop policy if exists "own_notification_acks_delete" on public.notification_acks;
 create policy "own_notification_acks_delete"
   on public.notification_acks for delete to authenticated

@@ -160,8 +160,8 @@ export function buildNotifications(input: {
     }
   }
 
-  return items.sort((a, b) => {
-    if (a.unread !== b.unread) return a.unread ? -1 : 1
-    return b.createdAt.localeCompare(a.createdAt)
-  })
+  // Inbox only shows notices that still need attention (not yet cleared / opened).
+  return items
+    .filter((item) => item.unread)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
