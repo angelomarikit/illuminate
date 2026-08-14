@@ -86,7 +86,6 @@ export function pushBrowserNotifications(
       const note = new Notification(item.title, {
         body: item.body,
         tag: item.key,
-        renotify: false,
         silent: false,
       })
       note.onclick = () => {
