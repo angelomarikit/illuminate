@@ -78,7 +78,7 @@ export function POS() {
       supabase
         .from('profiles')
         .select('id, full_name, role')
-        .in('role', ['Owner', 'Admin', 'Staff'])
+        .in('role', ['Owner', 'Admin', 'Receptionist', 'Staff'])
         .order('full_name'),
       supabase
         .from('service_categories')

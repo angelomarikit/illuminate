@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
+import { roleLabel } from '../lib/roles'
 import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import './my-account.css'
@@ -292,7 +293,7 @@ export function MyAccount() {
               <h1 className="ma-hero-name">{user?.name || 'Team member'}</h1>
               <p className="ma-hero-email">{user?.email || '—'}</p>
               <div className="ma-hero-chips">
-                <span className="ma-chip ma-chip-gold">{user?.role || 'Staff'}</span>
+                <span className="ma-chip ma-chip-gold">{roleLabel(user?.role)}</span>
                 <span className="ma-chip">
                   <Briefcase size={12} />
                   {profileMeta?.employment_status || '—'}

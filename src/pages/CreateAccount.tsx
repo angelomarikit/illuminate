@@ -3,7 +3,7 @@ import { CheckCircle2, Eye, EyeOff, RefreshCw, UserPlus, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
-import { type AppRole, normalizeRole } from '../lib/roles'
+import { type AppRole, normalizeRole, roleLabel } from '../lib/roles'
 import { supabase } from '../lib/supabase'
 
 type ProvisionRow = {
@@ -84,7 +84,7 @@ export function CreateAccount() {
   const [revealed, setRevealed] = useState<Record<string, string>>({})
 
   const roleOptions = useMemo(() => {
-    const all: AppRole[] = ['Staff', 'Inventory', 'HR', 'Admin', 'Owner', 'Client']
+    const all: AppRole[] = ['Receptionist', 'Inventory', 'HR', 'Admin', 'Owner', 'Client']
     if (callerRole === 'Owner') return all
     if (callerRole === 'Admin') return all.filter((r) => r !== 'Owner')
     return all.filter((r) => r !== 'Owner' && r !== 'Admin')
@@ -99,7 +99,7 @@ export function CreateAccount() {
       age: '',
       gender: '',
       address: '',
-      role: 'Staff',
+      role: 'Receptionist',
       password: generatePassword(),
       createdByName: user?.name || '',
     }),
@@ -286,7 +286,7 @@ export function CreateAccount() {
                           </div>
                         </td>
                         <td>
-                          <span className="badge badge-neutral">{row.role}</span>
+                          <span className="badge badge-neutral">{roleLabel(row.role)}</span>
                         </td>
                         <td>{row.created_by_name}</td>
                         <td>
@@ -425,7 +425,7 @@ export function CreateAccount() {
                   >
                     {roleOptions.map((role) => (
                       <option key={role} value={role}>
-                        {role === 'Inventory' ? 'Inventory Specialist' : role}
+                        {roleLabel(role)}
                       </option>
                     ))}
                   </select>
@@ -611,7 +611,7 @@ export function CreateAccount() {
                 </div>
                 <div>
                   <span className="confirm-modal-label">Role</span>
-                  <strong>{showSuccess.role}</strong>
+                  <strong>{roleLabel(showSuccess.role)}</strong>
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <span className="confirm-modal-label">Password</span>

@@ -57,7 +57,7 @@ async function loadAuthUser(authUser: User): Promise<AuthUser> {
       authUser.email?.split('@')[0] ||
       'Staff',
     role: normalizeRole(
-      profile?.role || (authUser.user_metadata?.role as string | undefined) || 'Staff',
+      profile?.role || (authUser.user_metadata?.role as string | undefined) || 'Receptionist',
     ),
     branchId: profile?.branch_id ?? null,
   }
@@ -129,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           options: {
             data: {
               full_name: name.trim(),
-              role: 'Staff',
+              role: 'Receptionist',
             },
           },
         })

@@ -38,7 +38,7 @@ export function Topbar({ onMenu }: TopbarProps) {
   const showClinicControls = isClinicRole(user?.role)
   const showInternalShell = isInternalRole(user?.role)
   const showHrShortcut = isHrAccessRole(user?.role) && !showClinicControls
-  const showTimeClock = appRole === 'Staff' && Boolean(staffRecord)
+  const showTimeClock = appRole === 'Receptionist' && Boolean(staffRecord)
   const activeBranch = branches.find((b) => b.id === branchId) ?? branches[0]
 
   useEffect(() => {

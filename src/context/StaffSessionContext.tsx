@@ -58,7 +58,7 @@ function mapProfile(row: Record<string, unknown>): MyStaffRecord {
     id: String(row.id),
     fullName: String(row.full_name),
     email: String(row.email ?? ''),
-    appRole: normalizeRole(String(row.role ?? 'Staff')),
+    appRole: normalizeRole(String(row.role ?? 'Receptionist')),
     employmentStatus: (row.employment_status as EmploymentStatus) || 'probation',
     status: (row.duty_status as DutyStatus) || 'off-duty',
     branchId: (row.branch_id as string | null) ?? null,

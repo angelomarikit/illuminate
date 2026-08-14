@@ -171,14 +171,18 @@ function StarRating({ value, size = 16 }: { value: number; size?: number }) {
 type ServiceOption = { id: string; name: string; category: string; duration_min: number }
 
 const emptyForm = {
+  clientType: 'new' as 'new' | 'existing',
   fullName: '',
   email: '',
   phone: '',
+  password: '',
+  confirmPassword: '',
   birthday: '',
   age: '',
   sex: '',
   address: '',
   serviceName: '',
+  customService: '',
   medicalHistory: '',
   specialNote: '',
 }
@@ -224,7 +228,7 @@ export function Landing() {
   const [selectedTime, setSelectedTime] = useState('')
   const [booked, setBooked] = useState<Set<string>>(new Set())
   const [form, setForm] = useState(emptyForm)
-  const [step, setStep] = useState<'schedule' | 'details' | 'done'>('schedule')
+  const [step, setStep] = useState<'schedule' | 'details' | 'success'>('schedule')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -280,9 +284,6 @@ export function Landing() {
 
       const mapped = (serviceRows as ServiceOption[] | null) ?? []
       setServices(mapped)
-      if (mapped[0]) {
-        setForm((f) => (f.serviceName ? f : { ...f, serviceName: mapped[0].name }))
-      }
 
       const reviews =
         (
@@ -345,6 +346,27 @@ export function Landing() {
     }
   }, [galleryOpen])
 
+  useEffect(() => {
+    if (step !== 'details' && step !== 'success') return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      if (step === 'details') setStep('schedule')
+      if (step === 'success') {
+        setStep('schedule')
+        setSelectedDate('')
+        setSelectedTime('')
+        setForm(emptyForm)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = previous
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [step])
+
   const activeGallery =
     galleryOpen !== null ? SERVICE_GALLERY[galleryOpen] ?? null : null
 
@@ -385,9 +407,6 @@ export function Landing() {
     }
     setError('')
     setStep('details')
-    requestAnimationFrame(() => {
-      document.getElementById('details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
   }
 
   async function submitBooking(e: FormEvent) {
@@ -402,24 +421,50 @@ export function Landing() {
       setError('Email address and phone number are required.')
       return
     }
+    const isExisting = form.clientType === 'existing'
+    if (!isExisting) {
+      if (form.password.length < 8) {
+        setError('Password must be at least 8 characters.')
+        return
+      }
+      if (form.password !== form.confirmPassword) {
+        setError('Password confirmation does not match.')
+        return
+      }
+      if (!form.birthday) {
+        setError('Birthday is required for new clients.')
+        return
+      }
+    }
+
+    const customService = form.customService.trim()
+    const catalogService = form.serviceName.trim()
+    const serviceLabel = customService || catalogService || 'Consultation'
+    const duration = services.find((s) => s.name === catalogService)?.duration_min || 60
+
     setSaving(true)
     setError('')
 
-    const duration = services.find((s) => s.name === form.serviceName)?.duration_min || 60
+    const birthday = isExisting ? null : form.birthday || null
+    const ageNum = isExisting
+      ? null
+      : form.age
+        ? Number(form.age)
+        : Number(ageFromBirthday(birthday || ''))
+    const age =
+      ageNum != null && Number.isFinite(ageNum) && ageNum > 0 ? ageNum : null
 
-    const birthday = form.birthday || null
-    const ageNum = form.age ? Number(form.age) : Number(ageFromBirthday(birthday || ''))
-    const age = Number.isFinite(ageNum) && ageNum > 0 ? ageNum : null
-
-    const { error: err } = await supabase.rpc('submit_public_booking', {
+    const { error: err } = await supabase.rpc('submit_public_booking_register', {
       p_full_name: form.fullName.trim(),
       p_email: email,
       p_phone: phone,
-      p_age: age && !Number.isNaN(age) ? age : null,
-      p_sex: form.sex || null,
-      p_address: form.address.trim() || null,
-      p_service_name: form.serviceName.trim(),
-      p_medical_history: form.medicalHistory.trim() || null,
+      p_password: isExisting ? '' : form.password,
+      p_is_existing_client: isExisting,
+      p_age: age,
+      p_sex: isExisting ? null : form.sex || null,
+      p_address: isExisting ? null : form.address.trim() || null,
+      p_service_name: serviceLabel,
+      p_medical_history: isExisting ? null : form.medicalHistory.trim() || null,
       p_special_note: form.specialNote.trim() || null,
       p_appointment_date: selectedDate,
       p_appointment_time: selectedTime,
@@ -430,20 +475,17 @@ export function Landing() {
     setSaving(false)
     if (err) {
       setError(
-        err.message.includes('p_birthday') ||
-          err.message.includes('birthday') ||
-          err.message.includes('function') ||
-          err.message.includes('schema cache')
-          ? `${err.message} — run supabase/add_customer_birthday.sql in Supabase.`
-          : err.message.includes('policy')
-            ? `${err.message} — run supabase/add_public_booking.sql then fix_public_booking_flow.sql.`
-            : err.message,
+        err.message.includes('submit_public_booking_register') ||
+          err.message.includes('schema cache') ||
+          err.message.includes('function')
+          ? `${err.message} — re-run supabase/add_receptionist_and_client_booking.sql in Supabase.`
+          : err.message,
       )
       return
     }
 
-    setStep('done')
     setBooked((prev) => new Set(prev).add(`${selectedDate}|${selectedTime}`))
+    setStep('success')
   }
 
   const selectedLabel =
@@ -510,31 +552,7 @@ export function Landing() {
             </div>
 
             <div className="landing-calendar" aria-label="Booking calendar">
-              {step === 'done' ? (
-                <div className="landing-cal-done">
-                  <div className="landing-cal-done-icon">
-                    <Check size={20} />
-                  </div>
-                  <h2>Request received</h2>
-                  <p>
-                    Thank you, {form.fullName.split(' ')[0] || 'there'}. We&apos;ll confirm{' '}
-                    {selectedLabel} by email or phone.
-                  </p>
-                  <button
-                    type="button"
-                    className="landing-cal-btn"
-                    onClick={() => {
-                      setStep('schedule')
-                      setSelectedDate('')
-                      setSelectedTime('')
-                      setForm(emptyForm)
-                    }}
-                  >
-                    Reserve another date
-                  </button>
-                </div>
-              ) : (
-                <>
+              <>
                   <div className="landing-cal-brand">
                     <img src={logo} alt="" aria-hidden="true" />
                   </div>
@@ -642,186 +660,408 @@ export function Landing() {
                   >
                     Continue
                   </button>
-                </>
-              )}
+              </>
             </div>
           </div>
         </section>
 
         {step === 'details' ? (
-          <section className="landing-details" id="details">
-            <div className="landing-details-inner">
-              <div className="landing-details-copy">
-                <p className="landing-details-eyebrow">Almost there</p>
-                <h2>Your details</h2>
-                <p>
-                  {selectedLabel}. Share a few particulars so our clinicians can prepare for your
-                  visit.
-                </p>
+          <div
+            className="landing-booking-modal"
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setStep('schedule')
+            }}
+          >
+            <div
+              className="landing-booking-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="booking-modal-title"
+              id="details"
+            >
+              <header className="landing-booking-dialog-head">
+                <div className="landing-booking-dialog-intro">
+                  <p className="landing-booking-eyebrow">Almost there</p>
+                  <h2 id="booking-modal-title">Your details</h2>
+                  <p className="landing-booking-slot">{selectedLabel}</p>
+                  <p className="landing-booking-sub">
+                    {form.clientType === 'new'
+                      ? 'Create your Client portal account and submit your visit request.'
+                      : 'We’ll match your email to your existing client profile and book this visit.'}
+                  </p>
+                </div>
                 <button
                   type="button"
-                  className="landing-details-back"
+                  className="landing-booking-close"
+                  aria-label="Close booking form"
                   onClick={() => setStep('schedule')}
                 >
-                  Change date or time
+                  <X size={18} />
                 </button>
-              </div>
+              </header>
 
-              <form className="landing-form" onSubmit={submitBooking}>
-                {error ? <p className="landing-error">{error}</p> : null}
+              <form className="landing-booking-form" onSubmit={submitBooking}>
+                <div className="landing-booking-dialog-body">
+                  {error ? <p className="landing-error">{error}</p> : null}
 
-                <p className="landing-req-note">
-                  Fields marked with <span className="req" aria-hidden="true">*</span> are required.
-                </p>
+                  <p className="landing-req-note">
+                    Fields marked with <span className="req" aria-hidden="true">
+                      *
+                    </span>{' '}
+                    are required.
+                  </p>
 
-                <div className="landing-field">
-                  <label htmlFor="bk-name">
-                    Full name <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="bk-name"
-                    required
-                    aria-required="true"
-                    value={form.fullName}
-                    onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-                  />
+                  <div className="landing-field landing-field-full">
+                    <span className="landing-swatch-label">
+                      Client type <span className="req" aria-hidden="true">
+                        *
+                      </span>
+                    </span>
+                    <div
+                      className="landing-client-swatches"
+                      role="radiogroup"
+                      aria-label="Client type"
+                    >
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={form.clientType === 'new'}
+                        className={`landing-client-swatch${form.clientType === 'new' ? ' is-active' : ''}`}
+                        onClick={() => setForm((f) => ({ ...f, clientType: 'new' }))}
+                      >
+                        I&apos;m a new client
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={form.clientType === 'existing'}
+                        className={`landing-client-swatch${form.clientType === 'existing' ? ' is-active' : ''}`}
+                        onClick={() => setForm((f) => ({ ...f, clientType: 'existing' }))}
+                      >
+                        I&apos;m an existing client
+                      </button>
+                    </div>
+                    {form.clientType === 'existing' ? (
+                      <p className="landing-client-hint">
+                        Use the email on your client profile. Password is not needed here — birthday,
+                        age, address, and medical history are also skipped.
+                      </p>
+                    ) : (
+                      <p className="landing-client-hint">
+                        New clients register a portal password here so you can log in after booking.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="landing-field">
+                    <label htmlFor="bk-name">
+                      Full name <span className="req" aria-hidden="true">
+                        *
+                      </span>
+                    </label>
+                    <input
+                      id="bk-name"
+                      required
+                      aria-required="true"
+                      autoFocus
+                      value={form.fullName}
+                      onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+                    />
+                  </div>
+                  <div className="landing-field">
+                    <label htmlFor="bk-email">
+                      Email <span className="req" aria-hidden="true">
+                        *
+                      </span>
+                    </label>
+                    <input
+                      id="bk-email"
+                      type="email"
+                      required
+                      aria-required="true"
+                      value={form.email}
+                      onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                    />
+                  </div>
+                  <div className="landing-field">
+                    <label htmlFor="bk-phone">
+                      Phone <span className="req" aria-hidden="true">
+                        *
+                      </span>
+                    </label>
+                    <input
+                      id="bk-phone"
+                      required
+                      aria-required="true"
+                      value={form.phone}
+                      onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                    />
+                  </div>
+
+                  {form.clientType === 'new' ? (
+                    <>
+                      <div className="landing-field">
+                        <label htmlFor="bk-password">
+                          Password <span className="req" aria-hidden="true">
+                            *
+                          </span>
+                        </label>
+                        <input
+                          id="bk-password"
+                          type="password"
+                          required
+                          aria-required="true"
+                          minLength={8}
+                          autoComplete="new-password"
+                          value={form.password}
+                          onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                          placeholder="At least 8 characters"
+                        />
+                      </div>
+                      <div className="landing-field">
+                        <label htmlFor="bk-confirm">
+                          Confirm password <span className="req" aria-hidden="true">
+                            *
+                          </span>
+                        </label>
+                        <input
+                          id="bk-confirm"
+                          type="password"
+                          required
+                          aria-required="true"
+                          minLength={8}
+                          autoComplete="new-password"
+                          value={form.confirmPassword}
+                          onChange={(e) =>
+                            setForm((f) => ({ ...f, confirmPassword: e.target.value }))
+                          }
+                        />
+                      </div>
+                    </>
+                  ) : null}
+
+                  {form.clientType === 'new' ? (
+                    <>
+                      <div className="landing-field">
+                        <label htmlFor="bk-birthday">
+                          Birthday <span className="req" aria-hidden="true">
+                            *
+                          </span>
+                        </label>
+                        <input
+                          id="bk-birthday"
+                          type="date"
+                          required
+                          aria-required="true"
+                          max={new Date().toISOString().slice(0, 10)}
+                          value={form.birthday}
+                          onChange={(e) => {
+                            const birthday = e.target.value
+                            setForm((f) => ({
+                              ...f,
+                              birthday,
+                              age: ageFromBirthday(birthday) || f.age,
+                            }))
+                          }}
+                        />
+                      </div>
+                      <div className="landing-field">
+                        <label htmlFor="bk-age">
+                          Age <span className="req" aria-hidden="true">
+                            *
+                          </span>
+                        </label>
+                        <input
+                          id="bk-age"
+                          type="number"
+                          min={1}
+                          max={120}
+                          required
+                          aria-required="true"
+                          value={form.age}
+                          onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))}
+                        />
+                      </div>
+                      <div className="landing-field">
+                        <label htmlFor="bk-sex">
+                          Sex <span className="req" aria-hidden="true">
+                            *
+                          </span>
+                        </label>
+                        <select
+                          id="bk-sex"
+                          required
+                          aria-required="true"
+                          value={form.sex}
+                          onChange={(e) => setForm((f) => ({ ...f, sex: e.target.value }))}
+                        >
+                          <option value="">Select</option>
+                          <option value="Female">Female</option>
+                          <option value="Male">Male</option>
+                          <option value="Prefer not to say">Prefer not to say</option>
+                        </select>
+                      </div>
+                      <div className="landing-field landing-field-full">
+                        <label htmlFor="bk-address">
+                          Address <span className="req" aria-hidden="true">
+                            *
+                          </span>
+                        </label>
+                        <input
+                          id="bk-address"
+                          required
+                          aria-required="true"
+                          value={form.address}
+                          onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+                        />
+                      </div>
+                    </>
+                  ) : null}
+
+                  <div className="landing-field landing-field-full">
+                    <label htmlFor="bk-service">Service</label>
+                    <select
+                      id="bk-service"
+                      value={form.serviceName}
+                      onChange={(e) => setForm((f) => ({ ...f, serviceName: e.target.value }))}
+                    >
+                      <option value="">Select a service (optional)</option>
+                      {services.map((service) => (
+                        <option key={service.id} value={service.name}>
+                          {service.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="landing-field landing-field-full">
+                    <label htmlFor="bk-custom-service">Custom service</label>
+                    <input
+                      id="bk-custom-service"
+                      value={form.customService}
+                      onChange={(e) => setForm((f) => ({ ...f, customService: e.target.value }))}
+                      placeholder="Type a custom service if needed"
+                    />
+                  </div>
+                  {form.clientType === 'new' ? (
+                    <div className="landing-field landing-field-full">
+                      <label htmlFor="bk-history">Medical history / allergies</label>
+                      <textarea
+                        id="bk-history"
+                        rows={3}
+                        value={form.medicalHistory}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, medicalHistory: e.target.value }))
+                        }
+                        placeholder="Medications, allergies, previous procedures…"
+                      />
+                    </div>
+                  ) : null}
+                  <div className="landing-field landing-field-full">
+                    <label htmlFor="bk-note">Special note / goals</label>
+                    <textarea
+                      id="bk-note"
+                      rows={3}
+                      value={form.specialNote}
+                      onChange={(e) => setForm((f) => ({ ...f, specialNote: e.target.value }))}
+                      placeholder="What would you like us to focus on?"
+                    />
+                  </div>
                 </div>
-                <div className="landing-field">
-                  <label htmlFor="bk-email">
-                    Email <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="bk-email"
-                    type="email"
-                    required
-                    aria-required="true"
-                    value={form.email}
-                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                  />
-                </div>
-                <div className="landing-field">
-                  <label htmlFor="bk-phone">
-                    Phone <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="bk-phone"
-                    required
-                    aria-required="true"
-                    value={form.phone}
-                    onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                  />
-                </div>
-                <div className="landing-field">
-                  <label htmlFor="bk-birthday">
-                    Birthday <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="bk-birthday"
-                    type="date"
-                    required
-                    aria-required="true"
-                    max={new Date().toISOString().slice(0, 10)}
-                    value={form.birthday}
-                    onChange={(e) => {
-                      const birthday = e.target.value
-                      setForm((f) => ({
-                        ...f,
-                        birthday,
-                        age: ageFromBirthday(birthday) || f.age,
-                      }))
-                    }}
-                  />
-                </div>
-                <div className="landing-field">
-                  <label htmlFor="bk-age">
-                    Age <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="bk-age"
-                    type="number"
-                    min={1}
-                    max={120}
-                    required
-                    aria-required="true"
-                    value={form.age}
-                    onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))}
-                  />
-                </div>
-                <div className="landing-field">
-                  <label htmlFor="bk-sex">
-                    Sex <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <select
-                    id="bk-sex"
-                    required
-                    aria-required="true"
-                    value={form.sex}
-                    onChange={(e) => setForm((f) => ({ ...f, sex: e.target.value }))}
+
+                <footer className="landing-booking-dialog-foot">
+                  <button
+                    type="button"
+                    className="landing-booking-secondary"
+                    onClick={() => setStep('schedule')}
                   >
-                    <option value="">Select</option>
-                    <option value="Female">Female</option>
-                    <option value="Male">Male</option>
-                    <option value="Prefer not to say">Prefer not to say</option>
-                  </select>
-                </div>
-                <div className="landing-field landing-field-full">
-                  <label htmlFor="bk-address">
-                    Address <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="bk-address"
-                    required
-                    aria-required="true"
-                    value={form.address}
-                    onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-                  />
-                </div>
-                <div className="landing-field landing-field-full">
-                  <label htmlFor="bk-service">
-                    Service <span className="req" aria-hidden="true">*</span>
-                  </label>
-                  <select
-                    id="bk-service"
-                    required
-                    aria-required="true"
-                    value={form.serviceName}
-                    onChange={(e) => setForm((f) => ({ ...f, serviceName: e.target.value }))}
-                  >
-                    <option value="">Select a service</option>
-                    {services.map((service) => (
-                      <option key={service.id} value={service.name}>
-                        {service.name}
-                      </option>
-                    ))}
-                    {!services.length ? <option value="Consultation">Consultation</option> : null}
-                  </select>
-                </div>
-                <div className="landing-field landing-field-full">
-                  <label htmlFor="bk-history">Medical history / allergies</label>
-                  <textarea
-                    id="bk-history"
-                    rows={3}
-                    value={form.medicalHistory}
-                    onChange={(e) => setForm((f) => ({ ...f, medicalHistory: e.target.value }))}
-                    placeholder="Medications, allergies, previous procedures…"
-                  />
-                </div>
-                <div className="landing-field landing-field-full">
-                  <label htmlFor="bk-note">Special note / goals</label>
-                  <textarea
-                    id="bk-note"
-                    rows={3}
-                    value={form.specialNote}
-                    onChange={(e) => setForm((f) => ({ ...f, specialNote: e.target.value }))}
-                    placeholder="What would you like us to focus on?"
-                  />
-                </div>
-                <button className="landing-cal-btn landing-submit" type="submit" disabled={saving}>
-                  {saving ? 'Sending…' : 'Submit request'}
-                </button>
+                    Change date or time
+                  </button>
+                  <button className="landing-cal-btn landing-booking-submit" type="submit" disabled={saving}>
+                    {saving ? 'Sending…' : 'Submit request'}
+                  </button>
+                </footer>
               </form>
             </div>
-          </section>
+          </div>
+        ) : null}
+
+        {step === 'success' ? (
+          <div
+            className="landing-booking-modal"
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) {
+                setStep('schedule')
+                setSelectedDate('')
+                setSelectedTime('')
+                setForm(emptyForm)
+              }
+            }}
+          >
+            <div
+              className="landing-booking-success"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="booking-success-title"
+            >
+              <button
+                type="button"
+                className="landing-booking-close landing-booking-success-close"
+                aria-label="Close"
+                onClick={() => {
+                  setStep('schedule')
+                  setSelectedDate('')
+                  setSelectedTime('')
+                  setForm(emptyForm)
+                }}
+              >
+                <X size={18} />
+              </button>
+
+              <div className="landing-booking-success-brand">
+                <img src={logo} alt="Illuminate" />
+              </div>
+
+              <div className="landing-booking-success-mark" aria-hidden="true">
+                <span className="landing-booking-success-ring" />
+                <Check size={20} strokeWidth={2.25} />
+              </div>
+
+              <p className="landing-booking-eyebrow">Request received</p>
+              <h2 id="booking-success-title">Successfully submitted</h2>
+              <p className="landing-booking-success-copy">
+                Thank you. Our team will review your visit and follow up shortly.
+              </p>
+
+              <div className="landing-booking-success-meta">
+                <span className="landing-booking-success-meta-label">Reserved for</span>
+                <strong>{selectedLabel}</strong>
+              </div>
+
+              <p className="landing-booking-success-hint">
+                Please log in to your Client account to view and manage this booking.
+              </p>
+
+              <div className="landing-booking-success-actions">
+                <Link to="/login" className="landing-booking-success-primary">
+                  Log in to your account
+                </Link>
+                <button
+                  type="button"
+                  className="landing-booking-success-ghost"
+                  onClick={() => {
+                    setStep('schedule')
+                    setSelectedDate('')
+                    setSelectedTime('')
+                    setForm(emptyForm)
+                  }}
+                >
+                  Reserve another date
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         <section className="landing-gallery" id="gallery" aria-labelledby="gallery-heading">

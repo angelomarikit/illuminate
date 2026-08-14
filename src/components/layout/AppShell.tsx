@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
+import { ClientBookingProvider } from '../../context/ClientBookingContext'
+import { useAuth } from '../../context/AuthContext'
+import { isClientRole } from '../../lib/roles'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 
 export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { user } = useAuth()
+  const clientPortal = isClientRole(user?.role)
 
-  return (
-    <div className="app-shell">
+  const shell = (
+    <div className={`app-shell${clientPortal ? ' is-client-portal' : ''}`}>
       <Sidebar open={sidebarOpen} onNavigate={() => setSidebarOpen(false)} />
       {sidebarOpen ? (
         <button
@@ -24,4 +29,10 @@ export function AppShell() {
       </div>
     </div>
   )
+
+  if (clientPortal) {
+    return <ClientBookingProvider>{shell}</ClientBookingProvider>
+  }
+
+  return shell
 }

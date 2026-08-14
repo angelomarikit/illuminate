@@ -32,11 +32,14 @@ import { Settings } from './pages/Settings'
 import { MyAccount } from './pages/MyAccount'
 import { FeedbackAdmin } from './pages/FeedbackAdmin'
 import {
+  ClientAppointments,
   ClientHome,
   ClientLoyalty,
+  ClientNotes,
   ClientServices,
   ClientSettings,
   ClientSupport,
+  ClientWallet,
 } from './pages/portal/ClientPortal'
 import { Login } from './pages/Login'
 import { Register } from './pages/Register'
@@ -86,8 +89,11 @@ export default function App() {
                     <Route path="settings" element={<Settings />} />
 
                     <Route path="portal" element={<ClientHome />} />
+                    <Route path="portal/appointments" element={<ClientAppointments />} />
                     <Route path="portal/services" element={<ClientServices />} />
                     <Route path="portal/loyalty" element={<ClientLoyalty />} />
+                    <Route path="portal/wallet" element={<ClientWallet />} />
+                    <Route path="portal/notes" element={<ClientNotes />} />
                     <Route path="portal/support" element={<ClientSupport />} />
                     <Route path="portal/settings" element={<ClientSettings />} />
                   </Route>

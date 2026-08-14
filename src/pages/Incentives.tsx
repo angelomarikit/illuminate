@@ -91,7 +91,7 @@ export function Incentives() {
         supabase
           .from('profiles')
           .select('id, full_name')
-          .in('role', ['Owner', 'Admin', 'Staff', 'HR'])
+          .in('role', ['Owner', 'Admin', 'Receptionist', 'Staff', 'HR'])
           .order('full_name'),
       ])
 

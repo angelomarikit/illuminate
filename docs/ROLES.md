@@ -1,4 +1,4 @@
-# Illuminate roles (Owner / Admin / Staff / HR / Inventory / Client)
+# Illuminate roles (Owner / Admin / Receptionist / HR / Inventory / Client)
 
 This guide sets up app permissions without breaking your current clinic web app. The same model is ready for Expo / React Native later.
 
@@ -8,12 +8,12 @@ This guide sets up app permissions without breaking your current clinic web app.
 |------|-----|--------|
 | **Owner** | Business owner | Full app: dashboard, clinic tools, HR, inventory, settings |
 | **Admin** | Trusted manager | Same elevated access as Owner (clinic + HR + inventory + settings + dashboard) |
-| **Staff** | Front desk / therapists | Day-to-day ops: POS, sales, appointments, customers, services, expenses, consultations, loyalty, QR, chat, store open/close (**no inventory**) |
+| **Receptionist** | Front desk / therapists (formerly Staff) | Day-to-day ops: POS, sales, appointments, customers, services, expenses, consultations, loyalty, QR, chat, store open/close (**no inventory**) |
 | **HR** | Human resources | **HR section only:** Staff & Attendance, Create account, Payroll, Incentives. No dashboard, POS, clients, or clinic ops |
 | **Inventory** | Inventory Specialist | **Inventory section only:** Stock catalog, Stocktake, Receiving, Reorder (+ service supply links). Also available to Owner/Admin |
-| **Client** | Patient / member | Portal only: my services, loyalty points, support chat, profile settings |
+| **Client** | Patient / member | **Portal only:** appointments, packages, wallet/cash-in, loyalty points, doctor notes, support, profile. Cannot open clinic/admin/HR/inventory pages |
 
-**Important:** `profiles.role` is the app permission. `staff.role` is only a job title (e.g. Reception). Do not mix them.
+**Important:** `profiles.role` is the app permission. `staff.role` is only a job title (e.g. Reception). Do not mix them. Legacy DB value `Staff` is treated as **Receptionist** in the app.
 
 ---
 
@@ -26,7 +26,7 @@ This guide sets up app permissions without breaking your current clinic web app.
 
 That script will:
 
-- constrain `profiles.role` to `Owner | Admin | Staff | Client` (run `add_hr_role.sql` later to add **HR**)
+- constrain `profiles.role` to `Owner | Admin | Staff | Client` (run later scripts for HR, Inventory, then `add_receptionist_and_client_booking.sql` to rename Staff → Receptionist)
 - add `customers.user_id` (link login → CRM customer for web + mobile)
 - add optional `staff.employment_status` + `staff.profile_id` for Owner HR later
 - create helpers: `current_app_role()`, `is_owner_or_admin()`, `is_clinic_user()`, `is_client_user()`
@@ -36,7 +36,7 @@ That script will:
 
 ## Step 2 — Promote your Owner account
 
-After you register / sign in once (default role is **Staff**), run this (change the email):
+After you register / sign in once (default role is **Receptionist**), run this (change the email):
 
 ```sql
 update public.profiles
@@ -80,18 +80,47 @@ where id = (
 );
 ```
 
+Promote Receptionist (after `supabase/add_receptionist_and_client_booking.sql` — also migrates existing `Staff` rows):
+
+```sql
+update public.profiles
+set role = 'Receptionist'
+where id = (
+  select id from auth.users
+  where email = 'front.desk@clinic.com'
+);
+```
+
+Mark a Client portal user:
+
+```sql
+update public.profiles
+set role = 'Client'
+where id = (
+  select id from auth.users
+  where email = 'client@example.com'
+);
+
+update public.customers
+set user_id = (
+  select id from auth.users where email = 'client@example.com'
+)
+where lower(email) = 'client@example.com';
+```
+
 Or change the role from **Staff & Attendance** (Owner/Admin only) → select **HR** or **Inventory Specialist**.
 
 Then **log out and log back in** (or refresh) so the web app reloads `profiles.role`.
 
 ---
 
-## Step 3 — Keep Staff as default clinic signup
+## Step 3 — Keep Receptionist as default clinic signup
 
-Public **Register** always creates `Staff`. That is intentional.
+Public **Register** always creates `Receptionist` (legacy: Staff). That is intentional.
 
 - No role picker on signup (prevents anyone becoming Owner)
 - You promote Owner/Admin only via SQL (or later via an Owner-only Settings screen)
+- Website booking creates / links a **Client** account via `submit_public_booking_register`
 
 ---
 
@@ -99,8 +128,9 @@ Public **Register** always creates `Staff`. That is intentional.
 
 ### A) Create the auth user
 
-Option 1 — Supabase Dashboard → Authentication → Users → Add user  
-Option 2 — Sign up normally, then change role with SQL
+Option 1 — Book from the landing page (password fields register the Client portal account)  
+Option 2 — Supabase Dashboard → Authentication → Users → Add user  
+Option 3 — Sign up normally, then change role with SQL
 
 ```sql
 update public.profiles
@@ -134,17 +164,21 @@ Client portal pages use `customers.user_id` first, then fall back to email match
 ## What the web app does now
 
 - Sidebar menu filters by role
-- Routes redirect if the role cannot open that page
+- Routes redirect if the role cannot open that page (Client cannot open admin/HR/receptionist/inventory pages)
 - Homes:
   - Owner/Admin → `/dashboard`
-  - Staff → `/pos`
+  - Receptionist → `/pos`
   - HR → `/payroll`
+  - Inventory → `/inventory`
   - Client → `/portal`
 - Store toggle + branch selector + Open POS show for clinic roles only
 - Client portal routes:
   - `/portal`
+  - `/portal/appointments`
   - `/portal/services`
+  - `/portal/wallet`
   - `/portal/loyalty`
+  - `/portal/notes`
   - `/portal/support`
   - `/portal/settings`
 

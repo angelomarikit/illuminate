@@ -77,7 +77,7 @@ export function Payroll() {
       supabase
         .from('profiles')
         .select('id, full_name, role')
-        .in('role', ['Owner', 'Admin', 'Staff', 'HR'])
+        .in('role', ['Owner', 'Admin', 'Receptionist', 'Staff', 'HR'])
         .order('full_name'),
       supabase.from('staff_compensation').select('*'),
       supabase

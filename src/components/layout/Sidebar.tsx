@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import logo from '../../assets/logo-sidebar.png'
 import { useAuth } from '../../context/AuthContext'
+import { roleLabel } from '../../lib/roles'
 import { navForRole } from '../../navigation'
 
 type SidebarProps = {
@@ -58,8 +59,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         <div className="sidebar-user">
           <div className="avatar">{initials}</div>
           <div>
-            <strong>{user?.name ?? 'Staff'}</strong>
-            <span>{user?.role ?? 'Team member'}</span>
+            <strong>{user?.name ?? 'Guest'}</strong>
+            <span>{user?.role === 'Client' ? 'Client portal' : roleLabel(user?.role)}</span>
           </div>
         </div>
         <button className="logout-btn" onClick={handleLogout} type="button">

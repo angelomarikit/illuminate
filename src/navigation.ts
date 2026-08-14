@@ -26,6 +26,7 @@ import {
   PackagePlus,
   RefreshCw,
   UserPlus,
+  NotebookPen,
 } from 'lucide-react'
 import { type AppRole, canAccessPath, normalizeRole } from './lib/roles'
 
@@ -48,35 +49,35 @@ export const navSections: NavSection[] = [
     title: 'Main',
     items: [
       { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Owner', 'Admin'] },
-      { label: 'POS / Sales', path: '/pos', icon: ShoppingBag, roles: ['Owner', 'Admin', 'Staff'] },
-      { label: 'Sales Proof', path: '/sales', icon: Receipt, roles: ['Owner', 'Admin', 'Staff'] },
+      { label: 'POS / Sales', path: '/pos', icon: ShoppingBag, roles: ['Owner', 'Admin', 'Receptionist'] },
+      { label: 'Sales Proof', path: '/sales', icon: Receipt, roles: ['Owner', 'Admin', 'Receptionist'] },
       {
         label: 'Client Sessions',
         path: '/sessions',
         icon: CalendarCheck2,
-        roles: ['Owner', 'Admin', 'Staff'],
+        roles: ['Owner', 'Admin', 'Receptionist'],
       },
       {
         label: 'Appointments',
         path: '/appointments',
         icon: CalendarDays,
-        roles: ['Owner', 'Admin', 'Staff'],
+        roles: ['Owner', 'Admin', 'Receptionist'],
       },
     ],
   },
   {
     title: 'Clinic',
     items: [
-      { label: 'Customers', path: '/customers', icon: Users, roles: ['Owner', 'Admin', 'Staff'] },
+      { label: 'Customers', path: '/customers', icon: Users, roles: ['Owner', 'Admin', 'Receptionist'] },
       {
         label: 'AI Consultations',
         path: '/consultations',
         icon: Sparkles,
-        roles: ['Owner', 'Admin', 'Staff'],
+        roles: ['Owner', 'Admin', 'Receptionist'],
       },
-      { label: 'Services', path: '/services', icon: ClipboardList, roles: ['Owner', 'Admin', 'Staff'] },
-      { label: 'Loyalty & Points', path: '/loyalty', icon: Gift, roles: ['Owner', 'Admin', 'Staff'] },
-      { label: 'QR Check-in', path: '/qr-checkin', icon: QrCode, roles: ['Owner', 'Admin', 'Staff'] },
+      { label: 'Services', path: '/services', icon: ClipboardList, roles: ['Owner', 'Admin', 'Receptionist'] },
+      { label: 'Loyalty & Points', path: '/loyalty', icon: Gift, roles: ['Owner', 'Admin', 'Receptionist'] },
+      { label: 'QR Check-in', path: '/qr-checkin', icon: QrCode, roles: ['Owner', 'Admin', 'Receptionist'] },
     ],
   },
   {
@@ -91,14 +92,14 @@ export const navSections: NavSection[] = [
   {
     title: 'Operations',
     items: [
-      { label: 'Expenses', path: '/expenses', icon: Wallet, roles: ['Owner', 'Admin', 'Staff'] },
+      { label: 'Expenses', path: '/expenses', icon: Wallet, roles: ['Owner', 'Admin', 'Receptionist'] },
       {
         label: 'My Work',
         path: '/my-work',
         icon: Clock3,
-        roles: ['Staff'],
+        roles: ['Receptionist'],
       },
-      { label: 'Chat Support', path: '/chat', icon: MessageSquare, roles: ['Owner', 'Admin', 'Staff'] },
+      { label: 'Chat Support', path: '/chat', icon: MessageSquare, roles: ['Owner', 'Admin', 'Receptionist'] },
     ],
   },
   {
@@ -137,7 +138,7 @@ export const navSections: NavSection[] = [
         label: 'Account settings',
         path: '/my-account',
         icon: CircleUserRound,
-        roles: ['Owner', 'Admin', 'Staff', 'HR', 'Inventory'],
+        roles: ['Owner', 'Admin', 'Receptionist', 'HR', 'Inventory'],
       },
     ],
   },
@@ -153,12 +154,20 @@ export const navSections: NavSection[] = [
     items: [
       { label: 'My Care', path: '/portal', icon: HeartPulse, roles: ['Client'] },
       {
-        label: 'My Services',
-        path: '/portal/services',
+        label: 'Appointments',
+        path: '/portal/appointments',
         icon: CalendarDays,
         roles: ['Client'],
       },
+      {
+        label: 'My Packages',
+        path: '/portal/services',
+        icon: CalendarCheck2,
+        roles: ['Client'],
+      },
+      { label: 'Wallet', path: '/portal/wallet', icon: Wallet, roles: ['Client'] },
       { label: 'My Points', path: '/portal/loyalty', icon: Gift, roles: ['Client'] },
+      { label: 'Doctor notes', path: '/portal/notes', icon: NotebookPen, roles: ['Client'] },
       { label: 'Support', path: '/portal/support', icon: LifeBuoy, roles: ['Client'] },
       { label: 'My Profile', path: '/portal/settings', icon: UserRound, roles: ['Client'] },
     ],

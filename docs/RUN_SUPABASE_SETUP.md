@@ -60,6 +60,7 @@ After setup.sql, also run (in order):
 18. `supabase/add_appointment_cancellation_reason.sql` (cancel reason for cancelled appointments)
 19. `supabase/add_notifications.sql` (role-scoped notification acknowledgments / unread state)
 20. `supabase/add_service_categories.sql` (Owner/Admin custom service categories)
+21. `supabase/add_receptionist_and_client_booking.sql` (rename Staff → Receptionist; landing booking registers Client account + portal RLS for notes/wallet/appointments)
 
 Then promote your owner account (see `docs/ROLES.md`).
 

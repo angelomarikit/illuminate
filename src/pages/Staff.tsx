@@ -3,7 +3,7 @@ import { Trash2, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
-import { type AppRole, isElevatedRole, normalizeRole } from '../lib/roles'
+import { type AppRole, isElevatedRole, normalizeRole, roleLabel } from '../lib/roles'
 import {
   type DutyStatus,
   type EmploymentStatus,
@@ -57,7 +57,7 @@ type RoleChangePending = {
 const ROLE_ACCESS: Record<AppRole, string> = {
   Owner: 'Full access — dashboard, clinic tools, HR, inventory, and settings.',
   Admin: 'Elevated access — dashboard, clinic tools, HR, inventory, and settings.',
-  Staff: 'Clinic operations — POS, bookings, expenses, chat, and My Work (no inventory).',
+  Receptionist: 'Clinic operations — POS, bookings, expenses, chat, and My Work (no inventory).',
   HR: 'HR only — Staff & Attendance, Payroll, and Incentives (no POS, clients, or dashboard).',
   Inventory:
     'Inventory Specialist — stock catalog, stocktake, receiving, reorder, and service supply links.',
@@ -456,11 +456,11 @@ export function Staff() {
                             <option value="Admin">Admin</option>
                             <option value="HR">HR</option>
                             <option value="Inventory">Inventory Specialist</option>
-                            <option value="Staff">Staff</option>
+                            <option value="Receptionist">Receptionist</option>
                             <option value="Client">Client</option>
                           </select>
                         ) : (
-                          <span className="badge badge-neutral">{account.role}</span>
+                          <span className="badge badge-neutral">{roleLabel(account.role)}</span>
                         )}
                       </td>
                       <td>

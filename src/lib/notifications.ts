@@ -18,7 +18,7 @@ export type AppNotification = {
 }
 
 const ROLE_KINDS: Record<AppRole, NotificationKind[]> = {
-  Staff: ['appointment_soon', 'booking_pending'],
+  Receptionist: ['appointment_soon', 'booking_pending'],
   HR: ['leave_pending'],
   Inventory: ['low_stock'],
   Owner: ['appointment_soon', 'booking_pending', 'leave_pending', 'low_stock'],

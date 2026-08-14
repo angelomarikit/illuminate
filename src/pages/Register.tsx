@@ -65,7 +65,7 @@ export function Register() {
             <p className="auth-kicker">Illuminate Medical Aesthetics</p>
             <h1>Create account</h1>
             <p>
-              Register as Staff for clinic access. Owner and Admin roles are assigned by the clinic.
+              Register as Receptionist for clinic access. Owner and Admin roles are assigned by the clinic.
             </p>
           </div>
 

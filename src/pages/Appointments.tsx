@@ -260,7 +260,7 @@ export function Appointments() {
         supabase
           .from('profiles')
           .select('id, full_name')
-          .eq('role', 'Staff')
+          .in('role', ['Receptionist', 'Staff'])
           .order('full_name'),
       ])
       if (cancelled) return
@@ -1410,7 +1410,7 @@ export function Appointments() {
                         })}
                       </div>
                     ) : (
-                      <p className="booking-field-hint">No Staff role accounts found yet.</p>
+                      <p className="booking-field-hint">No Receptionist role accounts found yet.</p>
                     )}
                     {form.staffName &&
                     !staffOptions.some((s) => s.fullName === form.staffName) ? (
