@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
+import {
+  getBrowserNotifyEnabled,
+  getBrowserNotifyPermission,
+  markBrowserNoticesSeen,
+  pushBrowserNotifications,
+  requestBrowserNotifyPermission,
+  setBrowserNotifyEnabled,
+} from '../lib/browserNotifications'
 import {
   buildNotifications,
   kindsForRole,
@@ -11,12 +19,19 @@ import { supabase } from '../lib/supabase'
 import { isUuid } from '../lib/utils'
 import { toLocalISODate } from '../lib/dates'
 
-export function useNotifications() {
+export function useNotifications(opts?: {
+  onBrowserOpen?: (item: AppNotification) => void
+}) {
   const { user } = useAuth()
   const { branchId } = useBranch()
   const [items, setItems] = useState<AppNotification[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [browserPermission, setBrowserPermission] = useState(() => getBrowserNotifyPermission())
+  const [browserEnabled, setBrowserEnabled] = useState(() => getBrowserNotifyEnabled())
+  const primedRef = useRef(false)
+  const onBrowserOpenRef = useRef(opts?.onBrowserOpen)
+  onBrowserOpenRef.current = opts?.onBrowserOpen
 
   const enabled = Boolean(user && isInternalRole(user.role) && kindsForRole(user.role).length)
 
@@ -82,16 +97,26 @@ export function useNotifications() {
 
       const ackedKeys = new Set((acksRes.data ?? []).map((row) => row.notice_key as string))
 
-      setItems(
-        buildNotifications({
-          role: user.role,
-          todayIso: today,
-          appointments: apptsRes.data ?? [],
-          leaves: leavesRes.data ?? [],
-          inventory: invRes.data ?? [],
-          ackedKeys,
-        }),
-      )
+      const next = buildNotifications({
+        role: user.role,
+        todayIso: today,
+        appointments: apptsRes.data ?? [],
+        leaves: leavesRes.data ?? [],
+        inventory: invRes.data ?? [],
+        ackedKeys,
+      })
+
+      // First poll: remember current inbox so we don't spam desktop alerts on login.
+      if (!primedRef.current) {
+        markBrowserNoticesSeen(next.map((n) => n.key))
+        primedRef.current = true
+      } else {
+        pushBrowserNotifications(next, {
+          onOpen: (item) => onBrowserOpenRef.current?.(item),
+        })
+      }
+
+      setItems(next)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load notifications.')
       setItems([])
@@ -107,7 +132,23 @@ export function useNotifications() {
     return () => window.clearInterval(id)
   }, [load, enabled])
 
+  useEffect(() => {
+    primedRef.current = false
+  }, [user?.id])
+
   const unreadCount = useMemo(() => items.filter((n) => n.unread).length, [items])
+
+  const enableBrowserNotifications = useCallback(async () => {
+    const permission = await requestBrowserNotifyPermission()
+    setBrowserPermission(permission)
+    setBrowserEnabled(permission === 'granted' && getBrowserNotifyEnabled())
+    return permission
+  }, [])
+
+  const disableBrowserNotifications = useCallback(() => {
+    setBrowserNotifyEnabled(false)
+    setBrowserEnabled(false)
+  }, [])
 
   const persistAcks = useCallback(
     async (keys: string[]) => {
@@ -148,7 +189,7 @@ export function useNotifications() {
       const ok = await persistAcks(unique)
       if (!ok) return false
       setError('')
-      // Dismiss from inbox (opened / cleared notices leave the list).
+      markBrowserNoticesSeen(unique)
       setItems((prev) => prev.filter((n) => !unique.includes(n.key)))
       return true
     },
@@ -161,6 +202,7 @@ export function useNotifications() {
     const ok = await persistAcks(keys)
     if (!ok) return
     setError('')
+    markBrowserNoticesSeen(keys)
     setItems([])
   }, [items, persistAcks])
 
@@ -173,5 +215,9 @@ export function useNotifications() {
     reload: load,
     acknowledge,
     clearAll,
+    browserPermission,
+    browserEnabled,
+    enableBrowserNotifications,
+    disableBrowserNotifications,
   }
 }

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell } from 'lucide-react'
+import { Bell, MonitorSmartphone } from 'lucide-react'
 import { useNotifications } from '../../hooks/useNotifications'
-import type { NotificationKind } from '../../lib/notifications'
+import { browserNotificationsSupported } from '../../lib/browserNotifications'
+import type { AppNotification, NotificationKind } from '../../lib/notifications'
 
 const KIND_LABEL: Record<NotificationKind, string> = {
   appointment_soon: 'Schedule',
@@ -15,8 +16,29 @@ export function NotificationBell() {
   const navigate = useNavigate()
   const panelRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
-  const { enabled, items, loading, error, unreadCount, acknowledge, clearAll, reload } =
-    useNotifications()
+  const [browserBusy, setBrowserBusy] = useState(false)
+  const [browserHint, setBrowserHint] = useState('')
+
+  const {
+    enabled,
+    items,
+    loading,
+    error,
+    unreadCount,
+    acknowledge,
+    clearAll,
+    reload,
+    browserPermission,
+    browserEnabled,
+    enableBrowserNotifications,
+    disableBrowserNotifications,
+  } = useNotifications({
+    onBrowserOpen: (item: AppNotification) => {
+      void acknowledge([item.key])
+      navigate(item.href)
+      setOpen(true)
+    },
+  })
 
   useEffect(() => {
     if (!open) return
@@ -42,6 +64,32 @@ export function NotificationBell() {
     setOpen(false)
     navigate(href)
   }
+
+  async function onToggleBrowser() {
+    setBrowserHint('')
+    setBrowserBusy(true)
+    try {
+      if (browserEnabled) {
+        disableBrowserNotifications()
+        setBrowserHint('Desktop alerts paused on this device.')
+        return
+      }
+      const permission = await enableBrowserNotifications()
+      if (permission === 'granted') {
+        setBrowserHint('Desktop alerts enabled. New inbox items will also appear here.')
+      } else if (permission === 'denied') {
+        setBrowserHint('Blocked by the browser. Allow notifications for this site in settings.')
+      } else if (permission === 'unsupported') {
+        setBrowserHint('This browser does not support desktop notifications.')
+      } else {
+        setBrowserHint('Permission was not granted.')
+      }
+    } finally {
+      setBrowserBusy(false)
+    }
+  }
+
+  const showBrowserControls = browserNotificationsSupported()
 
   return (
     <div className="notif-bell" ref={panelRef}>
@@ -74,6 +122,30 @@ export function NotificationBell() {
               Clear all
             </button>
           </div>
+
+          {showBrowserControls ? (
+            <div className="notif-browser-bar">
+              <div className="notif-browser-copy">
+                <MonitorSmartphone size={14} />
+                <span>
+                  {browserEnabled && browserPermission === 'granted'
+                    ? 'Desktop alerts on'
+                    : browserPermission === 'denied'
+                      ? 'Desktop alerts blocked'
+                      : 'Desktop alerts off'}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={browserBusy || browserPermission === 'denied'}
+                onClick={() => void onToggleBrowser()}
+              >
+                {browserEnabled && browserPermission === 'granted' ? 'Turn off' : 'Enable'}
+              </button>
+            </div>
+          ) : null}
+          {browserHint ? <p className="notif-browser-hint">{browserHint}</p> : null}
 
           <div className="notif-panel-body">
             {loading && !items.length ? (
