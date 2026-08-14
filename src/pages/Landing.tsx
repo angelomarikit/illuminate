@@ -552,115 +552,113 @@ export function Landing() {
             </div>
 
             <div className="landing-calendar" aria-label="Booking calendar">
-              <>
-                  <div className="landing-cal-brand">
-                    <img src={logo} alt="" aria-hidden="true" />
-                  </div>
+              <div className="landing-cal-brand">
+                <img src={logo} alt="" aria-hidden="true" />
+              </div>
 
-                  <div className="landing-cal-top">
-                    <div>
-                      <p className="landing-cal-eyebrow">Private booking</p>
-                      <h2>Select your visit</h2>
-                    </div>
-                    <p className="landing-cal-selected">{selectedLabel}</p>
-                  </div>
+              <div className="landing-cal-top">
+                <div>
+                  <p className="landing-cal-eyebrow">Private booking</p>
+                  <h2>Select your visit</h2>
+                </div>
+                <p className="landing-cal-selected">{selectedLabel}</p>
+              </div>
 
-                  <div className="landing-cal-head">
+              <div className="landing-cal-head">
+                <button
+                  type="button"
+                  className="landing-cal-nav"
+                  aria-label="Previous month"
+                  onClick={() =>
+                    setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))
+                  }
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <h3>
+                  {month.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
+                </h3>
+                <button
+                  type="button"
+                  className="landing-cal-nav"
+                  aria-label="Next month"
+                  onClick={() =>
+                    setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))
+                  }
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+
+              <div className="landing-cal-weekdays">
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                  <span key={`${d}-${i}`}>{d}</span>
+                ))}
+              </div>
+
+              <div className="landing-cal-grid">
+                {cells.map((cell) => {
+                  if (!cell.date) return <div key={cell.key} className="landing-cal-empty" />
+                  const key = cell.key
+                  const disabled = key < todayKey
+                  const selected = selectedDate === key
+                  const isToday = key === todayKey
+                  return (
                     <button
+                      key={key}
                       type="button"
-                      className="landing-cal-nav"
-                      aria-label="Previous month"
-                      onClick={() =>
-                        setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))
-                      }
+                      className={[
+                        'landing-cal-day',
+                        selected ? 'is-selected' : '',
+                        disabled ? 'is-disabled' : '',
+                        isToday ? 'is-today' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      disabled={disabled}
+                      onClick={() => selectDate(cell.date!)}
                     >
-                      <ChevronLeft size={16} />
+                      {cell.date.getDate()}
                     </button>
-                    <h3>
-                      {month.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
-                    </h3>
-                    <button
-                      type="button"
-                      className="landing-cal-nav"
-                      aria-label="Next month"
-                      onClick={() =>
-                        setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))
-                      }
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
+                  )
+                })}
+              </div>
 
-                  <div className="landing-cal-weekdays">
-                    {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-                      <span key={`${d}-${i}`}>{d}</span>
-                    ))}
-                  </div>
+              <div className="landing-cal-times">
+                <p className="landing-cal-times-label">Available hours</p>
+                <div className="landing-time-grid">
+                  {(selectedDate ? availableTimes : TIME_SLOTS).map((slot) => {
+                    const taken = selectedDate
+                      ? booked.has(`${selectedDate}|${slot}`)
+                      : false
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        className={`landing-time ${
+                          selectedTime === slot ? 'is-selected' : ''
+                        }`}
+                        disabled={!selectedDate || taken}
+                        onClick={() => setSelectedTime(slot)}
+                      >
+                        {slot}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
 
-                  <div className="landing-cal-grid">
-                    {cells.map((cell) => {
-                      if (!cell.date) return <div key={cell.key} className="landing-cal-empty" />
-                      const key = cell.key
-                      const disabled = key < todayKey
-                      const selected = selectedDate === key
-                      const isToday = key === todayKey
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          className={[
-                            'landing-cal-day',
-                            selected ? 'is-selected' : '',
-                            disabled ? 'is-disabled' : '',
-                            isToday ? 'is-today' : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' ')}
-                          disabled={disabled}
-                          onClick={() => selectDate(cell.date!)}
-                        >
-                          {cell.date.getDate()}
-                        </button>
-                      )
-                    })}
-                  </div>
+              {error && step === 'schedule' ? (
+                <p className="landing-error">{error}</p>
+              ) : null}
 
-                  <div className="landing-cal-times">
-                    <p className="landing-cal-times-label">Available hours</p>
-                    <div className="landing-time-grid">
-                      {(selectedDate ? availableTimes : TIME_SLOTS).map((slot) => {
-                        const taken = selectedDate
-                          ? booked.has(`${selectedDate}|${slot}`)
-                          : false
-                        return (
-                          <button
-                            key={slot}
-                            type="button"
-                            className={`landing-time ${
-                              selectedTime === slot ? 'is-selected' : ''
-                            }`}
-                            disabled={!selectedDate || taken}
-                            onClick={() => setSelectedTime(slot)}
-                          >
-                            {slot}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-
-                  {error && step === 'schedule' ? (
-                    <p className="landing-error">{error}</p>
-                  ) : null}
-
-                  <button
-                    type="button"
-                    className="landing-cal-btn"
-                    onClick={continueToDetails}
-                  >
-                    Continue
-                  </button>
-              </>
+              <button
+                type="button"
+                className="landing-cal-btn"
+                onClick={continueToDetails}
+              >
+                Continue
+              </button>
             </div>
           </div>
         </section>
