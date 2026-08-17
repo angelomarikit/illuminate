@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Illuminate",
-    "slug": "illuminate-client",
+    "slug": "apex-technology",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -22,7 +22,10 @@
       },
       "package": "com.illuminate.client",
       "versionCode": 1,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -61,8 +64,10 @@
     },
     "extra": {
       "eas": {
-        "projectId": ""
-      }
-    }
+        "projectId": "9313c540-aa70-44fe-98ae-f15a7f4bbe0c"
+      },
+      "router": {}
+    },
+    "owner": "apextechnologys-team"
   }
 }

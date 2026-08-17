@@ -7,6 +7,7 @@ import { ProtectedRoute } from './components/auth/ProtectedRoute'
 import { RoleRoute } from './components/auth/RoleRoute'
 import { AppShell } from './components/layout/AppShell'
 import { Landing } from './pages/Landing'
+import { PrivacyPolicy } from './pages/PrivacyPolicy'
 import { Dashboard } from './pages/Dashboard'
 import { POS } from './pages/POS'
 import { Sales } from './pages/Sales'
@@ -55,6 +56,7 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Landing />} />
+              <Route path="/privacy" element={<PrivacyPolicy />} />
 
               <Route element={<GuestRoute />}>
                 <Route path="/login" element={<Login />} />

@@ -164,7 +164,7 @@ Requires `expo-updates` configured; add when you are ready for OTA.
 
 ## 5. Store checklist
 
-- [ ] Privacy policy URL (same as website)
+- [ ] Privacy policy URL (same as website) — public page: `/privacy`
 - [ ] Support email / clinic contact
 - [ ] Screenshots (iPhone 6.7" + Android phone)
 - [ ] App icons / splash already point at warm `#f5f0e8` in `app.json`

@@ -1234,26 +1234,31 @@ export function Landing() {
 
       <footer className="landing-footer">
         <span>Illuminate Medical Aesthetics</span>
-        <div className="landing-socials" aria-label="Social media">
-          <a
-            href="https://www.instagram.com/"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Instagram"
-          >
-            <Instagram size={18} strokeWidth={1.6} />
-          </a>
-          <a
-            href="https://www.facebook.com/"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Facebook"
-          >
-            <Facebook size={18} strokeWidth={1.6} />
-          </a>
-          <a href="https://www.youtube.com/" target="_blank" rel="noreferrer" aria-label="YouTube">
-            <Youtube size={18} strokeWidth={1.6} />
-          </a>
+        <div className="landing-footer-actions">
+          <Link className="landing-footer-link" to="/privacy">
+            Privacy Policy
+          </Link>
+          <div className="landing-socials" aria-label="Social media">
+            <a
+              href="https://www.instagram.com/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Instagram"
+            >
+              <Instagram size={18} strokeWidth={1.6} />
+            </a>
+            <a
+              href="https://www.facebook.com/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Facebook"
+            >
+              <Facebook size={18} strokeWidth={1.6} />
+            </a>
+            <a href="https://www.youtube.com/" target="_blank" rel="noreferrer" aria-label="YouTube">
+              <Youtube size={18} strokeWidth={1.6} />
+            </a>
+          </div>
         </div>
       </footer>
 
