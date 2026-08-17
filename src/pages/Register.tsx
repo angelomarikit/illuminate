@@ -65,7 +65,8 @@ export function Register() {
             <p className="auth-kicker">Illuminate Medical Aesthetics</p>
             <h1>Create account</h1>
             <p>
-              Register as Receptionist for clinic access. Owner and Admin roles are assigned by the clinic.
+              Create your Client portal account for appointments, wallet, loyalty, and care notes.
+              Clinic roles (Owner, Admin, Receptionist, and others) are assigned by an Owner or Admin.
             </p>
           </div>
 
@@ -92,7 +93,7 @@ export function Register() {
                 id="reg-email"
                 className="auth-input"
                 type="email"
-                placeholder="you@clinic.com"
+                placeholder="you@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

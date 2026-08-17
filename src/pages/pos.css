@@ -1,3 +1,97 @@
+.pos-card-custom {
+  border-color: rgba(184, 149, 74, 0.55);
+  background: linear-gradient(165deg, rgba(184, 149, 74, 0.16), #fff 55%);
+  box-shadow: 0 0 0 1px rgba(184, 149, 74, 0.12);
+}
+
+.pos-card-custom .pos-card-cat {
+  color: #8a6d2f;
+}
+
+.pos-card-custom .pos-card-price {
+  color: #8a6d2f;
+}
+
+.pos-grid-empty {
+  grid-column: 1 / -1;
+}
+
+.pos-custom-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(17, 17, 17, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.pos-custom-modal {
+  width: min(420px, 100%);
+  background: #fff;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  padding: 18px 18px 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pos-custom-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pos-custom-modal-head h3 {
+  margin: 4px 0 0;
+  font-size: 1.2rem;
+}
+
+.pos-custom-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.pos-custom-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pos-gold);
+  font-weight: 700;
+}
+
+.pos-custom-copy {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.pos-line-custom-tag {
+  display: inline-block;
+  margin-left: 8px;
+  vertical-align: middle;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #111;
+  background: rgba(184, 149, 74, 0.2);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.pos-custom-price-edit {
+  margin-top: 10px;
+}
+
 .pos-page {
   --pos-gold: #b8954a;
   --pos-gold-soft: rgba(184, 149, 74, 0.1);

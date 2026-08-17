@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, Minus, Plus, ShoppingBag, Trash2 } from 'lucide-react'
+import { ChevronDown, Minus, Plus, ShoppingBag, Trash2, X } from 'lucide-react'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
 import { StaffAssignField } from '../components/StaffAssignField'
@@ -23,6 +23,8 @@ type CartLine = {
   sessionsAdvised: number
   packageAmount: string
   nextSessionDate: string
+  /** True when staff typed a one-off service + price (not from catalog). */
+  isCustom?: boolean
 }
 
 type ProfileOption = { id: string; full_name: string; role: string }
@@ -70,6 +72,9 @@ export function POS() {
   const [mobilePane, setMobilePane] = useState<'menu' | 'order'>('menu')
   const [openSection, setOpenSection] = useState<CartSection>('items')
   const [sessionOpenIds, setSessionOpenIds] = useState<Record<string, boolean>>({})
+  const [customName, setCustomName] = useState('')
+  const [customPrice, setCustomPrice] = useState('')
+  const [customOpen, setCustomOpen] = useState(false)
 
   const load = useCallback(async () => {
     const [svcRes, cusRes, profRes, catsRes] = await Promise.all([
@@ -174,10 +179,10 @@ export function POS() {
 
   function addToCart(item: ServiceItem) {
     setCart((prev) => {
-      const existing = prev.find((line) => line.item.id === item.id)
+      const existing = prev.find((line) => line.item.id === item.id && !line.isCustom)
       if (existing) {
         return prev.map((line) =>
-          line.item.id === item.id ? { ...line, qty: line.qty + 1 } : line,
+          line.item.id === item.id && !line.isCustom ? { ...line, qty: line.qty + 1 } : line,
         )
       }
       return [
@@ -192,6 +197,75 @@ export function POS() {
       ]
     })
     setOpenSection('items')
+  }
+
+  function openCustomService() {
+    setError('')
+    setCustomName('')
+    setCustomPrice('')
+    setCustomOpen(true)
+  }
+
+  function addCustomService() {
+    const name = customName.trim()
+    const price = Number(customPrice)
+    if (!name) {
+      setError('Enter a custom service name.')
+      return
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setError('Enter a valid custom price (0 or more).')
+      return
+    }
+
+    setError('')
+    const item: ServiceItem = {
+      id: `custom-${crypto.randomUUID()}`,
+      name,
+      category: 'Custom',
+      price,
+      durationMin: 0,
+      pointsEarn: 0,
+      pointsCost: 0,
+      active: true,
+      description: 'Custom service requested by client',
+      membershipTier: null,
+    }
+    setCart((prev) => [
+      ...prev,
+      {
+        item,
+        qty: 1,
+        sessionsAdvised: 0,
+        packageAmount: '',
+        nextSessionDate: '',
+        isCustom: true,
+      },
+    ])
+    setCustomName('')
+    setCustomPrice('')
+    setCustomOpen(false)
+    setOpenSection('items')
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
+      setMobilePane('order')
+    }
+  }
+
+  function updateCustomPrice(id: string, nextPrice: string) {
+    const price = Number(nextPrice)
+    setCart((prev) =>
+      prev.map((line) =>
+        line.item.id === id && line.isCustom
+          ? {
+              ...line,
+              item: {
+                ...line.item,
+                price: Number.isFinite(price) && price >= 0 ? price : line.item.price,
+              },
+            }
+          : line,
+      ),
+    )
   }
 
   function updateQty(id: string, delta: number) {
@@ -314,7 +388,7 @@ export function POS() {
         branch_id: isUuid(branchId) ? branchId : null,
         customer_id: customer.id,
         customer_name: customer.name,
-        service_id: l.item.id,
+        service_id: isUuid(l.item.id) ? l.item.id : null,
         service_name: l.item.name,
         total_sessions: Number(l.sessionsAdvised),
         sessions_used: 0,
@@ -442,7 +516,7 @@ export function POS() {
       <PageHeader
         kicker="Front Desk"
         title="Point of Sale"
-        subtitle="Build the order, add sessions when needed, then checkout."
+        subtitle="Build the order from the menu, or add a custom service with its own price, then checkout."
       />
 
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
@@ -485,9 +559,20 @@ export function POS() {
                 </button>
               ))}
             </div>
+
             <div className="pos-grid">
+              <button
+                type="button"
+                className="pos-card pos-card-custom"
+                onClick={openCustomService}
+              >
+                <div className="pos-card-cat">Custom</div>
+                <div className="pos-card-name">Custom service</div>
+                <div className="pos-card-meta">Ask + set price</div>
+                <div className="pos-card-price">Set price</div>
+              </button>
               {filtered.length === 0 ? (
-                <div className="empty-state">No active services. Add some in Services.</div>
+                <div className="empty-state pos-grid-empty">No other active services in this category.</div>
               ) : (
                 filtered.map((item) => (
                   <button
@@ -496,7 +581,10 @@ export function POS() {
                     className="pos-card"
                     onClick={() => {
                       addToCart(item)
-                      if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
+                      if (
+                        typeof window !== 'undefined' &&
+                        window.matchMedia('(max-width: 900px)').matches
+                      ) {
                         setMobilePane('order')
                       }
                     }}
@@ -592,7 +680,12 @@ export function POS() {
                             <div className="pos-line" key={line.item.id}>
                               <div className="pos-line-top">
                                 <div className="pos-line-info">
-                                  <strong>{line.item.name}</strong>
+                                  <strong>
+                                    {line.item.name}
+                                    {line.isCustom ? (
+                                      <span className="pos-line-custom-tag">Custom</span>
+                                    ) : null}
+                                  </strong>
                                   <span>
                                     {isMembership
                                       ? `${formatCurrency(line.item.price)} · 1 year / unit`
@@ -635,6 +728,25 @@ export function POS() {
                                   </button>
                                 </div>
                               </div>
+
+                              {line.isCustom && !hasPackage ? (
+                                <div className="field pos-custom-price-edit">
+                                  <label htmlFor={`custom-price-${line.item.id}`}>
+                                    Custom price
+                                  </label>
+                                  <input
+                                    id={`custom-price-${line.item.id}`}
+                                    className="input"
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={line.item.price}
+                                    onChange={(e) =>
+                                      updateCustomPrice(line.item.id, e.target.value)
+                                    }
+                                  />
+                                </div>
+                              ) : null}
 
                               {isMembership ? (
                                 <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.8rem' }}>
@@ -898,6 +1010,74 @@ export function POS() {
           </div>
         </aside>
       </div>
+
+      {customOpen ? (
+        <div
+          className="pos-custom-modal-overlay"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setCustomOpen(false)
+          }}
+        >
+          <div
+            className="pos-custom-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pos-custom-modal-title"
+          >
+            <div className="pos-custom-modal-head">
+              <div>
+                <p className="pos-custom-kicker">Custom service</p>
+                <h3 id="pos-custom-modal-title">Add to order</h3>
+              </div>
+              <button
+                type="button"
+                className="btn-icon"
+                aria-label="Close"
+                onClick={() => setCustomOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="pos-custom-copy">
+              Enter what the client asked for and the price you will charge. Available for
+              Receptionist, Admin, and Owner on POS.
+            </p>
+            <div className="field">
+              <label htmlFor="pos-custom-name">Service name</label>
+              <input
+                id="pos-custom-name"
+                className="input"
+                autoFocus
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                placeholder="e.g. Spot treatment, add-on peel…"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="pos-custom-price">Custom price (₱)</label>
+              <input
+                id="pos-custom-price"
+                className="input"
+                type="number"
+                min={0}
+                step="0.01"
+                value={customPrice}
+                onChange={(e) => setCustomPrice(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="pos-custom-modal-actions">
+              <button className="btn btn-ghost" type="button" onClick={() => setCustomOpen(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="button" onClick={addCustomService}>
+                Add to order
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

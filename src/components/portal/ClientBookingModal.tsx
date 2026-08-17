@@ -182,31 +182,23 @@ export function ClientBookingModal({ open, onClose, onBooked }: Props) {
     setSaving(true)
     setError('')
 
-    const { error: err } = await supabase.rpc('submit_public_booking_register', {
-      p_full_name: fullName.trim(),
-      p_email: email,
+    const { error: err } = await supabase.rpc('submit_client_portal_booking', {
       p_phone: phoneValue,
-      p_password: '',
-      p_is_existing_client: true,
-      p_age: null,
-      p_sex: null,
-      p_address: null,
       p_service_name: serviceLabel,
-      p_medical_history: null,
       p_special_note: specialNote.trim() || null,
       p_appointment_date: selectedDate,
       p_appointment_time: selectedTime,
       p_duration_min: duration,
-      p_birthday: null,
+      p_source: 'portal',
     })
 
     setSaving(false)
     if (err) {
       setError(
-        err.message.includes('submit_public_booking_register') ||
+        err.message.includes('submit_client_portal_booking') ||
           err.message.includes('schema cache') ||
           err.message.includes('function')
-          ? `${err.message} — re-run supabase/add_receptionist_and_client_booking.sql in Supabase.`
+          ? `${err.message} — re-run supabase/fix_authenticated_client_booking.sql in Supabase.`
           : err.message,
       )
       return

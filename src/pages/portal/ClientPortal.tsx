@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Gift,
@@ -650,6 +650,11 @@ export function ClientWallet() {
     setStatus('')
 
     const customerName = customer?.full_name || user?.name || 'Client'
+    if (!user?.id) {
+      setSending(false)
+      setStatus('Sign in required.')
+      return
+    }
     const body = [
       `Cash-in request: ₱${pesos.toLocaleString()}`,
       cashInNote.trim() ? `Note: ${cashInNote.trim()}` : null,
@@ -665,6 +670,10 @@ export function ClientWallet() {
         customer_name: customerName,
         preview: `Cash-in ₱${pesos.toLocaleString()}`.slice(0, 120),
         unread: 1,
+        user_id: user.id,
+        customer_id: customer?.id ?? null,
+        category: 'cashin',
+        priority: 'high',
       })
       .select('id')
       .single()
@@ -679,6 +688,8 @@ export function ClientWallet() {
       thread_id: thread.id,
       sender: 'customer',
       body,
+      kind: 'cashin',
+      cashin_status: 'pending',
     })
 
     setSending(false)
@@ -886,65 +897,207 @@ export function ClientNotes() {
 export function ClientSupport() {
   const { user } = useAuth()
   const { customer } = useLinkedCustomer()
+  const [threads, setThreads] = useState<
+    Array<{
+      id: string
+      preview: string | null
+      category: string
+      priority: string
+      updated_at: string
+    }>
+  >([])
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [messages, setMessages] = useState<
+    Array<{
+      id: string
+      sender: string
+      body: string | null
+      image_url?: string | null
+      kind?: string | null
+      cashin_status?: string | null
+      created_at: string
+    }>
+  >([])
   const [message, setMessage] = useState('')
   const [status, setStatus] = useState('')
   const [sending, setSending] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  const loadThreads = useCallback(async () => {
+    if (!user?.id) {
+      setLoading(false)
+      return
+    }
+    const { data, error } = await supabase
+      .from('chat_threads')
+      .select('id, preview, category, priority, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+    if (error) {
+      setStatus(
+        error.message.includes('user_id')
+          ? `${error.message} — ask clinic to run add_chat_conversation_tags.sql`
+          : error.message,
+      )
+      setLoading(false)
+      return
+    }
+    const list = data ?? []
+    setThreads(list)
+    setActiveId((prev) => (prev && list.some((t) => t.id === prev) ? prev : list[0]?.id ?? null))
+    setLoading(false)
+  }, [user?.id])
+
+  const loadMessages = useCallback(async (threadId: string) => {
+    const { data } = await supabase
+      .from('chat_messages')
+      .select('id, sender, body, image_url, kind, cashin_status, created_at')
+      .eq('thread_id', threadId)
+      .order('created_at')
+    setMessages(data ?? [])
+  }, [])
+
+  useEffect(() => {
+    void loadThreads()
+  }, [loadThreads])
+
+  useEffect(() => {
+    if (activeId) void loadMessages(activeId)
+    else setMessages([])
+  }, [activeId, loadMessages])
 
   async function sendSupport(e: FormEvent) {
     e.preventDefault()
-    if (!message.trim()) return
+    if (!message.trim() || !user?.id) return
     setSending(true)
     setStatus('')
 
     const customerName = customer?.full_name || user?.name || 'Client'
-    const { data: thread, error: threadError } = await supabase
-      .from('chat_threads')
-      .insert({
-        customer_name: customerName,
-        preview: message.trim().slice(0, 120),
-        unread: 1,
-      })
-      .select('id')
-      .single()
+    let threadId = activeId
 
-    if (threadError || !thread) {
-      setSending(false)
-      setStatus(threadError?.message || 'Could not start support chat.')
-      return
+    if (!threadId) {
+      const { data: thread, error: threadError } = await supabase
+        .from('chat_threads')
+        .insert({
+          customer_name: customerName,
+          preview: message.trim().slice(0, 120),
+          unread: 1,
+          user_id: user.id,
+          customer_id: customer?.id ?? null,
+          category: 'support',
+          priority: 'normal',
+        })
+        .select('id')
+        .single()
+
+      if (threadError || !thread) {
+        setSending(false)
+        setStatus(threadError?.message || 'Could not start support chat.')
+        return
+      }
+      threadId = thread.id
+      setActiveId(thread.id)
     }
 
     const { error: msgError } = await supabase.from('chat_messages').insert({
-      thread_id: thread.id,
+      thread_id: threadId,
       sender: 'customer',
       body: message.trim(),
+      kind: 'message',
     })
 
-    setSending(false)
     if (msgError) {
+      setSending(false)
       setStatus(msgError.message)
       return
     }
 
+    await supabase
+      .from('chat_threads')
+      .update({
+        preview: message.trim().slice(0, 120),
+        unread: 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', threadId)
+
     setMessage('')
-    setStatus('Message sent. Our team will reply in Chat Support.')
+    setSending(false)
+    setStatus('Message sent. Replies will appear in this conversation.')
+    await loadThreads()
+    await loadMessages(threadId)
   }
 
   return (
     <div className="portal-page">
       <PortalHero
         kicker="Support"
-        title="We’re here to help"
-        subtitle="Ask about appointments, packages, points, wallet, or aftercare — our team will follow up."
+        title="Chat with the clinic"
+        subtitle="Send a message and read staff replies in the same conversation."
       />
 
-      <PortalCard title="Send a message">
+      <PortalCard title="Your conversations">
+        {loading ? (
+          <div className="portal-empty">Loading…</div>
+        ) : threads.length === 0 ? (
+          <div className="portal-empty">No conversations yet — write a message below to start.</div>
+        ) : (
+          <div className="portal-note-list" style={{ marginBottom: 16 }}>
+            {threads.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className="portal-note"
+                style={{
+                  textAlign: 'left',
+                  width: '100%',
+                  cursor: 'pointer',
+                  border:
+                    t.id === activeId ? '1px solid rgba(184,149,74,0.55)' : '1px solid transparent',
+                }}
+                onClick={() => setActiveId(t.id)}
+              >
+                <strong>
+                  {(t.category || 'support').toUpperCase()} · {(t.priority || 'normal').toUpperCase()}
+                </strong>
+                <div className="portal-note-meta">{new Date(t.updated_at).toLocaleString()}</div>
+                <p>{t.preview || 'Conversation'}</p>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="portal-note-list" style={{ marginBottom: 16, maxHeight: 360, overflow: 'auto' }}>
+          {messages.length === 0 ? (
+            <div className="portal-empty">No messages in this thread yet.</div>
+          ) : (
+            messages.map((m) => (
+              <article key={m.id} className="portal-note">
+                <strong>{m.sender === 'staff' ? 'Clinic' : 'You'}</strong>
+                <div className="portal-note-meta">{new Date(m.created_at).toLocaleString()}</div>
+                {m.body ? <p style={{ whiteSpace: 'pre-wrap' }}>{m.body}</p> : null}
+                {m.image_url ? (
+                  <p>
+                    <a href={m.image_url} target="_blank" rel="noreferrer">
+                      View attachment
+                    </a>
+                  </p>
+                ) : null}
+                {m.kind === 'cashin' && m.cashin_status ? (
+                  <div className="portal-note-meta">Cash-in: {m.cashin_status.replace('_', ' ')}</div>
+                ) : null}
+              </article>
+            ))
+          )}
+        </div>
+
         <form className="portal-form" onSubmit={sendSupport}>
           <div>
             <label htmlFor="support-message">Your message</label>
             <textarea
               id="support-message"
               className="textarea"
-              rows={6}
+              rows={4}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder="Ask about appointments, packages, points, or aftercare…"
@@ -953,7 +1106,7 @@ export function ClientSupport() {
           </div>
           <div className="portal-form-actions">
             <button className="portal-btn portal-btn-primary" type="submit" disabled={sending}>
-              {sending ? 'Sending…' : 'Send message'}
+              {sending ? 'Sending…' : activeId ? 'Send reply' : 'Start conversation'}
             </button>
             {status ? <span className="portal-form-status">{status}</span> : null}
           </div>

@@ -61,6 +61,15 @@ After setup.sql, also run (in order):
 19. `supabase/add_notifications.sql` (role-scoped notification acknowledgments / unread state)
 20. `supabase/add_service_categories.sql` (Owner/Admin custom service categories)
 21. `supabase/add_receptionist_and_client_booking.sql` (rename Staff → Receptionist; landing booking registers Client account + portal RLS for notes/wallet/appointments)
+22. `supabase/fix_public_register_client_role.sql` — `/register` and mobile signup always create **Client**
+23. `supabase/fix_authenticated_client_booking.sql` (**required for mobile + portal book**) — creates/links CRM customer on signup; `submit_client_portal_booking` for signed-in Client booking
+24. `supabase/add_client_notifications.sql` (**required for mobile bell + push**) — client inbox + push tokens + approve/decline triggers
+25. `supabase/add_cashin_receipt_and_wallet_notify.sql` (**cash-in receipt images + wallet top-up alerts**) — `chat_messages.image_url`, storage bucket, notify on positive cash-in
+26. `supabase/add_chat_conversation_tags.sql` (**required for mobile chat history + inbox tags**) — thread `user_id` / category / priority; message cash-in received status; client RLS
+27. `supabase/fix_client_chat_message_insert.sql` — if mobile reply hits RLS on `chat_messages`, run this (adds client insert policy)
+28. `supabase/add_chat_thread_close.sql` (**close conversations**) — staff can close threads; clients cannot message closed chats
+
+Mobile client (Expo) uses the **same** Supabase project. See `docs/MOBILE_EXPO.md`, `docs/MOBILE_NOTIFICATIONS.md`, and `mobile/.env.example` (`EXPO_PUBLIC_SUPABASE_*`).
 
 Then promote your owner account (see `docs/ROLES.md`).
 
