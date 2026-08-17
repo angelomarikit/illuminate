@@ -15,6 +15,16 @@ This guide sets up app permissions without breaking your current clinic web app.
 
 **Important:** `profiles.role` is the app permission. `staff.role` is only a job title (e.g. Reception). Do not mix them. Legacy DB value `Staff` is treated as **Receptionist** in the app.
 
+### How-to guides for staff (print / train)
+
+Step-by-step usage guides (not setup SQL):
+
+| Role | File |
+|------|------|
+| Receptionist / front desk | [`docs/role-guides/RECEPTIONIST.md`](role-guides/RECEPTIONIST.md) |
+| Inventory Specialist | [`docs/role-guides/INVENTORY.md`](role-guides/INVENTORY.md) |
+| HR | [`docs/role-guides/HR.md`](role-guides/HR.md) |
+
 ---
 
 ## Step 1 — Run SQL (existing Supabase project)

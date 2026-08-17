@@ -139,6 +139,7 @@ function mapRow(row: Row): Appointment {
 const emptyForm = {
   customerName: '',
   serviceName: '',
+  customService: '',
   staffName: '',
   date: toLocalISODate(),
   time: '10:00',
@@ -329,9 +330,11 @@ export function Appointments() {
     setEditingId(apt.id)
     setRescheduleMode(false)
     setFormType(apt.type === 'walk-in' ? 'walk-in' : 'appointment')
+    const inCatalog = serviceOptions.some((s) => s.name === apt.serviceName)
     setForm({
       customerName: apt.customerName,
-      serviceName: apt.serviceName,
+      serviceName: inCatalog ? apt.serviceName : '',
+      customService: inCatalog ? '' : apt.serviceName,
       staffName: apt.staffName || '',
       date: apt.date,
       time: apt.time,
@@ -455,9 +458,17 @@ export function Appointments() {
     const type = formType === 'walk-in' ? 'walk-in' : 'appointment'
     const wasEditing = Boolean(editingId)
     const wasRescheduling = rescheduleMode
+    const catalogService = form.serviceName.trim()
+    const customService = form.customService.trim()
+    const serviceLabel = customService || catalogService
+    if (!serviceLabel) {
+      setSaving(false)
+      setError('Select a service or type a custom service.')
+      return
+    }
     const payload = {
       customer_name: form.customerName.trim(),
-      service_name: form.serviceName.trim(),
+      service_name: serviceLabel,
       staff_name: form.staffName.trim() || null,
       appointment_date: form.date,
       appointment_time: form.time,
@@ -1363,13 +1374,10 @@ export function Appointments() {
                     <label>Service</label>
                     <select
                       className="select"
-                      required
                       value={form.serviceName}
                       onChange={(e) => applyService(e.target.value)}
                     >
-                      <option value="" disabled>
-                        Select a service
-                      </option>
+                      <option value="">Select a service (optional)</option>
                       {form.serviceName &&
                       !serviceOptions.some((s) => s.name === form.serviceName) ? (
                         <option value={form.serviceName}>{form.serviceName}</option>
@@ -1380,6 +1388,21 @@ export function Appointments() {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="field booking-span-2">
+                    <label htmlFor="appt-custom-service">Custom service</label>
+                    <input
+                      id="appt-custom-service"
+                      className="input"
+                      value={form.customService}
+                      onChange={(e) => setForm((f) => ({ ...f, customService: e.target.value }))}
+                      placeholder="Type a custom service if needed"
+                    />
+                    <p className="booking-field-hint">
+                      Same as website / portal booking — custom text overrides the menu selection when
+                      filled.
+                    </p>
                   </div>
 
                   <div className="field booking-span-2">
