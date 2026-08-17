@@ -226,7 +226,7 @@ export function POS() {
     let pointsEarn = 0
     let pointsCost = 0
     let durationMin = 0
-    let membershipTier: string | null = null
+    let membershipTier: ServiceItem['membershipTier'] = null
 
     if (customMode === 'catalog') {
       const selected = services.find((s) => s.id === customServiceId)
