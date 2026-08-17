@@ -101,6 +101,7 @@ export type SaleRecord = {
   date: string
   staffName: string
   branchId: string
+  paymentProofUrl?: string | null
 }
 
 export type Expense = {

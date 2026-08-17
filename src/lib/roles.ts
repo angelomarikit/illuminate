@@ -9,6 +9,9 @@ export const HR_ACCESS_ROLES: AppRole[] = ['Owner', 'Admin', 'HR']
 /** Stock catalog, stocktake, receiving, reorder. */
 export const INVENTORY_ACCESS_ROLES: AppRole[] = ['Owner', 'Admin', 'Inventory']
 
+/** Inventory ops board (reorder / receiving / stocktake overview). Owner & Admin only. */
+export const INVENTORY_OPS_ROLES: AppRole[] = ['Owner', 'Admin']
+
 /** Anyone who uses the internal app shell (not Client portal). */
 export const INTERNAL_ROLES: AppRole[] = ['Owner', 'Admin', 'Receptionist', 'HR', 'Inventory']
 
@@ -87,6 +90,7 @@ export function homePathForRole(role: string | null | undefined): string {
  * Receptionist: clinic operations (no dashboard / HR / inventory / settings).
  * HR: payroll, incentives, staff & attendance only.
  * Inventory: stock catalog, stocktake, receiving, reorder (+ account).
+ * Owner/Admin: inventory ops board overview.
  * Client: portal only.
  */
 const PATH_ROLES: Record<string, AppRole[]> = {
@@ -101,6 +105,7 @@ const PATH_ROLES: Record<string, AppRole[]> = {
   '/loyalty': ['Owner', 'Admin', 'Receptionist'],
   '/qr-checkin': ['Owner', 'Admin', 'Receptionist'],
   '/inventory': ['Owner', 'Admin', 'Inventory'],
+  '/inventory/ops': ['Owner', 'Admin'],
   '/inventory/stocktake': ['Owner', 'Admin', 'Inventory'],
   '/inventory/receiving': ['Owner', 'Admin', 'Inventory'],
   '/inventory/reorder': ['Owner', 'Admin', 'Inventory'],

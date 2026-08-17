@@ -173,6 +173,7 @@ Sign in at your clinic URL with a staff email and password. The left menu shows 
 
 | Page | Use |
 |---|---|
+| **Ops board** | *(Owner / Admin)* Reorder requests, receiving, stocktakes, and low stock in one place (also in the notification bell) |
 | **Stock catalog** | Items, quantities, product master |
 | **Stocktake** | Physical count adjustments |
 | **Receiving** | Incoming stock / deliveries |

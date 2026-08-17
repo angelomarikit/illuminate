@@ -214,6 +214,50 @@
   background: rgba(184, 149, 74, 0.08);
 }
 
+.svc-category-item .svc-delete-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.svc-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.svc-delete-btn {
+  color: #b42318 !important;
+}
+
+.svc-delete-btn:hover {
+  background: rgba(180, 35, 24, 0.08) !important;
+}
+
+.svc-btn-danger {
+  background: linear-gradient(160deg, #c93a30 0%, #b42318 100%);
+  color: #fff;
+  border: 0;
+  box-shadow: 0 8px 18px rgba(180, 35, 24, 0.22);
+}
+
+.svc-btn-danger:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+
+.svc-btn-danger:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.svc-modal-accent.is-danger {
+  background: linear-gradient(90deg, #c93a30, #b42318);
+}
+
+.svc-confirm-modal {
+  max-width: 440px;
+}
+
 .svc-category-mark {
   width: 8px;
   height: 8px;

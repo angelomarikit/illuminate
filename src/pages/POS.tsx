@@ -75,6 +75,10 @@ export function POS() {
   const [customName, setCustomName] = useState('')
   const [customPrice, setCustomPrice] = useState('')
   const [customOpen, setCustomOpen] = useState(false)
+  const [customMode, setCustomMode] = useState<'manual' | 'catalog'>('manual')
+  const [customServiceId, setCustomServiceId] = useState('')
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null)
+  const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const [svcRes, cusRes, profRes, catsRes] = await Promise.all([
@@ -199,37 +203,61 @@ export function POS() {
     setOpenSection('items')
   }
 
-  function openCustomService() {
+  function openCustomService(mode: 'manual' | 'catalog' = 'manual') {
     setError('')
+    setMessage('')
+    setCustomMode(mode)
     setCustomName('')
     setCustomPrice('')
+    setCustomServiceId('')
     setCustomOpen(true)
   }
 
-  function addCustomService() {
-    const name = customName.trim()
+  function addCustomService(closeAfter = true): boolean {
     const price = Number(customPrice)
-    if (!name) {
-      setError('Enter a custom service name.')
-      return
-    }
     if (!Number.isFinite(price) || price < 0) {
       setError('Enter a valid custom price (0 or more).')
-      return
+      return false
+    }
+
+    let name = customName.trim()
+    let category = 'Custom'
+    let description = 'Custom service requested by client'
+    let pointsEarn = 0
+    let pointsCost = 0
+    let durationMin = 0
+    let membershipTier: string | null = null
+
+    if (customMode === 'catalog') {
+      const selected = services.find((s) => s.id === customServiceId)
+      if (!selected) {
+        setError('Select a service from the catalog.')
+        return false
+      }
+      name = selected.name
+      category = selected.category
+      description = selected.description || 'Catalog service with manual price'
+      pointsEarn = selected.pointsEarn
+      pointsCost = selected.pointsCost
+      durationMin = selected.durationMin
+      membershipTier = selected.membershipTier ?? null
+    } else if (!name) {
+      setError('Enter a custom service name.')
+      return false
     }
 
     setError('')
     const item: ServiceItem = {
       id: `custom-${crypto.randomUUID()}`,
       name,
-      category: 'Custom',
+      category,
       price,
-      durationMin: 0,
-      pointsEarn: 0,
-      pointsCost: 0,
+      durationMin,
+      pointsEarn,
+      pointsCost,
       active: true,
-      description: 'Custom service requested by client',
-      membershipTier: null,
+      description,
+      membershipTier,
     }
     setCart((prev) => [
       ...prev,
@@ -244,11 +272,14 @@ export function POS() {
     ])
     setCustomName('')
     setCustomPrice('')
-    setCustomOpen(false)
+    setCustomServiceId('')
     setOpenSection('items')
     if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
       setMobilePane('order')
     }
+    if (closeAfter) setCustomOpen(false)
+    else setMessage('Line added. Add another if needed.')
+    return true
   }
 
   function updateCustomPrice(id: string, nextPrice: string) {
@@ -291,6 +322,52 @@ export function POS() {
     setSalesBy(user?.name || '')
     setSessionOpenIds({})
     setOpenSection('items')
+    clearPaymentProof()
+  }
+
+  function clearPaymentProof() {
+    if (paymentProofPreview) URL.revokeObjectURL(paymentProofPreview)
+    setPaymentProofFile(null)
+    setPaymentProofPreview(null)
+  }
+
+  function onPaymentProofSelected(file: File | null) {
+    if (paymentProofPreview) URL.revokeObjectURL(paymentProofPreview)
+    if (!file) {
+      setPaymentProofFile(null)
+      setPaymentProofPreview(null)
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      setError('Payment proof must be an image (PNG, JPG, or similar).')
+      return
+    }
+    setError('')
+    setPaymentProofFile(file)
+    setPaymentProofPreview(URL.createObjectURL(file))
+  }
+
+  async function uploadPaymentProof(receipt: string): Promise<string | null> {
+    if (!paymentProofFile) return null
+    const ext = paymentProofFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+    const safeExt = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext) ? ext : 'jpg'
+    const path = `${user?.id || 'staff'}/${receipt}-${Date.now()}.${safeExt}`
+    const { error: uploadErr } = await supabase.storage
+      .from('sale-payment-proofs')
+      .upload(path, paymentProofFile, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: paymentProofFile.type || `image/${safeExt}`,
+      })
+    if (uploadErr) {
+      throw new Error(
+        uploadErr.message.includes('Bucket') || uploadErr.message.includes('not found')
+          ? `${uploadErr.message} — run supabase/add_sale_payment_proof.sql in Supabase.`
+          : uploadErr.message,
+      )
+    }
+    const { data } = supabase.storage.from('sale-payment-proofs').getPublicUrl(path)
+    return data.publicUrl
   }
 
   async function completeSale() {
@@ -356,6 +433,15 @@ export function POS() {
       sales_by: salesBy.trim(),
     }
 
+    let paymentProofUrl: string | null = null
+    try {
+      paymentProofUrl = await uploadPaymentProof(receipt)
+    } catch (e) {
+      setSaving(false)
+      setError(e instanceof Error ? e.message : 'Could not upload payment screenshot.')
+      return
+    }
+
     const { error: saleErr } = await supabase.from('sales').insert({
       receipt_no: receipt,
       customer_name: customer.name,
@@ -367,17 +453,20 @@ export function POS() {
       wallet_used: useWallet,
       staff_name: user?.name ?? 'Staff',
       branch_id: isUuid(branchId) ? branchId : null,
+      payment_proof_url: paymentProofUrl,
       ...attribution,
     })
 
     if (saleErr) {
       setSaving(false)
       setError(
-        saleErr.message.includes('sales_by') ||
-          saleErr.message.includes('discount_amount') ||
-          saleErr.message.includes('schema cache')
-          ? `${saleErr.message} — run supabase/add_pos_attribution.sql in Supabase.`
-          : saleErr.message,
+        saleErr.message.includes('payment_proof_url') || saleErr.message.includes('schema cache')
+          ? `${saleErr.message} — run supabase/add_sale_payment_proof.sql in Supabase.`
+          : saleErr.message.includes('sales_by') ||
+              saleErr.message.includes('discount_amount') ||
+              saleErr.message.includes('schema cache')
+            ? `${saleErr.message} — run supabase/add_pos_attribution.sql in Supabase.`
+            : saleErr.message,
       )
       return
     }
@@ -564,7 +653,7 @@ export function POS() {
               <button
                 type="button"
                 className="pos-card pos-card-custom"
-                onClick={openCustomService}
+                onClick={() => openCustomService('manual')}
               >
                 <div className="pos-card-cat">Custom</div>
                 <div className="pos-card-name">Custom service</div>
@@ -656,12 +745,12 @@ export function POS() {
                   <ChevronDown size={16} />
                 </button>
                 {openSection === 'items' ? (
-                  <div className="pos-acc-body">
+                  <div className="pos-acc-body pos-acc-body-items">
                     <div className="pos-lines">
                       {cart.length === 0 ? (
                         <div className="pos-empty">
                           <ShoppingBag size={22} strokeWidth={1.5} />
-                          <p>Tap a service to start the order.</p>
+                          <p>Tap a service to start the order, or add a custom line below.</p>
                         </div>
                       ) : (
                         cart.map((line) => {
@@ -828,6 +917,19 @@ export function POS() {
                           )
                         })
                       )}
+                    </div>
+                    <div className="pos-add-custom-row">
+                      <button
+                        type="button"
+                        className="btn pos-add-custom-btn"
+                        onClick={() => openCustomService('manual')}
+                      >
+                        <Plus size={16} />
+                        <span>
+                          <strong>Add another service</strong>
+                          <em>Custom name or catalog service — set your own price. Add as many as you need.</em>
+                        </span>
+                      </button>
                     </div>
                   </div>
                 ) : null}
@@ -998,6 +1100,43 @@ export function POS() {
                 ) : null}
               </div>
 
+              <div className="pos-payment-proof">
+                <div className="pos-payment-proof-head">
+                  <div>
+                    <p className="pos-payment-proof-label">Payment screenshot</p>
+                    <p className="pos-payment-proof-hint">
+                      Optional — attach GCash / bank / card proof for Sales Proof documentation.
+                    </p>
+                  </div>
+                  {paymentProofFile ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={clearPaymentProof}
+                      disabled={saving}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+                {paymentProofPreview ? (
+                  <div className="pos-payment-proof-preview">
+                    <img src={paymentProofPreview} alt="Payment proof preview" />
+                  </div>
+                ) : (
+                  <label className="pos-payment-proof-upload">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      disabled={saving}
+                      onChange={(e) => onPaymentProofSelected(e.target.files?.[0] ?? null)}
+                    />
+                    <span>Upload payment screenshot</span>
+                  </label>
+                )}
+              </div>
+
               <button
                 className="btn btn-primary pos-checkout-btn"
                 type="button"
@@ -1027,8 +1166,8 @@ export function POS() {
           >
             <div className="pos-custom-modal-head">
               <div>
-                <p className="pos-custom-kicker">Custom service</p>
-                <h3 id="pos-custom-modal-title">Add to order</h3>
+                <p className="pos-custom-kicker">Current order</p>
+                <h3 id="pos-custom-modal-title">Add custom line</h3>
               </div>
               <button
                 type="button"
@@ -1040,22 +1179,84 @@ export function POS() {
               </button>
             </div>
             <p className="pos-custom-copy">
-              Enter what the client asked for and the price you will charge. Available for
-              Receptionist, Admin, and Owner on POS.
+              Add as many custom lines as you need. Use a freeform name, or pick a catalog service and
+              set the price manually — then keep adding more.
             </p>
-            <div className="field">
-              <label htmlFor="pos-custom-name">Service name</label>
-              <input
-                id="pos-custom-name"
-                className="input"
-                autoFocus
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                placeholder="e.g. Spot treatment, add-on peel…"
-              />
+
+            <div className="pos-custom-mode" role="tablist" aria-label="Custom line type">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={customMode === 'manual'}
+                className={`pos-custom-mode-btn ${customMode === 'manual' ? 'is-active' : ''}`}
+                onClick={() => {
+                  setCustomMode('manual')
+                  setCustomServiceId('')
+                  setError('')
+                }}
+              >
+                Manual name
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={customMode === 'catalog'}
+                className={`pos-custom-mode-btn ${customMode === 'catalog' ? 'is-active' : ''}`}
+                onClick={() => {
+                  setCustomMode('catalog')
+                  setCustomName('')
+                  setError('')
+                }}
+              >
+                Select service
+              </button>
             </div>
+
+            {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+            {!error && message && customOpen ? (
+              <StatusMessage type="success">{message}</StatusMessage>
+            ) : null}
+
+            {customMode === 'manual' ? (
+              <div className="field">
+                <label htmlFor="pos-custom-name">Service name</label>
+                <input
+                  id="pos-custom-name"
+                  className="input"
+                  autoFocus
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="e.g. Spot treatment, add-on peel…"
+                />
+              </div>
+            ) : (
+              <div className="field">
+                <label htmlFor="pos-custom-service">Service</label>
+                <select
+                  id="pos-custom-service"
+                  className="select"
+                  value={customServiceId}
+                  onChange={(e) => {
+                    const id = e.target.value
+                    setCustomServiceId(id)
+                    const selected = services.find((s) => s.id === id)
+                    if (selected && !customPrice) {
+                      setCustomPrice(String(selected.price))
+                    }
+                  }}
+                >
+                  <option value="">Choose a service…</option>
+                  {services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} · {formatCurrency(s.price)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="field">
-              <label htmlFor="pos-custom-price">Custom price (₱)</label>
+              <label htmlFor="pos-custom-price">Price to charge (₱)</label>
               <input
                 id="pos-custom-price"
                 className="input"
@@ -1065,13 +1266,23 @@ export function POS() {
                 value={customPrice}
                 onChange={(e) => setCustomPrice(e.target.value)}
                 placeholder="0.00"
+                autoFocus={customMode === 'catalog'}
               />
             </div>
             <div className="pos-custom-modal-actions">
               <button className="btn btn-ghost" type="button" onClick={() => setCustomOpen(false)}>
-                Cancel
+                Done
               </button>
-              <button className="btn btn-primary" type="button" onClick={addCustomService}>
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => {
+                  addCustomService(false)
+                }}
+              >
+                Add & continue
+              </button>
+              <button className="btn btn-primary" type="button" onClick={() => addCustomService(true)}>
                 Add to order
               </button>
             </div>

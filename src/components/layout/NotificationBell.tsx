@@ -10,6 +10,9 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   booking_pending: 'Booking',
   leave_pending: 'HR',
   low_stock: 'Stock',
+  reorder_pending: 'Reorder',
+  receiving_logged: 'Receiving',
+  stocktake_completed: 'Stocktake',
 }
 
 export function NotificationBell() {

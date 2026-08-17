@@ -25,6 +25,7 @@ import {
   ClipboardCheck,
   PackagePlus,
   RefreshCw,
+  LayoutList,
   UserPlus,
   NotebookPen,
 } from 'lucide-react'
@@ -83,6 +84,12 @@ export const navSections: NavSection[] = [
   {
     title: 'Inventory',
     items: [
+      {
+        label: 'Ops board',
+        path: '/inventory/ops',
+        icon: LayoutList,
+        roles: ['Owner', 'Admin'],
+      },
       { label: 'Stock catalog', path: '/inventory', icon: Package, roles: INV },
       { label: 'Stocktake', path: '/inventory/stocktake', icon: ClipboardCheck, roles: INV },
       { label: 'Receiving', path: '/inventory/receiving', icon: PackagePlus, roles: INV },

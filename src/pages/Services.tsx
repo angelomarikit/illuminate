@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { FolderPlus, Plus, X } from 'lucide-react'
+import { FolderPlus, Plus, Trash2, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
@@ -74,8 +74,14 @@ export function Services() {
   const [categoryName, setCategoryName] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingCategory, setSavingCategory] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState<
+    | { type: 'service'; item: ServiceItem }
+    | { type: 'category'; id: string; name: string; count: number }
+    | null
+  >(null)
 
   const categoryOptions = useMemo(() => {
     const names = categories.filter((c) => c.active).map((c) => c.name)
@@ -127,9 +133,13 @@ export function Services() {
   }, [load])
 
   useEffect(() => {
-    if (!showForm && !showCategoryForm) return
+    if (!showForm && !showCategoryForm && !confirmDelete) return
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
+      if (confirmDelete && !deleting) {
+        setConfirmDelete(null)
+        return
+      }
       if (showCategoryForm && !savingCategory) {
         setShowCategoryForm(false)
         setCategoryName('')
@@ -146,7 +156,7 @@ export function Services() {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [showForm, showCategoryForm, saving, savingCategory, categoryOptions])
+  }, [showForm, showCategoryForm, confirmDelete, saving, savingCategory, deleting, categoryOptions])
 
   function openCategoryModal() {
     setCategoryName('')
@@ -245,6 +255,77 @@ export function Services() {
     await load()
   }
 
+  async function confirmDeleteAction() {
+    if (!canManageCategories || !confirmDelete) return
+    setDeleting(true)
+    setError('')
+    setMessage('')
+
+    if (confirmDelete.type === 'service') {
+      const { error: err } = await supabase
+        .from('services')
+        .delete()
+        .eq('id', confirmDelete.item.id)
+      setDeleting(false)
+      if (err) {
+        setError(
+          err.message.includes('foreign key') || err.code === '23503'
+            ? `Cannot delete “${confirmDelete.item.name}” because it is linked to sales, sessions, or inventory. Hide it instead.`
+            : err.message,
+        )
+        setConfirmDelete(null)
+        return
+      }
+      setConfirmDelete(null)
+      setMessage(`Service “${confirmDelete.item.name}” deleted.`)
+      await load()
+      return
+    }
+
+    const { id, name, count } = confirmDelete
+    if (count > 0) {
+      // Soft-remove from catalog so existing services keep their label.
+      const { error: err } = await supabase
+        .from('service_categories')
+        .update({ active: false })
+        .eq('id', id)
+      setDeleting(false)
+      if (err) {
+        setError(err.message)
+        setConfirmDelete(null)
+        return
+      }
+      setConfirmDelete(null)
+      setMessage(
+        `Category “${name}” removed from the catalog. ${count} existing service${count === 1 ? '' : 's'} still show that category label.`,
+      )
+      await load()
+      return
+    }
+
+    const { error: err } = await supabase.from('service_categories').delete().eq('id', id)
+    setDeleting(false)
+    if (err) {
+      // Fallback soft-delete if hard delete is blocked
+      const { error: softErr } = await supabase
+        .from('service_categories')
+        .update({ active: false })
+        .eq('id', id)
+      if (softErr) {
+        setError(err.message)
+        setConfirmDelete(null)
+        return
+      }
+      setConfirmDelete(null)
+      setMessage(`Category “${name}” removed.`)
+      await load()
+      return
+    }
+    setConfirmDelete(null)
+    setMessage(`Category “${name}” deleted.`)
+    await load()
+  }
+
   return (
     <div>
       <PageHeader
@@ -267,7 +348,7 @@ export function Services() {
         }
       />
 
-      {error && !showForm && !showCategoryForm ? (
+      {error && !showForm && !showCategoryForm && !confirmDelete ? (
         <StatusMessage type="error">{error}</StatusMessage>
       ) : null}
       {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
@@ -315,13 +396,28 @@ export function Services() {
                         </span>
                       </td>
                       <td>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          type="button"
-                          onClick={() => toggle(item)}
-                        >
-                          {item.active ? 'Hide' : 'Restore'}
-                        </button>
+                        <div className="svc-row-actions">
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            onClick={() => toggle(item)}
+                          >
+                            {item.active ? 'Hide' : 'Restore'}
+                          </button>
+                          {canManageCategories ? (
+                            <button
+                              className="btn btn-ghost btn-sm svc-delete-btn"
+                              type="button"
+                              onClick={() => {
+                                setError('')
+                                setConfirmDelete({ type: 'service', item })
+                              }}
+                            >
+                              <Trash2 size={14} />
+                              Delete
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -505,8 +601,8 @@ export function Services() {
                 </button>
               </div>
               <p className="svc-modal-lead">
-                Add a category for services you’ll create later. Existing categories stay available in
-                POS and booking.
+                Add or remove categories used for services. Deleting a category hides it from new
+                services; existing services keep their current label.
               </p>
             </div>
 
@@ -539,23 +635,40 @@ export function Services() {
                 <div className="svc-category-list-wrap">
                   <div className="svc-category-list-head">
                     <span>Existing categories</span>
-                    <em>{categoryOptions.length}</em>
+                    <em>{categories.length}</em>
                   </div>
-                  {categoryOptions.length === 0 ? (
+                  {categories.length === 0 ? (
                     <div className="svc-category-empty">No categories yet.</div>
                   ) : (
                     <ul className="svc-category-list">
-                      {categoryOptions.map((name) => {
-                        const count = categoryCounts.get(name) ?? 0
+                      {categories.map((cat) => {
+                        const count = categoryCounts.get(cat.name) ?? 0
                         return (
-                          <li key={name} className="svc-category-item">
+                          <li key={cat.id} className="svc-category-item">
                             <span className="svc-category-mark" aria-hidden />
                             <div className="svc-category-copy">
-                              <strong>{name}</strong>
+                              <strong>{cat.name}</strong>
                               <span>
                                 {count} service{count === 1 ? '' : 's'}
                               </span>
                             </div>
+                            <button
+                              className="btn btn-ghost btn-sm svc-delete-btn"
+                              type="button"
+                              disabled={savingCategory || deleting}
+                              onClick={() => {
+                                setError('')
+                                setConfirmDelete({
+                                  type: 'category',
+                                  id: cat.id,
+                                  name: cat.name,
+                                  count,
+                                })
+                              }}
+                            >
+                              <Trash2 size={14} />
+                              Delete
+                            </button>
                           </li>
                         )
                       })}
@@ -575,6 +688,74 @@ export function Services() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {canManageCategories && confirmDelete ? (
+        <div className="confirm-modal-overlay svc-modal-overlay" role="presentation">
+          <div
+            className="svc-modal svc-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-confirm-title"
+          >
+            <div className="svc-modal-top">
+              <div className="svc-modal-accent is-danger" aria-hidden />
+              <div className="svc-modal-head">
+                <div>
+                  <p className="svc-modal-kicker">Owner / Admin</p>
+                  <h2 id="delete-confirm-title" className="svc-modal-title">
+                    {confirmDelete.type === 'service' ? 'Delete service' : 'Delete category'}
+                  </h2>
+                </div>
+                <button
+                  className="btn-icon"
+                  type="button"
+                  aria-label="Close"
+                  disabled={deleting}
+                  onClick={() => setConfirmDelete(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="svc-modal-lead">
+                {confirmDelete.type === 'service' ? (
+                  <>
+                    Permanently delete <strong>{confirmDelete.item.name}</strong>? This cannot be
+                    undone. If it is linked to past sales, use Hide instead.
+                  </>
+                ) : confirmDelete.count > 0 ? (
+                  <>
+                    Remove category <strong>{confirmDelete.name}</strong> from the catalog?{' '}
+                    {confirmDelete.count} service{confirmDelete.count === 1 ? '' : 's'} still use
+                    this label and will keep it.
+                  </>
+                ) : (
+                  <>
+                    Permanently delete category <strong>{confirmDelete.name}</strong>?
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="svc-modal-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={deleting}
+                onClick={() => setConfirmDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn svc-btn-danger"
+                type="button"
+                disabled={deleting}
+                onClick={() => void confirmDeleteAction()}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

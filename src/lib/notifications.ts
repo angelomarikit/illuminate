@@ -6,6 +6,9 @@ export type NotificationKind =
   | 'booking_pending'
   | 'leave_pending'
   | 'low_stock'
+  | 'reorder_pending'
+  | 'receiving_logged'
+  | 'stocktake_completed'
 
 export type AppNotification = {
   key: string
@@ -20,9 +23,25 @@ export type AppNotification = {
 const ROLE_KINDS: Record<AppRole, NotificationKind[]> = {
   Receptionist: ['appointment_soon', 'booking_pending'],
   HR: ['leave_pending'],
-  Inventory: ['low_stock'],
-  Owner: ['appointment_soon', 'booking_pending', 'leave_pending', 'low_stock'],
-  Admin: ['appointment_soon', 'booking_pending', 'leave_pending', 'low_stock'],
+  Inventory: ['low_stock', 'reorder_pending'],
+  Owner: [
+    'appointment_soon',
+    'booking_pending',
+    'leave_pending',
+    'low_stock',
+    'reorder_pending',
+    'receiving_logged',
+    'stocktake_completed',
+  ],
+  Admin: [
+    'appointment_soon',
+    'booking_pending',
+    'leave_pending',
+    'low_stock',
+    'reorder_pending',
+    'receiving_logged',
+    'stocktake_completed',
+  ],
   Client: [],
 }
 
@@ -78,6 +97,34 @@ type InvRow = {
   unit?: string | null
 }
 
+type ReorderNoticeRow = {
+  id: string
+  qty_requested: number
+  status: string
+  notes: string | null
+  requested_by: string | null
+  created_at: string
+  item_name?: string | null
+}
+
+type ReceiptNoticeRow = {
+  id: string
+  received_at: string
+  supplier: string | null
+  reference_no: string | null
+  received_by: string | null
+  created_at: string
+}
+
+type StocktakeNoticeRow = {
+  id: string
+  counted_on: string
+  status: string
+  counted_by: string | null
+  notes: string | null
+  created_at?: string | null
+}
+
 export function buildNotifications(input: {
   role: string | null | undefined
   todayIso: string
@@ -85,11 +132,16 @@ export function buildNotifications(input: {
   appointments?: AptRow[]
   leaves?: LeaveRow[]
   inventory?: InvRow[]
+  reorders?: ReorderNoticeRow[]
+  receipts?: ReceiptNoticeRow[]
+  stocktakes?: StocktakeNoticeRow[]
   ackedKeys: Set<string>
 }): AppNotification[] {
   const kinds = new Set(kindsForRole(input.role))
   const now = input.now ?? new Date()
   const items: AppNotification[] = []
+  const elevated = normalizeRole(input.role) === 'Owner' || normalizeRole(input.role) === 'Admin'
+  const opsHref = elevated ? '/inventory/ops' : '/inventory/reorder'
 
   if (kinds.has('appointment_soon') && input.appointments) {
     for (const apt of input.appointments) {
@@ -153,8 +205,56 @@ export function buildNotifications(input: {
         kind: 'low_stock',
         title: 'Restock needed',
         body: `${item.name} is at ${item.stock}${item.unit ? ` ${item.unit}` : ''} (threshold ${item.reorder_level})`,
-        href: '/inventory/reorder',
+        href: opsHref,
         createdAt: input.todayIso,
+        unread: !input.ackedKeys.has(key),
+      })
+    }
+  }
+
+  if (kinds.has('reorder_pending') && input.reorders) {
+    for (const row of input.reorders) {
+      if (!['open', 'ordered'].includes(row.status)) continue
+      const key = `reorder_pending:${row.id}`
+      const name = row.item_name?.trim() || 'Inventory item'
+      items.push({
+        key,
+        kind: 'reorder_pending',
+        title: row.status === 'ordered' ? 'Reorder in transit' : 'Reorder request open',
+        body: `${name} · qty ${row.qty_requested}${row.requested_by ? ` · ${row.requested_by}` : ''}`,
+        href: opsHref,
+        createdAt: row.created_at,
+        unread: !input.ackedKeys.has(key),
+      })
+    }
+  }
+
+  if (kinds.has('receiving_logged') && input.receipts) {
+    for (const row of input.receipts) {
+      const key = `receiving_logged:${row.id}`
+      items.push({
+        key,
+        kind: 'receiving_logged',
+        title: 'Stock received',
+        body: `${row.supplier?.trim() || 'Delivery'}${row.reference_no ? ` · Ref ${row.reference_no}` : ''} · ${row.received_at}${row.received_by ? ` · ${row.received_by}` : ''}`,
+        href: elevated ? '/inventory/ops' : '/inventory/receiving',
+        createdAt: row.created_at || row.received_at,
+        unread: !input.ackedKeys.has(key),
+      })
+    }
+  }
+
+  if (kinds.has('stocktake_completed') && input.stocktakes) {
+    for (const row of input.stocktakes) {
+      if (row.status !== 'completed') continue
+      const key = `stocktake_completed:${row.id}`
+      items.push({
+        key,
+        kind: 'stocktake_completed',
+        title: 'Stocktake completed',
+        body: `${row.counted_on}${row.counted_by ? ` · ${row.counted_by}` : ''}${row.notes ? ` · ${row.notes}` : ''}`,
+        href: elevated ? '/inventory/ops' : '/inventory/stocktake',
+        createdAt: row.created_at || row.counted_on,
         unread: !input.ackedKeys.has(key),
       })
     }

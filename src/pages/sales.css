@@ -1,0 +1,136 @@
+.sales-row-clickable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sales-row-clickable:hover {
+  background: rgba(184, 149, 74, 0.08);
+}
+
+.sales-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(17, 17, 17, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.sales-detail-modal {
+  width: min(560px, 100%);
+  max-height: min(90vh, 820px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
+  padding: 18px;
+}
+
+.sales-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sales-detail-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #b8954a;
+  font-weight: 700;
+}
+
+.sales-detail-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
+}
+
+.sales-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sales-detail-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7f7f7;
+  border: 1px solid var(--line);
+}
+
+.sales-detail-grid span {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sales-detail-grid strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #111;
+  word-break: break-word;
+}
+
+.sales-detail-span {
+  grid-column: 1 / -1;
+}
+
+.sales-detail-proof {
+  margin-bottom: 14px;
+}
+
+.sales-detail-proof h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.sales-detail-proof-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  background: #111;
+}
+
+.sales-detail-proof-link img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.sales-detail-proof-link span {
+  display: block;
+  padding: 10px 12px;
+  background: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a6d2f;
+}
+
+.sales-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 560px) {
+  .sales-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}

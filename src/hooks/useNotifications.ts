@@ -50,52 +50,125 @@ export function useNotifications(opts?: {
       const needsAppts = kinds.has('appointment_soon') || kinds.has('booking_pending')
       const needsLeaves = kinds.has('leave_pending')
       const needsInv = kinds.has('low_stock')
+      const needsReorder = kinds.has('reorder_pending')
+      const needsReceipts = kinds.has('receiving_logged')
+      const needsStocktakes = kinds.has('stocktake_completed')
 
-      const [acksRes, apptsRes, leavesRes, invRes] = await Promise.all([
-        supabase.from('notification_acks').select('notice_key').eq('user_id', user.id),
-        needsAppts
-          ? (() => {
-              let q = supabase
-                .from('appointments')
-                .select(
-                  'id, customer_name, service_name, appointment_date, appointment_time, status, branch_id',
-                )
-                .or(`appointment_date.eq.${today},status.eq.pending`)
-                .order('appointment_date')
-                .order('appointment_time')
-                .limit(80)
-              if (isUuid(branchId)) {
-                q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
-              }
-              return q
-            })()
-          : Promise.resolve({ data: null, error: null }),
-        needsLeaves
-          ? supabase
-              .from('leave_requests')
-              .select('id, staff_name, leave_type, date_from, date_to, status, created_at')
-              .eq('status', 'pending')
-              .order('created_at', { ascending: false })
-              .limit(40)
-          : Promise.resolve({ data: null, error: null }),
-        needsInv
-          ? (() => {
-              let q = supabase
-                .from('inventory_items')
-                .select('id, name, stock, reorder_level, unit, branch_id')
-                .limit(100)
-              if (isUuid(branchId)) q = q.eq('branch_id', branchId)
-              return q
-            })()
-          : Promise.resolve({ data: null, error: null }),
-      ])
+      const sinceIso = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
+
+      const [acksRes, apptsRes, leavesRes, invRes, reorderRes, receiptRes, stocktakeRes] =
+        await Promise.all([
+          supabase.from('notification_acks').select('notice_key').eq('user_id', user.id),
+          needsAppts
+            ? (() => {
+                let q = supabase
+                  .from('appointments')
+                  .select(
+                    'id, customer_name, service_name, appointment_date, appointment_time, status, branch_id',
+                  )
+                  .or(`appointment_date.eq.${today},status.eq.pending`)
+                  .order('appointment_date')
+                  .order('appointment_time')
+                  .limit(80)
+                if (isUuid(branchId)) {
+                  q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
+                }
+                return q
+              })()
+            : Promise.resolve({ data: null, error: null }),
+          needsLeaves
+            ? supabase
+                .from('leave_requests')
+                .select('id, staff_name, leave_type, date_from, date_to, status, created_at')
+                .eq('status', 'pending')
+                .order('created_at', { ascending: false })
+                .limit(40)
+            : Promise.resolve({ data: null, error: null }),
+          needsInv
+            ? (() => {
+                let q = supabase
+                  .from('inventory_items')
+                  .select('id, name, stock, reorder_level, unit, branch_id')
+                  .limit(100)
+                if (isUuid(branchId)) q = q.eq('branch_id', branchId)
+                return q
+              })()
+            : Promise.resolve({ data: null, error: null }),
+          needsReorder
+            ? (() => {
+                let q = supabase
+                  .from('inventory_reorder_requests')
+                  .select(
+                    'id, qty_requested, status, notes, requested_by, created_at, inventory_items(name)',
+                  )
+                  .in('status', ['open', 'ordered'])
+                  .order('created_at', { ascending: false })
+                  .limit(40)
+                if (isUuid(branchId)) {
+                  q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
+                }
+                return q
+              })()
+            : Promise.resolve({ data: null, error: null }),
+          needsReceipts
+            ? (() => {
+                let q = supabase
+                  .from('inventory_receipts')
+                  .select(
+                    'id, received_at, supplier, reference_no, received_by, created_at, branch_id',
+                  )
+                  .gte('created_at', sinceIso)
+                  .order('created_at', { ascending: false })
+                  .limit(30)
+                if (isUuid(branchId)) {
+                  q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
+                }
+                return q
+              })()
+            : Promise.resolve({ data: null, error: null }),
+          needsStocktakes
+            ? (() => {
+                let q = supabase
+                  .from('inventory_stocktakes')
+                  .select(
+                    'id, counted_on, status, counted_by, notes, created_at, branch_id',
+                  )
+                  .eq('status', 'completed')
+                  .gte('counted_on', sinceIso.slice(0, 10))
+                  .order('counted_on', { ascending: false })
+                  .limit(30)
+                if (isUuid(branchId)) {
+                  q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
+                }
+                return q
+              })()
+            : Promise.resolve({ data: null, error: null }),
+        ])
 
       if (acksRes.error) throw acksRes.error
       if (apptsRes.error) throw apptsRes.error
       if (leavesRes.error) throw leavesRes.error
       if (invRes.error) throw invRes.error
+      if (reorderRes.error) throw reorderRes.error
+      if (receiptRes.error) throw receiptRes.error
+      if (stocktakeRes.error) throw stocktakeRes.error
 
       const ackedKeys = new Set((acksRes.data ?? []).map((row) => row.notice_key as string))
+
+      type EmbedName = { name?: string } | { name?: string }[] | null
+      const reorders = (reorderRes.data ?? []).map((row) => {
+        const embed = (row as { inventory_items?: EmbedName }).inventory_items
+        const item = Array.isArray(embed) ? embed[0] : embed
+        return {
+          id: row.id as string,
+          qty_requested: Number(row.qty_requested) || 0,
+          status: String(row.status),
+          notes: (row.notes as string | null) ?? null,
+          requested_by: (row.requested_by as string | null) ?? null,
+          created_at: String(row.created_at),
+          item_name: item?.name ?? null,
+        }
+      })
 
       const next = buildNotifications({
         role: user.role,
@@ -103,6 +176,9 @@ export function useNotifications(opts?: {
         appointments: apptsRes.data ?? [],
         leaves: leavesRes.data ?? [],
         inventory: invRes.data ?? [],
+        reorders,
+        receipts: receiptRes.data ?? [],
+        stocktakes: stocktakeRes.data ?? [],
         ackedKeys,
       })
 

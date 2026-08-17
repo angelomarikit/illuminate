@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Search, X } from 'lucide-react'
+import { FileText, Search, Trash2, Upload, X } from 'lucide-react'
 import { CareNotesPanel } from '../components/CareNotesPanel'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
+import { StatusMessage } from '../components/StatusMessage'
+import { useAuth } from '../context/AuthContext'
+import { useBranch } from '../context/BranchContext'
+import { isClinicRole } from '../lib/roles'
 import { normalizeMembership } from '../lib/membership'
 import { formatCurrency } from '../lib/utils'
-import { useBranch } from '../context/BranchContext'
 import { supabase } from '../lib/supabase'
 import type { Customer } from '../types'
+import './Customers.css'
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -74,6 +78,17 @@ type SessionPkgRow = {
   sale_receipt_no: string | null
 }
 
+type ConsentFormRow = {
+  id: string
+  customer_id: string
+  file_name: string
+  file_url: string
+  storage_path: string
+  note: string | null
+  uploaded_by_name: string | null
+  created_at: string
+}
+
 function mapCustomer(row: CustomerRow): Customer {
   return {
     id: row.id,
@@ -107,10 +122,13 @@ const emptyForm = {
 
 export function Customers() {
   const { branchId } = useBranch()
+  const { user } = useAuth()
+  const canManageConsent = isClinicRole(user?.role)
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(emptyForm)
@@ -121,6 +139,10 @@ export function Customers() {
   const [packagesLoading, setPackagesLoading] = useState(false)
   const [activePkgId, setActivePkgId] = useState<string | null>(null)
   const [savingNotes, setSavingNotes] = useState(false)
+  const [consentForms, setConsentForms] = useState<ConsentFormRow[]>([])
+  const [consentLoading, setConsentLoading] = useState(false)
+  const [consentUploading, setConsentUploading] = useState(false)
+  const [consentNote, setConsentNote] = useState('')
 
   const selected = useMemo(
     () => rows.find((c) => c.id === selectedId) ?? null,
@@ -237,8 +259,109 @@ export function Customers() {
       setActivePkgId(null)
       return
     }
-    loadPackages(selected.id)
+    void loadPackages(selected.id)
   }, [selected, loadPackages])
+
+  const loadConsentForms = useCallback(async (customerId: string) => {
+    setConsentLoading(true)
+    const { data, error: err } = await supabase
+      .from('customer_consent_forms')
+      .select('id, customer_id, file_name, file_url, storage_path, note, uploaded_by_name, created_at')
+      .eq('customer_id', customerId)
+      .order('created_at', { ascending: false })
+    if (err) {
+      setConsentForms([])
+      if (
+        err.message.includes('customer_consent_forms') ||
+        err.message.includes('schema cache')
+      ) {
+        setError(`${err.message} — run supabase/add_customer_consent_forms.sql in Supabase.`)
+      }
+    } else {
+      setConsentForms((data as ConsentFormRow[] | null) ?? [])
+    }
+    setConsentLoading(false)
+  }, [])
+
+  useEffect(() => {
+    if (!selected) {
+      setConsentForms([])
+      setConsentNote('')
+      return
+    }
+    void loadConsentForms(selected.id)
+  }, [selected, loadConsentForms])
+
+  async function uploadConsentForm(file: File | null) {
+    if (!selected || !canManageConsent || !file) return
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setError('Consent form must be a PDF file.')
+      return
+    }
+    setConsentUploading(true)
+    setError('')
+    setMessage('')
+    const safeName = file.name.replace(/[^\w.\-() ]+/g, '_').slice(0, 120)
+    const path = `${selected.id}/${Date.now()}-${safeName}`
+    const { error: uploadErr } = await supabase.storage
+      .from('customer-consent-forms')
+      .upload(path, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: 'application/pdf',
+      })
+    if (uploadErr) {
+      setConsentUploading(false)
+      setError(
+        uploadErr.message.includes('Bucket') || uploadErr.message.includes('not found')
+          ? `${uploadErr.message} — run supabase/add_customer_consent_forms.sql in Supabase.`
+          : uploadErr.message,
+      )
+      return
+    }
+    const { data: urlData } = supabase.storage.from('customer-consent-forms').getPublicUrl(path)
+    const { error: insertErr } = await supabase.from('customer_consent_forms').insert({
+      customer_id: selected.id,
+      file_name: file.name,
+      file_url: urlData.publicUrl,
+      storage_path: path,
+      note: consentNote.trim() || null,
+      uploaded_by: user?.id ?? null,
+      uploaded_by_name: user?.name ?? null,
+    })
+    setConsentUploading(false)
+    if (insertErr) {
+      setError(
+        insertErr.message.includes('customer_consent_forms') ||
+          insertErr.message.includes('schema cache')
+          ? `${insertErr.message} — run supabase/add_customer_consent_forms.sql in Supabase.`
+          : insertErr.message,
+      )
+      return
+    }
+    setConsentNote('')
+    setMessage(`Consent form “${file.name}” attached to ${selected.name}.`)
+    await loadConsentForms(selected.id)
+  }
+
+  async function deleteConsentForm(formRow: ConsentFormRow) {
+    if (!canManageConsent) return
+    const ok = window.confirm(`Remove consent form “${formRow.file_name}”?`)
+    if (!ok) return
+    setError('')
+    setMessage('')
+    await supabase.storage.from('customer-consent-forms').remove([formRow.storage_path])
+    const { error: delErr } = await supabase
+      .from('customer_consent_forms')
+      .delete()
+      .eq('id', formRow.id)
+    if (delErr) {
+      setError(delErr.message)
+      return
+    }
+    setMessage('Consent form removed.')
+    if (selected) await loadConsentForms(selected.id)
+  }
 
   const activePkg = useMemo(
     () => packages.find((p) => p.id === activePkgId) ?? null,
@@ -338,12 +461,19 @@ export function Customers() {
     await loadCustomers()
   }
 
+  function initials(name: string) {
+    const parts = name.trim().split(/\s+/).filter(Boolean)
+    if (!parts.length) return '?'
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+  }
+
   return (
-    <div>
+    <div className="crm-page">
       <PageHeader
         kicker="CRM"
         title="Client Management"
-        subtitle="Profiles, website booking details, visit history, membership, points, and cash-in balances."
+        subtitle="Clean client profiles with membership, wallet, sessions, and consent forms."
         actions={
           <button className="btn btn-primary" type="button" onClick={() => setShowForm((v) => !v)}>
             {showForm ? 'Cancel' : 'Add Client'}
@@ -351,27 +481,22 @@ export function Customers() {
         }
       />
 
-      {error ? (
-        <div className="panel" style={{ marginBottom: 16 }}>
-          <div className="panel-body" style={{ color: 'var(--danger)' }}>
-            {error}
-          </div>
-        </div>
-      ) : null}
+      {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+      {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
 
       {showForm ? (
-        <div className="panel" style={{ marginBottom: 16 }}>
-          <div className="panel-header">
-            <h2 className="panel-title">New client</h2>
+        <section className="crm-compose">
+          <div className="crm-compose-head">
+            <div>
+              <p className="crm-kicker">New client</p>
+              <h2>Add to CRM</h2>
+            </div>
           </div>
-          <div className="panel-body">
-            <form
-              onSubmit={onAdd}
-              style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}
-            >
-              <p className="form-req-note">
-                Fields marked with <span className="req" aria-hidden="true">*</span> are required.
-              </p>
+          <form className="crm-compose-form" onSubmit={onAdd}>
+            <p className="form-req-note">
+              Fields marked with <span className="req" aria-hidden="true">*</span> are required.
+            </p>
+            <div className="crm-compose-grid">
               <div className="field">
                 <label>
                   Full name <span className="req" aria-hidden="true">*</span>
@@ -455,90 +580,91 @@ export function Customers() {
                   />
                 </div>
               ) : null}
-              <div style={{ gridColumn: '1 / -1' }}>
-                <p className="form-req-note" style={{ marginBottom: 8 }}>
-                  VIP / VVIP are normally sold on POS (₱5,000 / ₱10,000 · 1 year). Staff can tag
-                  manually here when needed.
-                </p>
-                <button className="btn btn-primary" type="submit" disabled={saving}>
-                  {saving ? 'Saving...' : 'Save client'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            </div>
+            <p className="form-req-note">
+              VIP / VVIP are normally sold on POS (₱5,000 / ₱10,000 · 1 year). Staff can tag manually
+              here when needed.
+            </p>
+            <div className="crm-compose-actions">
+              <button className="btn btn-ghost" type="button" onClick={() => setShowForm(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="submit" disabled={saving}>
+                {saving ? 'Saving...' : 'Save client'}
+              </button>
+            </div>
+          </form>
+        </section>
       ) : null}
 
-      <div className="toolbar">
-        <div className="search-box">
-          <Search size={16} />
-          <input
-            className="search-input"
-            placeholder="Search by name, phone, or email"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-      </div>
+      <div className={`crm-shell ${selected ? 'has-detail' : ''}`}>
+        <section className="crm-list">
+          <div className="crm-list-head">
+            <div>
+              <p className="crm-kicker">Directory</p>
+              <h2>
+                {filtered.length} client{filtered.length === 1 ? '' : 's'}
+              </h2>
+            </div>
+            <label className="crm-search">
+              <Search size={15} strokeWidth={2} aria-hidden />
+              <input
+                type="search"
+                placeholder="Search name, phone, or email"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </label>
+          </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: selected ? 'minmax(0, 1.2fr) minmax(280px, 0.9fr)' : '1fr',
-          gap: 16,
-          alignItems: 'start',
-        }}
-      >
-        <div className="panel">
-          <div className="panel-body">
+          <div className="crm-list-body">
             {loading ? (
-              <div className="empty-state">Loading clients from Supabase...</div>
+              <div className="crm-empty">Loading clients…</div>
             ) : filtered.length === 0 ? (
-              <div className="empty-state">
-                No clients yet for this branch. Website bookings create clients automatically —
-                or click <strong>Add Client</strong>.
+              <div className="crm-empty">
+                No clients yet for this branch. Bookings create clients automatically — or use{' '}
+                <strong>Add Client</strong>.
               </div>
             ) : (
-              <div className="table-wrap">
-                <table className="data-table">
+              <div className="crm-table-wrap">
+                <table className="crm-table">
                   <thead>
                     <tr>
                       <th>Client</th>
                       <th>Contact</th>
-                      <th>Birthday</th>
                       <th>Membership</th>
-                      <th>Points</th>
-                      <th>Cash-in Wallet</th>
+                      <th>Wallet</th>
                       <th>Visits</th>
-                      <th>Last Visit</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.map((client) => (
                       <tr
                         key={client.id}
+                        className={selectedId === client.id ? 'is-active' : ''}
                         onClick={() => setSelectedId(client.id)}
-                        style={{
-                          cursor: 'pointer',
-                          background:
-                            selectedId === client.id ? 'rgba(184, 149, 74, 0.08)' : undefined,
-                        }}
                       >
                         <td>
-                          <strong>{client.name}</strong>
-                          {client.sex || client.age ? (
-                            <div style={{ color: 'var(--muted)', fontSize: '0.78rem' }}>
-                              {[client.sex, client.age ? `${client.age}y` : ''].filter(Boolean).join(' · ')}
+                          <div className="crm-person">
+                            <span className="crm-avatar" aria-hidden>
+                              {initials(client.name)}
+                            </span>
+                            <div>
+                              <strong>{client.name}</strong>
+                              <span>
+                                {[client.sex, client.age ? `${client.age}y` : null, formatBirthday(client.birthday)]
+                                  .filter(Boolean)
+                                  .join(' · ') || 'Profile'}
+                              </span>
                             </div>
-                          ) : null}
-                        </td>
-                        <td>
-                          <div>{client.phone || '—'}</div>
-                          <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
-                            {client.email || '—'}
                           </div>
                         </td>
-                        <td>{formatBirthday(client.birthday)}</td>
+                        <td>
+                          <div className="crm-contact">
+                            <strong>{client.phone || '—'}</strong>
+                            <span>{client.email || '—'}</span>
+                          </div>
+                        </td>
                         <td>
                           <MembershipBadge
                             membership={client.membership}
@@ -546,10 +672,18 @@ export function Customers() {
                             showExpiry
                           />
                         </td>
-                        <td>{client.points}</td>
-                        <td>{formatCurrency(client.cashInBalance)}</td>
-                        <td>{client.visits}</td>
-                        <td>{client.lastVisit}</td>
+                        <td>
+                          <div className="crm-contact">
+                            <strong>{formatCurrency(client.cashInBalance)}</strong>
+                            <span>{client.points} pts</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="crm-contact">
+                            <strong>{client.visits}</strong>
+                            <span>{client.lastVisit}</span>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -557,15 +691,17 @@ export function Customers() {
               </div>
             )}
           </div>
-        </div>
+        </section>
 
         {selected ? (
-          <div className="panel">
-            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-                <h2 className="panel-title" style={{ margin: 0 }}>
-                  {selected.name}
-                </h2>
+          <aside className="crm-detail">
+            <div className="crm-detail-hero">
+              <span className="crm-avatar crm-avatar-lg" aria-hidden>
+                {initials(selected.name)}
+              </span>
+              <div className="crm-detail-hero-copy">
+                <p className="crm-kicker">Client profile</p>
+                <h2>{selected.name}</h2>
                 <MembershipBadge
                   membership={selected.membership}
                   expiresAt={selected.membershipExpiresAt}
@@ -573,7 +709,7 @@ export function Customers() {
                 />
               </div>
               <button
-                className="btn-icon"
+                className="btn-icon crm-detail-close"
                 type="button"
                 aria-label="Close details"
                 onClick={() => setSelectedId(null)}
@@ -581,59 +717,71 @@ export function Customers() {
                 <X size={16} />
               </button>
             </div>
-            <div className="panel-body" style={{ display: 'grid', gap: 14 }}>
-              <div>
-                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
-                  Profile from booking
-                </div>
-                <div style={{ display: 'grid', gap: 8, fontSize: '0.92rem' }}>
-                  <div>
-                    <strong>Membership:</strong>{' '}
-                    <MembershipBadge
-                      membership={selected.membership}
-                      expiresAt={selected.membershipExpiresAt}
-                      showExpiry
-                    />
-                  </div>
-                  <div>
-                    <strong>Email:</strong> {selected.email || '—'}
-                  </div>
-                  <div>
-                    <strong>Phone:</strong> {selected.phone || '—'}
-                  </div>
-                  <div>
-                    <strong>Birthday:</strong> {formatBirthday(selected.birthday)}
-                  </div>
-                  <div>
-                    <strong>Age / Sex:</strong>{' '}
-                    {[selected.age ? `${selected.age}` : null, selected.sex || null]
-                      .filter(Boolean)
-                      .join(' · ') || '—'}
-                  </div>
-                  <div>
-                    <strong>Address:</strong> {selected.address || '—'}
-                  </div>
-                  <div>
-                    <strong>Medical history:</strong> {selected.medicalHistory || '—'}
-                  </div>
-                  <div>
-                    <strong>Notes / goals:</strong> {selected.notes || '—'}
-                  </div>
-                </div>
-              </div>
 
-              <div>
-                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
-                  Treatment sessions
+            <div className="crm-stat-row">
+              <div className="crm-stat">
+                <span>Points</span>
+                <strong>{selected.points}</strong>
+              </div>
+              <div className="crm-stat">
+                <span>Wallet</span>
+                <strong>{formatCurrency(selected.cashInBalance)}</strong>
+              </div>
+              <div className="crm-stat">
+                <span>Visits</span>
+                <strong>{selected.visits}</strong>
+              </div>
+            </div>
+
+            <div className="crm-detail-scroll">
+              <section className="crm-section">
+                <h3>Profile</h3>
+                <div className="crm-facts">
+                  <div>
+                    <span>Email</span>
+                    <strong>{selected.email || '—'}</strong>
+                  </div>
+                  <div>
+                    <span>Phone</span>
+                    <strong>{selected.phone || '—'}</strong>
+                  </div>
+                  <div>
+                    <span>Birthday</span>
+                    <strong>{formatBirthday(selected.birthday)}</strong>
+                  </div>
+                  <div>
+                    <span>Age / Sex</span>
+                    <strong>
+                      {[selected.age ? `${selected.age}` : null, selected.sex || null]
+                        .filter(Boolean)
+                        .join(' · ') || '—'}
+                    </strong>
+                  </div>
+                  <div className="crm-fact-full">
+                    <span>Address</span>
+                    <strong>{selected.address || '—'}</strong>
+                  </div>
+                  <div className="crm-fact-full">
+                    <span>Medical history</span>
+                    <strong>{selected.medicalHistory || '—'}</strong>
+                  </div>
+                  <div className="crm-fact-full">
+                    <span>Notes / goals</span>
+                    <strong>{selected.notes || '—'}</strong>
+                  </div>
                 </div>
+              </section>
+
+              <section className="crm-section">
+                <h3>Treatment sessions</h3>
                 {packagesLoading ? (
-                  <p style={{ color: 'var(--muted)', margin: 0 }}>Loading sessions…</p>
+                  <p className="crm-muted">Loading sessions…</p>
                 ) : packages.length === 0 ? (
-                  <p style={{ color: 'var(--muted)', margin: 0 }}>
+                  <p className="crm-muted">
                     No session packages yet. Create them from POS with sessions advised.
                   </p>
                 ) : (
-                  <div style={{ display: 'grid', gap: 10 }}>
+                  <div className="crm-stack">
                     <select
                       className="select"
                       value={activePkgId ?? ''}
@@ -649,44 +797,45 @@ export function Customers() {
                       })}
                     </select>
                     {activePkg ? (
-                      <div
-                        style={{
-                          padding: '10px 12px',
-                          border: '1px solid var(--line)',
-                          borderRadius: 12,
-                          display: 'grid',
-                          gap: 6,
-                          fontSize: '0.9rem',
-                        }}
-                      >
-                        <div>
-                          <strong>Sessions left:</strong>{' '}
-                          {Math.max(0, activePkg.total_sessions - activePkg.sessions_used)} /{' '}
-                          {activePkg.total_sessions}
+                      <div className="crm-session-card">
+                        <div className="crm-facts">
+                          <div>
+                            <span>Sessions left</span>
+                            <strong>
+                              {Math.max(0, activePkg.total_sessions - activePkg.sessions_used)} /{' '}
+                              {activePkg.total_sessions}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Next session</span>
+                            <strong>{activePkg.next_session_date || '—'}</strong>
+                          </div>
+                          <div>
+                            <span>Package</span>
+                            <strong>
+                              {formatCurrency(activePkg.package_amount)}
+                              {activePkg.discount_amount
+                                ? ` (−${formatCurrency(activePkg.discount_amount)})`
+                                : ''}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Sales by</span>
+                            <strong>{activePkg.sales_by || '—'}</strong>
+                          </div>
+                          <div>
+                            <span>Administered by</span>
+                            <strong>{activePkg.administered_by || '—'}</strong>
+                          </div>
+                          <div>
+                            <span>Consult by</span>
+                            <strong>{activePkg.consult_by || '—'}</strong>
+                          </div>
                         </div>
-                        <div>
-                          <strong>Next session:</strong> {activePkg.next_session_date || '—'}
-                        </div>
-                        <div>
-                          <strong>Package / discount:</strong>{' '}
-                          {formatCurrency(activePkg.package_amount)}
-                          {activePkg.discount_amount
-                            ? ` (−${formatCurrency(activePkg.discount_amount)})`
-                            : ''}
-                        </div>
-                        <div>
-                          <strong>Administered by:</strong> {activePkg.administered_by || '—'}
-                        </div>
-                        <div>
-                          <strong>Consult by:</strong> {activePkg.consult_by || '—'}
-                        </div>
-                        <div>
-                          <strong>Sales by:</strong> {activePkg.sales_by || '—'}
-                        </div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                        <p className="crm-session-meta">
                           {activePkg.status}
                           {activePkg.sale_receipt_no ? ` · ${activePkg.sale_receipt_no}` : ''}
-                        </div>
+                        </p>
                       </div>
                     ) : null}
                     {activePkg ? (
@@ -701,44 +850,106 @@ export function Customers() {
                     ) : null}
                   </div>
                 )}
-              </div>
+              </section>
 
-              <div>
-                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
-                  Appointments
-                </div>
-                {visitsLoading ? (
-                  <p style={{ color: 'var(--muted)', margin: 0 }}>Loading visits…</p>
-                ) : visits.length === 0 ? (
-                  <p style={{ color: 'var(--muted)', margin: 0 }}>No linked appointments yet.</p>
-                ) : (
-                  <div style={{ display: 'grid', gap: 8 }}>
-                    {visits.map((v) => (
-                      <div
-                        key={v.id}
-                        style={{
-                          padding: '10px 12px',
-                          border: '1px solid var(--line)',
-                          borderRadius: 12,
-                          background: 'var(--surface-muted, #fafafa)',
+              <section className="crm-section">
+                <h3>Consent forms</h3>
+                {canManageConsent ? (
+                  <div className="customer-consent-upload">
+                    <div className="field" style={{ margin: 0 }}>
+                      <label htmlFor="consent-note">Note (optional)</label>
+                      <input
+                        id="consent-note"
+                        className="input"
+                        placeholder="e.g. Laser consent · signed today"
+                        value={consentNote}
+                        onChange={(e) => setConsentNote(e.target.value)}
+                        disabled={consentUploading}
+                      />
+                    </div>
+                    <label
+                      className={`customer-consent-file-btn ${consentUploading ? 'is-busy' : ''}`}
+                    >
+                      <input
+                        type="file"
+                        accept="application/pdf,.pdf"
+                        hidden
+                        disabled={consentUploading}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] ?? null
+                          e.target.value = ''
+                          void uploadConsentForm(file)
                         }}
-                      >
+                      />
+                      <Upload size={15} />
+                      {consentUploading ? 'Uploading…' : 'Upload PDF consent'}
+                    </label>
+                  </div>
+                ) : (
+                  <p className="crm-muted">Only clinic staff can upload consent forms.</p>
+                )}
+
+                {consentLoading ? (
+                  <p className="crm-muted">Loading consent forms…</p>
+                ) : consentForms.length === 0 ? (
+                  <p className="crm-muted">No consent form attachments yet.</p>
+                ) : (
+                  <ul className="customer-consent-list">
+                    {consentForms.map((formRow) => (
+                      <li key={formRow.id} className="customer-consent-item">
+                        <FileText size={16} aria-hidden />
+                        <div className="customer-consent-copy">
+                          <a href={formRow.file_url} target="_blank" rel="noreferrer">
+                            {formRow.file_name}
+                          </a>
+                          <span>
+                            {new Date(formRow.created_at).toLocaleString()}
+                            {formRow.uploaded_by_name ? ` · ${formRow.uploaded_by_name}` : ''}
+                            {formRow.note ? ` · ${formRow.note}` : ''}
+                          </span>
+                        </div>
+                        {canManageConsent ? (
+                          <button
+                            type="button"
+                            className="btn-icon"
+                            aria-label={`Delete ${formRow.file_name}`}
+                            onClick={() => void deleteConsentForm(formRow)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="crm-section">
+                <h3>Appointments</h3>
+                {visitsLoading ? (
+                  <p className="crm-muted">Loading visits…</p>
+                ) : visits.length === 0 ? (
+                  <p className="crm-muted">No linked appointments yet.</p>
+                ) : (
+                  <div className="crm-visit-list">
+                    {visits.map((v) => (
+                      <article key={v.id} className="crm-visit-card">
                         <strong>
                           {v.appointment_date} · {String(v.appointment_time).slice(0, 5)}
                         </strong>
-                        <div style={{ fontSize: '0.88rem' }}>{v.service_name}</div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: 4 }}>
+                        <p>{v.service_name}</p>
+                        <span>
                           {v.status}
                           {v.source === 'web' ? ' · website' : ''}
                           {v.special_note ? ` · ${v.special_note}` : ''}
-                        </div>
-                      </div>
+                        </span>
+                      </article>
                     ))}
                   </div>
                 )}
-              </div>
+              </section>
             </div>
-          </div>
+          </aside>
         ) : null}
       </div>
     </div>

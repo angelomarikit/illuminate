@@ -18,6 +18,7 @@ import { Services } from './pages/Services'
 import { Loyalty } from './pages/Loyalty'
 import { QRCheckin } from './pages/QRCheckin'
 import { Inventory } from './pages/Inventory'
+import { InventoryOps } from './pages/inventory/InventoryOps'
 import { Stocktake } from './pages/inventory/Stocktake'
 import { Receiving } from './pages/inventory/Receiving'
 import { Reorder } from './pages/inventory/Reorder'
@@ -74,6 +75,7 @@ export default function App() {
                     <Route path="loyalty" element={<Loyalty />} />
                     <Route path="qr-checkin" element={<QRCheckin />} />
                     <Route path="inventory" element={<Inventory />} />
+                    <Route path="inventory/ops" element={<InventoryOps />} />
                     <Route path="inventory/stocktake" element={<Stocktake />} />
                     <Route path="inventory/receiving" element={<Receiving />} />
                     <Route path="inventory/reorder" element={<Reorder />} />
