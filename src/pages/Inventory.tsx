@@ -77,7 +77,7 @@ export function Inventory() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('inventory_items').select('*').order('name')
+    let q = supabase.from('inventory_items').select('*').is('deleted_at', null).order('name')
     if (isUuid(branchId)) q = q.eq('branch_id', branchId)
     const [{ data, error: err }, { data: svc }, { data: linkData, error: linkErr }] =
       await Promise.all([
@@ -89,9 +89,11 @@ export function Inventory() {
       ])
     if (err) {
       setError(
-        err.message.includes('is_inventory_access') || err.message.includes('policy')
-          ? `${err.message} — run supabase/add_inventory_role.sql and use an Owner/Admin/Inventory account.`
-          : err.message,
+        err.message.includes('deleted_at')
+          ? `${err.message} — run supabase/add_stocktake_line_snapshots.sql in Supabase.`
+          : err.message.includes('is_inventory_access') || err.message.includes('policy')
+            ? `${err.message} — run supabase/add_inventory_role.sql and use an Owner/Admin/Inventory account.`
+            : err.message,
       )
     } else {
       setError('')

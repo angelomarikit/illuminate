@@ -55,6 +55,7 @@ export function Reorder() {
     let itemQ = supabase
       .from('inventory_items')
       .select('id, name, sku, stock, reorder_level, unit')
+      .is('deleted_at', null)
       .order('name')
     let reqQ = supabase
       .from('inventory_reorder_requests')

@@ -70,6 +70,7 @@ After setup.sql, also run (in order):
 28. `supabase/add_chat_thread_close.sql` (**close conversations**) — staff can close threads; clients cannot message closed chats
 29. `supabase/add_sale_payment_proof.sql` (**POS payment screenshots**) — `sales.payment_proof_url` + `sale-payment-proofs` storage bucket
 30. `supabase/add_customer_consent_forms.sql` (**customer PDF consent forms**) — attachments on Customers for Receptionist / Admin / Owner
+31. `supabase/add_stocktake_line_snapshots.sql` (**stocktake product history + delete**) — line item name snapshots, soft-delete inventory items from Stocktake
 
 Mobile client (Expo) uses the **same** Supabase project. See `docs/MOBILE_EXPO.md`, `docs/MOBILE_NOTIFICATIONS.md`, and `mobile/.env.example` (`EXPO_PUBLIC_SUPABASE_*`).
 

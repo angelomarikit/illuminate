@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
+import { ChevronDown, ChevronRight, Trash2, X } from 'lucide-react'
 import { InventorySubnav } from '../../components/InventorySubnav'
 import { PageHeader } from '../../components/PageHeader'
 import { StatusMessage } from '../../components/StatusMessage'
@@ -24,12 +25,34 @@ type CountLine = {
   counted_qty: string
 }
 
+type PastLine = {
+  id: string
+  system_qty: number
+  counted_qty: number | null
+  item_name: string | null
+  item_sku: string | null
+  item_unit: string | null
+  line_action: string | null
+  inventory_items?: { name: string; sku: string; unit: string } | { name: string; sku: string; unit: string }[] | null
+}
+
 type PastStocktake = {
   id: string
   counted_on: string
   status: string
   counted_by: string | null
   notes: string | null
+  inventory_stocktake_lines?: PastLine[] | null
+}
+
+function lineProduct(line: PastLine) {
+  const embed = line.inventory_items
+  const item = Array.isArray(embed) ? embed[0] : embed
+  return {
+    name: line.item_name || item?.name || 'Unknown item',
+    sku: line.item_sku || item?.sku || '—',
+    unit: line.item_unit || item?.unit || '',
+  }
 }
 
 export function Stocktake() {
@@ -37,12 +60,15 @@ export function Stocktake() {
   const { branchId } = useBranch()
   const [lines, setLines] = useState<CountLine[]>([])
   const [past, setPast] = useState<PastStocktake[]>([])
+  const [expandedPast, setExpandedPast] = useState<Record<string, boolean>>({})
   const [notes, setNotes] = useState('')
   const [countedOn, setCountedOn] = useState(() => new Date().toISOString().slice(0, 10))
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<CountLine | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -50,10 +76,17 @@ export function Stocktake() {
     let itemQ = supabase
       .from('inventory_items')
       .select('id, name, sku, stock, unit')
+      .is('deleted_at', null)
       .order('name')
     let pastQ = supabase
       .from('inventory_stocktakes')
-      .select('id, counted_on, status, counted_by, notes')
+      .select(
+        `id, counted_on, status, counted_by, notes,
+         inventory_stocktake_lines (
+           id, system_qty, counted_qty, item_name, item_sku, item_unit, line_action,
+           inventory_items (name, sku, unit)
+         )`,
+      )
       .order('counted_on', { ascending: false })
       .limit(20)
     if (isUuid(branchId)) {
@@ -63,11 +96,13 @@ export function Stocktake() {
     const [{ data: items, error: itemErr }, { data: pastData, error: pastErr }] =
       await Promise.all([itemQ, pastQ])
     if (itemErr || pastErr) {
+      const msg = (itemErr || pastErr)?.message || 'Failed to load'
       setError(
-        (itemErr || pastErr)?.message.includes('stocktake') ||
-          (itemErr || pastErr)?.message.includes('schema cache')
-          ? `${(itemErr || pastErr)?.message} — run supabase/add_inventory_role.sql in Supabase.`
-          : (itemErr || pastErr)?.message || 'Failed to load',
+        msg.includes('deleted_at') || msg.includes('item_name') || msg.includes('line_action')
+          ? `${msg} — run supabase/add_stocktake_line_snapshots.sql in Supabase.`
+          : msg.includes('stocktake') || msg.includes('schema cache')
+            ? `${msg} — run supabase/add_inventory_role.sql in Supabase.`
+            : msg,
       )
     }
     setLines(
@@ -80,12 +115,12 @@ export function Stocktake() {
         counted_qty: String(item.stock),
       })),
     )
-    setPast((pastData as PastStocktake[] | null) ?? [])
+    setPast((pastData as unknown as PastStocktake[] | null) ?? [])
     setLoading(false)
   }, [branchId])
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
 
   async function completeStocktake() {
@@ -124,12 +159,20 @@ export function Stocktake() {
       inventory_item_id: line.inventory_item_id,
       system_qty: line.system_qty,
       counted_qty: Math.max(0, Number(line.counted_qty) || 0),
+      item_name: line.name,
+      item_sku: line.sku,
+      item_unit: line.unit,
+      line_action: 'counted' as const,
     }))
 
     const { error: linesErr } = await supabase.from('inventory_stocktake_lines').insert(payload)
     if (linesErr) {
       setSaving(false)
-      setError(linesErr.message)
+      setError(
+        linesErr.message.includes('item_name') || linesErr.message.includes('line_action')
+          ? `${linesErr.message} — run supabase/add_stocktake_line_snapshots.sql in Supabase.`
+          : linesErr.message,
+      )
       return
     }
 
@@ -159,12 +202,84 @@ export function Stocktake() {
     await load()
   }
 
+  async function confirmDeleteItem() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setError('')
+    setMessage('')
+
+    const { data: header, error: headerErr } = await supabase
+      .from('inventory_stocktakes')
+      .insert({
+        branch_id: isUuid(branchId) ? branchId : null,
+        status: 'completed',
+        counted_on: countedOn,
+        notes: `Deleted item during stocktake: ${deleteTarget.name}`,
+        counted_by: user?.name ?? null,
+        created_by: user?.id ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single()
+
+    if (headerErr || !header) {
+      setDeleting(false)
+      setError(
+        headerErr?.message.includes('stocktake')
+          ? `${headerErr.message} — run supabase/add_inventory_role.sql.`
+          : headerErr?.message || 'Could not record deletion.',
+      )
+      return
+    }
+
+    const { error: lineErr } = await supabase.from('inventory_stocktake_lines').insert({
+      stocktake_id: header.id,
+      inventory_item_id: deleteTarget.inventory_item_id,
+      system_qty: deleteTarget.system_qty,
+      counted_qty: 0,
+      item_name: deleteTarget.name,
+      item_sku: deleteTarget.sku,
+      item_unit: deleteTarget.unit,
+      line_action: 'deleted',
+      notes: 'Item removed from inventory during stocktake',
+    })
+
+    if (lineErr) {
+      setDeleting(false)
+      setError(
+        lineErr.message.includes('item_name') || lineErr.message.includes('line_action')
+          ? `${lineErr.message} — run supabase/add_stocktake_line_snapshots.sql in Supabase.`
+          : lineErr.message,
+      )
+      return
+    }
+
+    const { error: delErr } = await supabase
+      .from('inventory_items')
+      .update({ deleted_at: new Date().toISOString(), stock: 0 })
+      .eq('id', deleteTarget.inventory_item_id)
+
+    setDeleting(false)
+    if (delErr) {
+      setError(
+        delErr.message.includes('deleted_at')
+          ? `${delErr.message} — run supabase/add_stocktake_line_snapshots.sql in Supabase.`
+          : delErr.message,
+      )
+      return
+    }
+
+    setMessage(`Deleted “${deleteTarget.name}” from inventory. Recorded in past stocktakes.`)
+    setDeleteTarget(null)
+    await load()
+  }
+
   return (
     <div>
       <PageHeader
         kicker="Inventory"
         title="Stocktaking / cycle counting"
-        subtitle="Count physical stock, compare to system qty, and post variances to on-hand."
+        subtitle="Count physical stock, compare to system qty, post variances, or delete items with history."
       />
       <InventorySubnav />
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
@@ -194,7 +309,7 @@ export function Stocktake() {
             className="btn btn-primary"
             type="button"
             disabled={saving || loading || !lines.length}
-            onClick={completeStocktake}
+            onClick={() => void completeStocktake()}
           >
             {saving ? 'Posting…' : 'Complete count & update stock'}
           </button>
@@ -220,6 +335,7 @@ export function Stocktake() {
                     <th>System qty</th>
                     <th>Counted qty</th>
                     <th>Variance</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -266,6 +382,22 @@ export function Stocktake() {
                             {variance > 0 ? `+${variance}` : variance}
                           </span>
                         </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-icon"
+                            aria-label={`Delete ${line.name}`}
+                            title="Delete item"
+                            disabled={saving || deleting}
+                            onClick={() => {
+                              setError('')
+                              setMessage('')
+                              setDeleteTarget(line)
+                            }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
                       </tr>
                     )
                   })}
@@ -288,29 +420,218 @@ export function Stocktake() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th style={{ width: 40 }} />
                     <th>Date</th>
                     <th>Status</th>
+                    <th>Products</th>
                     <th>Counted by</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {past.map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.counted_on}</td>
-                      <td>
-                        <span className="badge badge-neutral">{row.status}</span>
-                      </td>
-                      <td>{row.counted_by || '—'}</td>
-                      <td>{row.notes || '—'}</td>
-                    </tr>
-                  ))}
+                  {past.map((row) => {
+                    const detail = row.inventory_stocktake_lines ?? []
+                    const open = Boolean(expandedPast[row.id])
+                    const productPreview =
+                      detail.length === 0
+                        ? '—'
+                        : detail
+                            .slice(0, 3)
+                            .map((line) => lineProduct(line).name)
+                            .join(', ') + (detail.length > 3 ? ` +${detail.length - 3} more` : '')
+                    return (
+                      <Fragment key={row.id}>
+                        <tr>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn-icon"
+                              aria-label={open ? 'Hide products' : 'Show products'}
+                              aria-expanded={open}
+                              onClick={() =>
+                                setExpandedPast((prev) => ({ ...prev, [row.id]: !prev[row.id] }))
+                              }
+                            >
+                              {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                            </button>
+                          </td>
+                          <td>{row.counted_on}</td>
+                          <td>
+                            <span className="badge badge-neutral">{row.status}</span>
+                          </td>
+                          <td>
+                            <strong>{detail.length}</strong>
+                            <div style={{ color: 'var(--muted)', fontSize: '0.78rem' }}>
+                              {productPreview}
+                            </div>
+                          </td>
+                          <td>{row.counted_by || '—'}</td>
+                          <td>{row.notes || '—'}</td>
+                        </tr>
+                        {open ? (
+                          <tr>
+                            <td colSpan={6} style={{ background: '#fafafa', padding: 12 }}>
+                              {detail.length === 0 ? (
+                                <div className="empty-state" style={{ padding: 12 }}>
+                                  No line details saved for this count.
+                                </div>
+                              ) : (
+                                <table className="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Product</th>
+                                      <th>SKU</th>
+                                      <th>System</th>
+                                      <th>Counted</th>
+                                      <th>Change</th>
+                                      <th>Action</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {detail.map((line) => {
+                                      const product = lineProduct(line)
+                                      const counted = Number(line.counted_qty ?? 0)
+                                      const variance = counted - Number(line.system_qty || 0)
+                                      const action = line.line_action || 'counted'
+                                      return (
+                                        <tr key={line.id}>
+                                          <td>
+                                            <strong>{product.name}</strong>
+                                          </td>
+                                          <td>{product.sku}</td>
+                                          <td>
+                                            {line.system_qty} {product.unit}
+                                          </td>
+                                          <td>
+                                            {line.counted_qty ?? '—'} {product.unit}
+                                          </td>
+                                          <td>
+                                            <span
+                                              className={`badge ${
+                                                action === 'deleted'
+                                                  ? 'badge-danger'
+                                                  : variance === 0
+                                                    ? 'badge-success'
+                                                    : variance < 0
+                                                      ? 'badge-danger'
+                                                      : 'badge-warning'
+                                              }`}
+                                            >
+                                              {action === 'deleted'
+                                                ? 'removed'
+                                                : variance > 0
+                                                  ? `+${variance}`
+                                                  : variance}
+                                            </span>
+                                          </td>
+                                          <td>
+                                            <span
+                                              className={`badge ${
+                                                action === 'deleted' ? 'badge-danger' : 'badge-neutral'
+                                              }`}
+                                            >
+                                              {action}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              )}
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
       </div>
+
+      {deleteTarget ? (
+        <div
+          className="confirm-modal-overlay"
+          role="presentation"
+          onClick={() => {
+            if (!deleting) setDeleteTarget(null)
+          }}
+        >
+          <div
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="stocktake-delete-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-modal-header">
+              <div>
+                <p className="confirm-modal-kicker">Stocktake</p>
+                <h2 id="stocktake-delete-title" className="confirm-modal-title">
+                  Delete item?
+                </h2>
+              </div>
+              <button
+                type="button"
+                className="btn-icon"
+                aria-label="Close"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="confirm-modal-body">
+              <p className="confirm-modal-text">
+                Are you sure you want to delete this item?
+              </p>
+              <div className="confirm-modal-meta">
+                <div>
+                  <span className="confirm-modal-label">Product</span>
+                  <strong>{deleteTarget.name}</strong>
+                </div>
+                <div>
+                  <span className="confirm-modal-label">SKU</span>
+                  <strong>{deleteTarget.sku || '—'}</strong>
+                </div>
+                <div>
+                  <span className="confirm-modal-label">On hand</span>
+                  <strong>
+                    {deleteTarget.system_qty} {deleteTarget.unit}
+                  </strong>
+                </div>
+              </div>
+              <div className="confirm-modal-note">
+                <p>
+                  This removes it from the stock catalog and records the deletion in past
+                  stocktakes so you can still track the product name and quantity.
+                </p>
+              </div>
+            </div>
+            <div className="confirm-modal-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={deleting}
+                onClick={() => void confirmDeleteItem()}
+              >
+                {deleting ? 'Deleting…' : 'Yes, delete item'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -273,6 +273,7 @@ export function Dashboard() {
       let invQ = supabase
         .from('inventory_items')
         .select('id, name, sku, stock, unit, reorder_level')
+        .is('deleted_at', null)
         .limit(100)
       let custQ = supabase
         .from('customers')

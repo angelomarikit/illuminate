@@ -110,6 +110,7 @@ export function InventoryOps() {
     let lowQ = supabase
       .from('inventory_items')
       .select('id, name, sku, stock, reorder_level, unit')
+      .is('deleted_at', null)
       .order('name')
       .limit(200)
 

@@ -48,6 +48,7 @@ export function Receiving() {
     let itemQ = supabase
       .from('inventory_items')
       .select('id, name, sku, stock, unit')
+      .is('deleted_at', null)
       .order('name')
     let receiptQ = supabase
       .from('inventory_receipts')

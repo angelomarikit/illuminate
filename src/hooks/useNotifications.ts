@@ -89,6 +89,7 @@ export function useNotifications(opts?: {
                 let q = supabase
                   .from('inventory_items')
                   .select('id, name, stock, reorder_level, unit, branch_id')
+                  .is('deleted_at', null)
                   .limit(100)
                 if (isUuid(branchId)) q = q.eq('branch_id', branchId)
                 return q
