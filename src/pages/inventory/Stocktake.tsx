@@ -1,5 +1,5 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Trash2, X } from 'lucide-react'
 import { InventorySubnav } from '../../components/InventorySubnav'
 import { PageHeader } from '../../components/PageHeader'
 import { StatusMessage } from '../../components/StatusMessage'
@@ -60,7 +60,6 @@ export function Stocktake() {
   const { branchId } = useBranch()
   const [lines, setLines] = useState<CountLine[]>([])
   const [past, setPast] = useState<PastStocktake[]>([])
-  const [expandedPast, setExpandedPast] = useState<Record<string, boolean>>({})
   const [notes, setNotes] = useState('')
   const [countedOn, setCountedOn] = useState(() => new Date().toISOString().slice(0, 10))
   const [loading, setLoading] = useState(true)
@@ -123,6 +122,42 @@ export function Stocktake() {
     void load()
   }, [load])
 
+  const affectedPastRows = useMemo(() => {
+    const rows: Array<{
+      key: string
+      counted_on: string
+      counted_by: string | null
+      notes: string | null
+      status: string
+      line: PastLine
+      product: ReturnType<typeof lineProduct>
+      variance: number
+      action: string
+    }> = []
+
+    for (const stocktake of past) {
+      for (const line of stocktake.inventory_stocktake_lines ?? []) {
+        const action = line.line_action || 'counted'
+        const counted = Number(line.counted_qty ?? 0)
+        const variance = counted - Number(line.system_qty || 0)
+        const affected = action === 'deleted' || variance !== 0
+        if (!affected) continue
+        rows.push({
+          key: `${stocktake.id}-${line.id}`,
+          counted_on: stocktake.counted_on,
+          counted_by: stocktake.counted_by,
+          notes: stocktake.notes,
+          status: stocktake.status,
+          line,
+          product: lineProduct(line),
+          variance,
+          action,
+        })
+      }
+    }
+    return rows
+  }, [past])
+
   async function completeStocktake() {
     if (!lines.length) {
       setError('No inventory items to count.')
@@ -154,16 +189,28 @@ export function Stocktake() {
       return
     }
 
-    const payload = lines.map((line) => ({
-      stocktake_id: header.id,
-      inventory_item_id: line.inventory_item_id,
-      system_qty: line.system_qty,
-      counted_qty: Math.max(0, Number(line.counted_qty) || 0),
-      item_name: line.name,
-      item_sku: line.sku,
-      item_unit: line.unit,
-      line_action: 'counted' as const,
-    }))
+    const payload = lines
+      .map((line) => {
+        const counted_qty = Math.max(0, Number(line.counted_qty) || 0)
+        return {
+          stocktake_id: header.id,
+          inventory_item_id: line.inventory_item_id,
+          system_qty: line.system_qty,
+          counted_qty,
+          item_name: line.name,
+          item_sku: line.sku,
+          item_unit: line.unit,
+          line_action: 'counted' as const,
+        }
+      })
+      .filter((line) => line.counted_qty !== line.system_qty)
+
+    if (!payload.length) {
+      await supabase.from('inventory_stocktakes').delete().eq('id', header.id)
+      setSaving(false)
+      setError('No quantity changes to post. Update a counted qty first, or delete an item.')
+      return
+    }
 
     const { error: linesErr } = await supabase.from('inventory_stocktake_lines').insert(payload)
     if (linesErr) {
@@ -415,136 +462,68 @@ export function Stocktake() {
         <div className="panel-body">
           {past.length === 0 ? (
             <div className="empty-state">No completed counts yet.</div>
+          ) : affectedPastRows.length === 0 ? (
+            <div className="empty-state">No quantity changes or deletions recorded yet.</div>
           ) : (
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th style={{ width: 40 }} />
                     <th>Date</th>
-                    <th>Status</th>
-                    <th>Products</th>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th>System</th>
+                    <th>Counted</th>
+                    <th>Change</th>
+                    <th>Action</th>
                     <th>Counted by</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {past.map((row) => {
-                    const detail = row.inventory_stocktake_lines ?? []
-                    const open = Boolean(expandedPast[row.id])
-                    const productPreview =
-                      detail.length === 0
-                        ? '—'
-                        : detail
-                            .slice(0, 3)
-                            .map((line) => lineProduct(line).name)
-                            .join(', ') + (detail.length > 3 ? ` +${detail.length - 3} more` : '')
-                    return (
-                      <Fragment key={row.id}>
-                        <tr>
-                          <td>
-                            <button
-                              type="button"
-                              className="btn-icon"
-                              aria-label={open ? 'Hide products' : 'Show products'}
-                              aria-expanded={open}
-                              onClick={() =>
-                                setExpandedPast((prev) => ({ ...prev, [row.id]: !prev[row.id] }))
-                              }
-                            >
-                              {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                            </button>
-                          </td>
-                          <td>{row.counted_on}</td>
-                          <td>
-                            <span className="badge badge-neutral">{row.status}</span>
-                          </td>
-                          <td>
-                            <strong>{detail.length}</strong>
-                            <div style={{ color: 'var(--muted)', fontSize: '0.78rem' }}>
-                              {productPreview}
-                            </div>
-                          </td>
-                          <td>{row.counted_by || '—'}</td>
-                          <td>{row.notes || '—'}</td>
-                        </tr>
-                        {open ? (
-                          <tr>
-                            <td colSpan={6} style={{ background: '#fafafa', padding: 12 }}>
-                              {detail.length === 0 ? (
-                                <div className="empty-state" style={{ padding: 12 }}>
-                                  No line details saved for this count.
-                                </div>
-                              ) : (
-                                <table className="data-table">
-                                  <thead>
-                                    <tr>
-                                      <th>Product</th>
-                                      <th>SKU</th>
-                                      <th>System</th>
-                                      <th>Counted</th>
-                                      <th>Change</th>
-                                      <th>Action</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {detail.map((line) => {
-                                      const product = lineProduct(line)
-                                      const counted = Number(line.counted_qty ?? 0)
-                                      const variance = counted - Number(line.system_qty || 0)
-                                      const action = line.line_action || 'counted'
-                                      return (
-                                        <tr key={line.id}>
-                                          <td>
-                                            <strong>{product.name}</strong>
-                                          </td>
-                                          <td>{product.sku}</td>
-                                          <td>
-                                            {line.system_qty} {product.unit}
-                                          </td>
-                                          <td>
-                                            {line.counted_qty ?? '—'} {product.unit}
-                                          </td>
-                                          <td>
-                                            <span
-                                              className={`badge ${
-                                                action === 'deleted'
-                                                  ? 'badge-danger'
-                                                  : variance === 0
-                                                    ? 'badge-success'
-                                                    : variance < 0
-                                                      ? 'badge-danger'
-                                                      : 'badge-warning'
-                                              }`}
-                                            >
-                                              {action === 'deleted'
-                                                ? 'removed'
-                                                : variance > 0
-                                                  ? `+${variance}`
-                                                  : variance}
-                                            </span>
-                                          </td>
-                                          <td>
-                                            <span
-                                              className={`badge ${
-                                                action === 'deleted' ? 'badge-danger' : 'badge-neutral'
-                                              }`}
-                                            >
-                                              {action}
-                                            </span>
-                                          </td>
-                                        </tr>
-                                      )
-                                    })}
-                                  </tbody>
-                                </table>
-                              )}
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    )
-                  })}
+                  {affectedPastRows.map((row) => (
+                    <tr key={row.key}>
+                      <td>{row.counted_on}</td>
+                      <td>
+                        <strong>{row.product.name}</strong>
+                      </td>
+                      <td>{row.product.sku}</td>
+                      <td>
+                        {row.line.system_qty} {row.product.unit}
+                      </td>
+                      <td>
+                        {row.line.counted_qty ?? '—'} {row.product.unit}
+                      </td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            row.action === 'deleted'
+                              ? 'badge-danger'
+                              : row.variance < 0
+                                ? 'badge-danger'
+                                : 'badge-warning'
+                          }`}
+                        >
+                          {row.action === 'deleted'
+                            ? 'removed'
+                            : row.variance > 0
+                              ? `+${row.variance}`
+                              : row.variance}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            row.action === 'deleted' ? 'badge-danger' : 'badge-neutral'
+                          }`}
+                        >
+                          {row.action}
+                        </span>
+                      </td>
+                      <td>{row.counted_by || '—'}</td>
+                      <td>{row.notes || '—'}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
