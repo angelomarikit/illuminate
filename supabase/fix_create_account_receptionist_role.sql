@@ -1,61 +1,20 @@
--- Illuminate — Create clinic accounts (Owner / Admin / HR)
--- Run after add_hr_role.sql + add_inventory_role.sql
--- Creates auth users (email confirmed), profile details, and a provisioned-account vault.
+-- Fix Create Account "Invalid role" when selecting Receptionist
+-- Run in Supabase → SQL Editor.
+--
+-- Cause: create_clinic_account only allowed Staff, but the app sends Receptionist.
+-- This allows Receptionist on profiles + updates the create function.
 
-create extension if not exists pgcrypto;
+-- 1) Allow Receptionist on profiles.role (keep Staff for any leftover rows)
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles
+  add constraint profiles_role_check
+  check (role in ('Owner', 'Admin', 'Receptionist', 'Staff', 'HR', 'Inventory', 'Client'));
 
--- Profile demographics used by Create Account
-alter table public.profiles add column if not exists phone text;
-alter table public.profiles add column if not exists birthday date;
-alter table public.profiles add column if not exists age integer;
-alter table public.profiles add column if not exists gender text;
-alter table public.profiles add column if not exists address text;
+update public.profiles
+set role = 'Receptionist'
+where role = 'Staff';
 
-create or replace function public.is_account_provisioner()
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select public.current_app_role() in ('Owner', 'Admin', 'HR');
-$$;
-
-revoke all on function public.is_account_provisioner() from public;
-grant execute on function public.is_account_provisioner() to authenticated;
-
--- Listing + encrypted initial password (reveal via RPC after UI re-auth)
-create table if not exists public.provisioned_accounts (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.profiles (id) on delete cascade,
-  full_name text not null,
-  email text not null,
-  phone text,
-  birthday date,
-  age integer,
-  gender text,
-  address text,
-  role text not null,
-  password_cipher bytea not null,
-  created_by uuid references public.profiles (id) on delete set null,
-  created_by_name text not null,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists provisioned_accounts_created_idx
-  on public.provisioned_accounts (created_at desc);
-
-alter table public.provisioned_accounts enable row level security;
-
-drop policy if exists "provisioner_read_accounts" on public.provisioned_accounts;
-create policy "provisioner_read_accounts"
-  on public.provisioned_accounts for select to authenticated
-  using (public.is_account_provisioner());
-
--- No direct client insert/update/delete of cipher; use RPCs
-revoke insert, update, delete on public.provisioned_accounts from authenticated;
-grant select on public.provisioned_accounts to authenticated;
-
+-- 2) Recreate create_clinic_account with Receptionist support
 create or replace function public.create_clinic_account(
   p_full_name text,
   p_email text,
@@ -112,7 +71,7 @@ begin
     raise exception 'Password must be at least 8 characters';
   end if;
 
-  -- App uses Receptionist; legacy DBs may still send Staff
+  -- App uses Receptionist; accept legacy Staff and store as Receptionist
   if v_role = 'Staff' then
     v_role := 'Receptionist';
   end if;
@@ -121,7 +80,6 @@ begin
     raise exception 'Invalid role';
   end if;
 
-  -- Role assignment guardrails
   if v_caller_role = 'HR' and v_role in ('Owner', 'Admin') then
     raise exception 'HR cannot create Owner or Admin accounts';
   end if;
@@ -204,7 +162,6 @@ begin
     now()
   );
 
-  -- Trigger may have created a Staff/Client profile; set final role + demographics
   update public.profiles
   set
     full_name = v_name,
@@ -273,34 +230,3 @@ revoke all on function public.create_clinic_account(
 grant execute on function public.create_clinic_account(
   text, text, text, date, integer, text, text, text, text, text
 ) to authenticated;
-
-create or replace function public.reveal_provisioned_password(p_provision_id uuid)
-returns text
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  v_cipher bytea;
-begin
-  if auth.uid() is null then
-    raise exception 'Not authenticated';
-  end if;
-  if not public.is_account_provisioner() then
-    raise exception 'Only Owner, Admin, or HR can reveal passwords';
-  end if;
-
-  select password_cipher into v_cipher
-  from public.provisioned_accounts
-  where id = p_provision_id;
-
-  if v_cipher is null then
-    raise exception 'Account record not found';
-  end if;
-
-  return extensions.pgp_sym_decrypt(v_cipher, 'illuminate.clinic.provision.v1');
-end;
-$$;
-
-revoke all on function public.reveal_provisioned_password(uuid) from public;
-grant execute on function public.reveal_provisioned_password(uuid) to authenticated;

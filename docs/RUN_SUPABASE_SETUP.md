@@ -71,6 +71,7 @@ After setup.sql, also run (in order):
 29. `supabase/add_sale_payment_proof.sql` (**POS payment screenshots**) — `sales.payment_proof_url` + `sale-payment-proofs` storage bucket
 30. `supabase/add_customer_consent_forms.sql` (**customer PDF consent forms**) — attachments on Customers for Receptionist / Admin / Owner
 31. `supabase/add_stocktake_line_snapshots.sql` (**stocktake product history + delete**) — line item name snapshots, soft-delete inventory items from Stocktake
+32. `supabase/fix_create_account_receptionist_role.sql` (**fix Create Account “Invalid role”**) — allow `Receptionist` in `create_clinic_account` (maps legacy `Staff`)
 
 Mobile client (Expo) uses the **same** Supabase project. See `docs/MOBILE_EXPO.md`, `docs/MOBILE_NOTIFICATIONS.md`, and `mobile/.env.example` (`EXPO_PUBLIC_SUPABASE_*`).
 
