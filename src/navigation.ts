@@ -93,6 +93,7 @@ export const navSections: NavSection[] = [
       { label: 'Stock catalog', path: '/inventory', icon: Package, roles: INV },
       { label: 'Stocktake', path: '/inventory/stocktake', icon: ClipboardCheck, roles: INV },
       { label: 'Receiving', path: '/inventory/receiving', icon: PackagePlus, roles: INV },
+      { label: 'Stock assessment', path: '/inventory/assessment', icon: ClipboardList, roles: INV },
       { label: 'Reorder', path: '/inventory/reorder', icon: RefreshCw, roles: INV },
     ],
   },

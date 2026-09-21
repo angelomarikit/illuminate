@@ -2,7 +2,7 @@
 
 Use this guide if your role is **Inventory** (Inventory Specialist). After login you land on **Stock catalog**. You only see inventory pages plus Account settings.
 
-**You can:** stock catalog, stocktake, receiving, reorder, low-stock / reorder notifications.
+**You can:** stock catalog, stocktake, receiving, stock assessment (issued/used + period sheet), reorder, low-stock / reorder notifications.
 
 **You cannot:** POS, appointments, customers, HR, dashboard, clinic settings, or the Owner/Admin **Ops board**.
 
@@ -18,6 +18,7 @@ Use this guide if your role is **Inventory** (Inventory Specialist). After login
    - Stock catalog  
    - Stocktake  
    - Receiving  
+   - Stock assessment  
    - Reorder  
 
 **Tip:** The **bell** shows low-stock items and open reorder requests. Opening a notice takes you to the right inventory page.
@@ -81,7 +82,23 @@ Use this when a supplier delivery arrives.
 
 ---
 
-## 4. Ask to restock — Reorder
+## 4. Period sheet — Stock assessment
+
+Use this for weekly / monthly / custom-range control (not a physical stocktake).
+
+1. Open **Stock assessment**.
+2. Choose **This week**, **This month**, or a **custom date range**.
+3. Review the sheet columns:
+   - Beginning · Stock received · Total available · Issued/Used · Ending · Required · Variance · Assessment (BALANCED / LACKING / EXCESS)
+4. Edit **Required stock** on a row to update the item’s reorder level.
+5. Log **Issued / Used** when stock is consumed (treatment use, waste, transfer):
+   - Date, reason, item lines + qty → **Log issue & deduct stock**
+   - Edit or delete past issues; stock is adjusted accordingly.
+6. Stocktake stays separate for physical counts.
+
+---
+
+## 5. Ask to restock — Reorder
 
 ### From the low-stock list
 
@@ -106,18 +123,19 @@ Use this when a supplier delivery arrives.
 
 ---
 
-## 5. Suggested weekly flow
+## 6. Suggested weekly flow
 
 1. Check the **bell** for low stock / open reorders.  
 2. Clear or update the **Reorder** queue.  
 3. Log any pending deliveries in **Receiving**.  
-4. Spot-check key SKUs; run a full **Stocktake** on schedule.  
-5. Add new products to **Stock catalog** before the next order cycle.  
-6. Keep reorder levels realistic so alerts stay useful.
+4. Log **Issued / Used** on **Stock assessment**, then review LACKING / EXCESS for the week.  
+5. Spot-check key SKUs; run a full **Stocktake** on schedule.  
+6. Add new products to **Stock catalog** before the next order cycle.  
+7. Keep reorder levels realistic so alerts stay useful.
 
 ---
 
-## 6. What Owner / Admin see (for your awareness)
+## 7. What Owner / Admin see (for your awareness)
 
 Owners and Admins have an **Ops board** that shows your reorders, receipts, and stocktakes in one place, plus the same inventory pages you use. They also get inbox alerts for those activities. You do not need their Ops board to do your job.
 
@@ -127,7 +145,7 @@ Owners and Admins have an **Ops board** that shows your reorders, receipts, and 
 
 | Problem | What to try |
 |---------|-------------|
-| Error mentioning `inventory_` or schema | Ask Owner to run `supabase/add_inventory_role.sql` in Supabase. |
+| Error mentioning `inventory_` or schema | Ask Owner to run `supabase/add_inventory_role.sql` (and `supabase/add_inventory_issues.sql` for Stock assessment) in Supabase. |
 | Wrong branch stock | Switch branch in the top bar, then reload the page. |
 | Marked received but stock unchanged | Log the delivery again under **Receiving** with correct qty. |
 | Too many low-stock alerts | Raise reorder levels or create reorders and mark them ordered. |

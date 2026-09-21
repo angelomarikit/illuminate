@@ -108,6 +108,7 @@ const PATH_ROLES: Record<string, AppRole[]> = {
   '/inventory/ops': ['Owner', 'Admin'],
   '/inventory/stocktake': ['Owner', 'Admin', 'Inventory'],
   '/inventory/receiving': ['Owner', 'Admin', 'Inventory'],
+  '/inventory/assessment': ['Owner', 'Admin', 'Inventory'],
   '/inventory/reorder': ['Owner', 'Admin', 'Inventory'],
   '/expenses': ['Owner', 'Admin', 'Receptionist'],
   '/staff': ['Owner', 'Admin', 'HR'],

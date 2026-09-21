@@ -1,5 +1,12 @@
 import { NavLink } from 'react-router-dom'
-import { ClipboardCheck, LayoutList, Package, PackagePlus, RefreshCw } from 'lucide-react'
+import {
+  ClipboardCheck,
+  ClipboardList,
+  LayoutList,
+  Package,
+  PackagePlus,
+  RefreshCw,
+} from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { isElevatedRole } from '../lib/roles'
 
@@ -8,6 +15,13 @@ const links = [
   { to: '/inventory', label: 'Stock catalog', icon: Package, end: true, elevatedOnly: false },
   { to: '/inventory/stocktake', label: 'Stocktake', icon: ClipboardCheck, end: false, elevatedOnly: false },
   { to: '/inventory/receiving', label: 'Receiving', icon: PackagePlus, end: false, elevatedOnly: false },
+  {
+    to: '/inventory/assessment',
+    label: 'Stock assessment',
+    icon: ClipboardList,
+    end: false,
+    elevatedOnly: false,
+  },
   { to: '/inventory/reorder', label: 'Reorder', icon: RefreshCw, end: false, elevatedOnly: false },
 ]
 

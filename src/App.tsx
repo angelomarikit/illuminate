@@ -23,6 +23,7 @@ import { InventoryOps } from './pages/inventory/InventoryOps'
 import { Stocktake } from './pages/inventory/Stocktake'
 import { Receiving } from './pages/inventory/Receiving'
 import { Reorder } from './pages/inventory/Reorder'
+import { StockAssessment } from './pages/inventory/StockAssessment'
 import { Expenses } from './pages/Expenses'
 import { Staff } from './pages/Staff'
 import { CreateAccount } from './pages/CreateAccount'
@@ -80,6 +81,7 @@ export default function App() {
                     <Route path="inventory/ops" element={<InventoryOps />} />
                     <Route path="inventory/stocktake" element={<Stocktake />} />
                     <Route path="inventory/receiving" element={<Receiving />} />
+                    <Route path="inventory/assessment" element={<StockAssessment />} />
                     <Route path="inventory/reorder" element={<Reorder />} />
                     <Route path="expenses" element={<Expenses />} />
                     <Route path="staff" element={<Staff />} />
