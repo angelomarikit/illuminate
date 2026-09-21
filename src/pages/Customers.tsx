@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { FileText, Search, Trash2, Upload, X } from 'lucide-react'
+import { FileText, Pencil, Search, Trash2, Upload, X } from 'lucide-react'
 import { CareNotesPanel } from '../components/CareNotesPanel'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
@@ -116,6 +116,10 @@ const emptyForm = {
   phone: '',
   email: '',
   birthday: '',
+  sex: '',
+  address: '',
+  medicalHistory: '',
+  notes: '',
   membership: 'Regular' as Customer['membership'],
   membershipExpiresAt: '',
 }
@@ -130,7 +134,10 @@ export function Customers() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [visits, setVisits] = useState<VisitRow[]>([])
@@ -394,10 +401,50 @@ export function Customers() {
     )
   }, [rows, query])
 
-  async function onAdd(e: FormEvent) {
+  function openCreate() {
+    setError('')
+    setMessage('')
+    setEditingId(null)
+    setConfirmDelete(false)
+    setForm(emptyForm)
+    setShowForm(true)
+  }
+
+  function openEdit(client: Customer) {
+    if (!canManageConsent) return
+    setError('')
+    setMessage('')
+    setConfirmDelete(false)
+    setEditingId(client.id)
+    setForm({
+      name: client.name,
+      phone: client.phone,
+      email: client.email,
+      birthday: client.birthday ? client.birthday.slice(0, 10) : '',
+      sex: client.sex || '',
+      address: client.address || '',
+      medicalHistory: client.medicalHistory || '',
+      notes: client.notes || '',
+      membership: normalizeMembership(client.membership),
+      membershipExpiresAt: client.membershipExpiresAt
+        ? client.membershipExpiresAt.slice(0, 10)
+        : '',
+    })
+    setShowForm(true)
+  }
+
+  function closeForm() {
+    if (saving) return
+    setShowForm(false)
+    setEditingId(null)
+    setForm(emptyForm)
+  }
+
+  async function onSave(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
     setError('')
+    setMessage('')
 
     const name = form.name.trim()
     const phone = form.phone.trim()
@@ -428,14 +475,42 @@ export function Customers() {
       return
     }
 
-    const { error: insertError } = await supabase.from('customers').insert({
+    const payload = {
       full_name: name,
       phone,
       email,
       birthday,
       age,
+      sex: form.sex.trim() || null,
+      address: form.address.trim() || null,
+      medical_history: form.medicalHistory.trim() || null,
+      notes: form.notes.trim() || null,
       membership,
       membership_expires_at: membershipExpiresAt,
+    }
+
+    if (editingId) {
+      const { error: updateError } = await supabase
+        .from('customers')
+        .update(payload)
+        .eq('id', editingId)
+
+      setSaving(false)
+      if (updateError) {
+        setError(updateError.message)
+        return
+      }
+
+      setMessage(`Updated client: ${name}.`)
+      setShowForm(false)
+      setEditingId(null)
+      setForm(emptyForm)
+      await loadCustomers()
+      return
+    }
+
+    const { error: insertError } = await supabase.from('customers').insert({
+      ...payload,
       branch_id: branchId && isUuid(branchId) ? branchId : null,
       points: 0,
       cash_in_balance: 0,
@@ -443,7 +518,6 @@ export function Customers() {
     })
 
     setSaving(false)
-
     if (insertError) {
       setError(
         insertError.message.includes('membership_expires_at') ||
@@ -456,8 +530,42 @@ export function Customers() {
       return
     }
 
-    setForm(emptyForm)
+    setMessage(`Added client: ${name}.`)
     setShowForm(false)
+    setEditingId(null)
+    setForm(emptyForm)
+    await loadCustomers()
+  }
+
+  async function onDeleteClient() {
+    if (!selected || !canManageConsent) return
+    setDeleting(true)
+    setError('')
+    setMessage('')
+
+    await supabase.from('sales').update({ customer_id: null }).eq('customer_id', selected.id)
+    await supabase
+      .from('appointments')
+      .update({ customer_id: null })
+      .eq('customer_id', selected.id)
+
+    const { error: deleteError } = await supabase.from('customers').delete().eq('id', selected.id)
+    setDeleting(false)
+
+    if (deleteError) {
+      setError(
+        deleteError.message.includes('foreign key') || deleteError.message.includes('violates')
+          ? `Cannot delete this client because related records still reference them. ${deleteError.message}`
+          : deleteError.message,
+      )
+      return
+    }
+
+    setMessage(`Deleted client: ${selected.name}.`)
+    setConfirmDelete(false)
+    setShowForm(false)
+    setEditingId(null)
+    setSelectedId(null)
     await loadCustomers()
   }
 
@@ -475,7 +583,11 @@ export function Customers() {
         title="Client Management"
         subtitle="Clean client profiles with membership, wallet, sessions, and consent forms."
         actions={
-          <button className="btn btn-primary" type="button" onClick={() => setShowForm((v) => !v)}>
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => (showForm ? closeForm() : openCreate())}
+          >
             {showForm ? 'Cancel' : 'Add Client'}
           </button>
         }
@@ -488,11 +600,11 @@ export function Customers() {
         <section className="crm-compose">
           <div className="crm-compose-head">
             <div>
-              <p className="crm-kicker">New client</p>
-              <h2>Add to CRM</h2>
+              <p className="crm-kicker">{editingId ? 'Edit client' : 'New client'}</p>
+              <h2>{editingId ? 'Update CRM profile' : 'Add to CRM'}</h2>
             </div>
           </div>
-          <form className="crm-compose-form" onSubmit={onAdd}>
+          <form className="crm-compose-form" onSubmit={onSave}>
             <p className="form-req-note">
               Fields marked with <span className="req" aria-hidden="true">*</span> are required.
             </p>
@@ -546,6 +658,45 @@ export function Customers() {
                 />
               </div>
               <div className="field">
+                <label>Sex</label>
+                <select
+                  className="select"
+                  value={form.sex}
+                  onChange={(e) => setForm((f) => ({ ...f, sex: e.target.value }))}
+                >
+                  <option value="">Select</option>
+                  <option value="Female">Female</option>
+                  <option value="Male">Male</option>
+                  <option value="Prefer not to say">Prefer not to say</option>
+                </select>
+              </div>
+              <div className="field" style={{ gridColumn: '1 / -1' }}>
+                <label>Address</label>
+                <input
+                  className="input"
+                  value={form.address}
+                  onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+                />
+              </div>
+              <div className="field" style={{ gridColumn: '1 / -1' }}>
+                <label>Medical history</label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={form.medicalHistory}
+                  onChange={(e) => setForm((f) => ({ ...f, medicalHistory: e.target.value }))}
+                />
+              </div>
+              <div className="field" style={{ gridColumn: '1 / -1' }}>
+                <label>Notes / goals</label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={form.notes}
+                  onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                />
+              </div>
+              <div className="field">
                 <label>Membership</label>
                 <select
                   className="select"
@@ -586,11 +737,11 @@ export function Customers() {
               here when needed.
             </p>
             <div className="crm-compose-actions">
-              <button className="btn btn-ghost" type="button" onClick={() => setShowForm(false)}>
+              <button className="btn btn-ghost" type="button" onClick={closeForm} disabled={saving}>
                 Cancel
               </button>
               <button className="btn btn-primary" type="submit" disabled={saving}>
-                {saving ? 'Saving...' : 'Save client'}
+                {saving ? 'Saving...' : editingId ? 'Save changes' : 'Save client'}
               </button>
             </div>
           </form>
@@ -708,14 +859,39 @@ export function Customers() {
                   showExpiry
                 />
               </div>
-              <button
-                className="btn-icon crm-detail-close"
-                type="button"
-                aria-label="Close details"
-                onClick={() => setSelectedId(null)}
-              >
-                <X size={16} />
-              </button>
+              <div className="crm-detail-actions">
+                {canManageConsent ? (
+                  <>
+                    <button className="btn btn-ghost" type="button" onClick={() => openEdit(selected)}>
+                      <Pencil size={15} />
+                      Edit
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() => {
+                        setConfirmDelete(true)
+                        setError('')
+                        setMessage('')
+                      }}
+                    >
+                      <Trash2 size={15} />
+                      Delete
+                    </button>
+                  </>
+                ) : null}
+                <button
+                  className="btn-icon crm-detail-close"
+                  type="button"
+                  aria-label="Close details"
+                  onClick={() => {
+                    setConfirmDelete(false)
+                    setSelectedId(null)
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
             <div className="crm-stat-row">
@@ -952,6 +1128,68 @@ export function Customers() {
           </aside>
         ) : null}
       </div>
+      {confirmDelete && selected ? (
+        <div
+          className="confirm-modal-overlay"
+          role="presentation"
+          onClick={() => {
+            if (!deleting) setConfirmDelete(false)
+          }}
+        >
+          <div
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-client-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-modal-header">
+              <div>
+                <p className="confirm-modal-kicker">Delete client</p>
+                <h2 id="delete-client-title" className="confirm-modal-title">
+                  Remove from CRM?
+                </h2>
+              </div>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close"
+                disabled={deleting}
+                onClick={() => setConfirmDelete(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="confirm-modal-body">
+              <p className="confirm-modal-text">
+                Delete <strong>{selected.name}</strong>
+                {selected.email ? ` (${selected.email})` : ''}? Sales history is kept, but this CRM
+                profile and attached consent forms will be removed.
+              </p>
+            </div>
+            <div className="confirm-modal-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={deleting}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={deleting}
+                style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}
+                onClick={() => void onDeleteClient()}
+              >
+                {deleting ? 'Deleting…' : 'Delete client'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
     </div>
   )
 }
