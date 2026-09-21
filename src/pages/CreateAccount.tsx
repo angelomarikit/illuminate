@@ -52,6 +52,7 @@ type EditFormState = {
   gender: string
   address: string
   role: AppRole
+  password: string
 }
 
 function ageFromBirthday(birthday: string) {
@@ -108,6 +109,7 @@ export function CreateAccount() {
   const [editForm, setEditForm] = useState<EditFormState | null>(null)
   const [editError, setEditError] = useState('')
   const [editSaving, setEditSaving] = useState(false)
+  const [showEditPassword, setShowEditPassword] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ProvisionRow | null>(null)
   const [deleteSaving, setDeleteSaving] = useState(false)
 
@@ -264,6 +266,7 @@ export function CreateAccount() {
     setMessage('')
     setEditError('')
     setEditTarget(row)
+    setShowEditPassword(false)
     setEditForm({
       fullName: row.full_name,
       email: row.email,
@@ -273,6 +276,7 @@ export function CreateAccount() {
       gender: row.gender || '',
       address: row.address || '',
       role: normalizeRole(row.role),
+      password: '',
     })
   }
 
@@ -281,6 +285,7 @@ export function CreateAccount() {
     setEditTarget(null)
     setEditForm(null)
     setEditError('')
+    setShowEditPassword(false)
   }
 
   async function onEdit(e: FormEvent) {
@@ -289,6 +294,11 @@ export function CreateAccount() {
     setEditError('')
     if (!editForm.fullName.trim() || !editForm.email.trim() || !editForm.phone.trim()) {
       setEditError('Name, email, and phone are required.')
+      return
+    }
+    const nextPassword = editForm.password.trim()
+    if (nextPassword && nextPassword.length < 8) {
+      setEditError('New password must be at least 8 characters (or leave blank to keep current).')
       return
     }
 
@@ -303,6 +313,7 @@ export function CreateAccount() {
       p_gender: editForm.gender || null,
       p_address: editForm.address.trim() || null,
       p_role: editForm.role,
+      p_password: nextPassword || null,
     })
     setEditSaving(false)
 
@@ -315,7 +326,14 @@ export function CreateAccount() {
       return
     }
 
-    setMessage(`Updated account: ${editForm.fullName.trim()}.`)
+    if (nextPassword) {
+      setRevealed((prev) => ({ ...prev, [editTarget.id]: nextPassword }))
+      setMessage(
+        `Updated account: ${editForm.fullName.trim()}. Password was reset — they must sign in with the new password.`,
+      )
+    } else {
+      setMessage(`Updated account: ${editForm.fullName.trim()}.`)
+    }
     closeEdit()
     await load()
   }
@@ -485,7 +503,7 @@ export function CreateAccount() {
             Passwords are masked by default — use the eye icon to show or hide them.
             {callerRole === 'HR' ? ' HR cannot create Owner or Admin accounts.' : null}
             {canManageAccounts
-              ? ' Owner/Admin can edit details or delete accounts (except your own).'
+              ? ' Owner/Admin can edit details, reset passwords, or delete accounts (except your own).'
               : null}
           </p>
         </div>
@@ -761,8 +779,8 @@ export function CreateAccount() {
 
             <div className="confirm-modal-body">
               <p className="confirm-modal-text">
-                Changes update the clinic profile and login email. Password is not changed here —
-                Admins can update their own password under My Account.
+                Update profile details and optionally set a new login password. Leave password blank
+                to keep the current one. Admins can also change their own password under My Account.
               </p>
 
               <div
@@ -881,6 +899,53 @@ export function CreateAccount() {
                     value={editForm.address}
                     onChange={(e) => setEditForm((f) => (f ? { ...f, address: e.target.value } : f))}
                   />
+                </div>
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <label>New password</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        className="input"
+                        type={showEditPassword ? 'text' : 'password'}
+                        minLength={8}
+                        autoComplete="new-password"
+                        value={editForm.password}
+                        onChange={(e) =>
+                          setEditForm((f) => (f ? { ...f, password: e.target.value } : f))
+                        }
+                        placeholder="Leave blank to keep current password"
+                        style={{ paddingRight: 42, width: '100%' }}
+                      />
+                      <button
+                        className="btn-icon"
+                        type="button"
+                        aria-label={showEditPassword ? 'Hide password' : 'Show password'}
+                        onClick={() => setShowEditPassword((v) => !v)}
+                        style={{
+                          position: 'absolute',
+                          right: 4,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                        }}
+                      >
+                        {showEditPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() => {
+                        setEditForm((f) => (f ? { ...f, password: generatePassword() } : f))
+                        setShowEditPassword(true)
+                      }}
+                    >
+                      <RefreshCw size={15} />
+                      Generate
+                    </button>
+                  </div>
+                  <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.8rem' }}>
+                    Setting a new password signs them out of existing sessions.
+                  </p>
                 </div>
               </div>
 

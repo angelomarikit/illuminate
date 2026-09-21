@@ -1,6 +1,10 @@
--- Illuminate — Admin manage provisioned accounts (edit details)
+-- Illuminate — Admin manage provisioned accounts (edit details + reset password)
 -- Run after add_create_account.sql + add_delete_account.sql
--- Owner/Admin can update profile + provisioned_accounts (and auth email when changed).
+-- Owner/Admin can update profile + provisioned_accounts (and auth email / password when changed).
+
+drop function if exists public.update_clinic_account(
+  uuid, text, text, text, date, integer, text, text, text
+);
 
 create or replace function public.update_clinic_account(
   p_user_id uuid,
@@ -11,7 +15,8 @@ create or replace function public.update_clinic_account(
   p_age integer,
   p_gender text,
   p_address text,
-  p_role text
+  p_role text,
+  p_password text default null
 )
 returns jsonb
 language plpgsql
@@ -27,6 +32,7 @@ declare
   v_gender text := nullif(trim(coalesce(p_gender, '')), '');
   v_address text := nullif(trim(coalesce(p_address, '')), '');
   v_role text := nullif(trim(coalesce(p_role, '')), '');
+  v_password text := nullif(trim(coalesce(p_password, '')), '');
   v_target_role text;
   v_age integer := p_age;
 begin
@@ -76,6 +82,10 @@ begin
     raise exception 'Only Owner can assign the Owner role';
   end if;
 
+  if v_password is not null and char_length(v_password) < 8 then
+    raise exception 'Password must be at least 8 characters';
+  end if;
+
   if exists (
     select 1 from auth.users u
     where lower(u.email) = v_email
@@ -91,6 +101,10 @@ begin
   update auth.users
   set
     email = v_email,
+    encrypted_password = case
+      when v_password is not null then extensions.crypt(v_password, extensions.gen_salt('bf'))
+      else encrypted_password
+    end,
     raw_user_meta_data =
       coalesce(raw_user_meta_data, '{}'::jsonb)
       || jsonb_build_object('full_name', v_name, 'role', v_role),
@@ -128,23 +142,34 @@ begin
     age = v_age,
     gender = v_gender,
     address = v_address,
-    role = v_role
+    role = v_role,
+    password_cipher = case
+      when v_password is not null then
+        extensions.pgp_sym_encrypt(v_password, 'illuminate.clinic.provision.v1')
+      else password_cipher
+    end
   where user_id = p_user_id;
+
+  -- Force re-login after admin password reset
+  if v_password is not null then
+    delete from auth.sessions where user_id = p_user_id;
+  end if;
 
   return jsonb_build_object(
     'user_id', p_user_id,
     'full_name', v_name,
     'email', v_email,
-    'role', v_role
+    'role', v_role,
+    'password_updated', v_password is not null
   );
 end;
 $$;
 
 revoke all on function public.update_clinic_account(
-  uuid, text, text, text, date, integer, text, text, text
+  uuid, text, text, text, date, integer, text, text, text, text
 ) from public;
 grant execute on function public.update_clinic_account(
-  uuid, text, text, text, date, integer, text, text, text
+  uuid, text, text, text, date, integer, text, text, text, text
 ) to authenticated;
 
 -- Tighten delete: Admin cannot delete Owner accounts
