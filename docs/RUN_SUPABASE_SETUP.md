@@ -72,6 +72,7 @@ After setup.sql, also run (in order):
 30. `supabase/add_customer_consent_forms.sql` (**customer PDF consent forms**) — attachments on Customers for Receptionist / Admin / Owner
 31. `supabase/add_stocktake_line_snapshots.sql` (**stocktake product history + delete**) — line item name snapshots, soft-delete inventory items from Stocktake
 32. `supabase/fix_create_account_receptionist_role.sql` (**fix Create Account “Invalid role”**) — allow `Receptionist` in `create_clinic_account` (maps legacy `Staff`)
+33. `supabase/add_admin_account_manage.sql` (**Admin edit/delete accounts**) - `update_clinic_account` + tightened `delete_clinic_account` (Admin/Owner; Admin cannot edit/delete Owner)
 
 Mobile client (Expo) uses the **same** Supabase project. See `docs/MOBILE_EXPO.md`, `docs/MOBILE_NOTIFICATIONS.md`, and `mobile/.env.example` (`EXPO_PUBLIC_SUPABASE_*`).
 

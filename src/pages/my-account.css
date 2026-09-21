@@ -571,3 +571,24 @@
     transform: none;
   }
 }
+
+.ma-password-hint {
+  margin: 0 0 14px;
+  color: var(--ma-mute);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.ma-password-form {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.ma-password-form .field {
+  margin: 0;
+}
+
+.ma-password-form .btn {
+  justify-self: start;
+}

@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { CheckCircle2, Eye, EyeOff, RefreshCw, UserPlus, X } from 'lucide-react'
+import {
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Pencil,
+  RefreshCw,
+  Trash2,
+  UserPlus,
+  X,
+} from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
-import { type AppRole, normalizeRole, roleLabel } from '../lib/roles'
+import { type AppRole, isElevatedRole, normalizeRole, roleLabel } from '../lib/roles'
 import { supabase } from '../lib/supabase'
 
 type ProvisionRow = {
@@ -32,6 +41,17 @@ type FormState = {
   role: AppRole
   password: string
   createdByName: string
+}
+
+type EditFormState = {
+  fullName: string
+  email: string
+  phone: string
+  birthday: string
+  age: string
+  gender: string
+  address: string
+  role: AppRole
 }
 
 function ageFromBirthday(birthday: string) {
@@ -67,9 +87,11 @@ function formatCreatedAt(iso: string) {
 export function CreateAccount() {
   const { user } = useAuth()
   const callerRole = normalizeRole(user?.role)
+  const canManageAccounts = isElevatedRole(callerRole)
   const [rows, setRows] = useState<ProvisionRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [showSuccess, setShowSuccess] = useState<{
     fullName: string
@@ -82,6 +104,12 @@ export function CreateAccount() {
   const [showPassword, setShowPassword] = useState(false)
   const [revealSavingId, setRevealSavingId] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<Record<string, string>>({})
+  const [editTarget, setEditTarget] = useState<ProvisionRow | null>(null)
+  const [editForm, setEditForm] = useState<EditFormState | null>(null)
+  const [editError, setEditError] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ProvisionRow | null>(null)
+  const [deleteSaving, setDeleteSaving] = useState(false)
 
   const roleOptions = useMemo(() => {
     const all: AppRole[] = ['Receptionist', 'Inventory', 'HR', 'Admin', 'Owner', 'Client']
@@ -131,11 +159,12 @@ export function CreateAccount() {
   }, [])
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
 
   function openCreate() {
     setFormError('')
+    setMessage('')
     setForm(emptyForm())
     setShowPassword(false)
     setShowCreate(true)
@@ -225,12 +254,119 @@ export function CreateAccount() {
     setRevealed((prev) => ({ ...prev, [row.id]: String(data || '') }))
   }
 
+  function openEdit(row: ProvisionRow) {
+    if (!canManageAccounts) return
+    if (callerRole === 'Admin' && normalizeRole(row.role) === 'Owner') {
+      setError('Admin cannot edit Owner accounts.')
+      return
+    }
+    setError('')
+    setMessage('')
+    setEditError('')
+    setEditTarget(row)
+    setEditForm({
+      fullName: row.full_name,
+      email: row.email,
+      phone: row.phone || '',
+      birthday: row.birthday || '',
+      age: row.age != null ? String(row.age) : '',
+      gender: row.gender || '',
+      address: row.address || '',
+      role: normalizeRole(row.role),
+    })
+  }
+
+  function closeEdit() {
+    if (editSaving) return
+    setEditTarget(null)
+    setEditForm(null)
+    setEditError('')
+  }
+
+  async function onEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!editTarget || !editForm) return
+    setEditError('')
+    if (!editForm.fullName.trim() || !editForm.email.trim() || !editForm.phone.trim()) {
+      setEditError('Name, email, and phone are required.')
+      return
+    }
+
+    setEditSaving(true)
+    const { error: err } = await supabase.rpc('update_clinic_account', {
+      p_user_id: editTarget.user_id,
+      p_full_name: editForm.fullName.trim(),
+      p_email: editForm.email.trim(),
+      p_phone: editForm.phone.trim(),
+      p_birthday: editForm.birthday || null,
+      p_age: editForm.age ? Number(editForm.age) : null,
+      p_gender: editForm.gender || null,
+      p_address: editForm.address.trim() || null,
+      p_role: editForm.role,
+    })
+    setEditSaving(false)
+
+    if (err) {
+      setEditError(
+        err.message.includes('update_clinic_account') || err.message.includes('schema cache')
+          ? `${err.message} — run supabase/add_admin_account_manage.sql in Supabase.`
+          : err.message,
+      )
+      return
+    }
+
+    setMessage(`Updated account: ${editForm.fullName.trim()}.`)
+    closeEdit()
+    await load()
+  }
+
+  function openDelete(row: ProvisionRow) {
+    if (!canManageAccounts) return
+    if (row.user_id === user?.id) {
+      setError('You cannot delete your own account.')
+      return
+    }
+    if (callerRole === 'Admin' && normalizeRole(row.role) === 'Owner') {
+      setError('Admin cannot delete Owner accounts.')
+      return
+    }
+    setError('')
+    setMessage('')
+    setDeleteTarget(row)
+  }
+
+  function closeDelete() {
+    if (deleteSaving) return
+    setDeleteTarget(null)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleteSaving(true)
+    setError('')
+    const { error: err } = await supabase.rpc('delete_clinic_account', {
+      target_user_id: deleteTarget.user_id,
+    })
+    setDeleteSaving(false)
+    if (err) {
+      setError(
+        err.message.includes('delete_clinic_account') || err.message.includes('schema cache')
+          ? `${err.message} — run supabase/add_delete_account.sql and add_admin_account_manage.sql in Supabase.`
+          : err.message,
+      )
+      return
+    }
+    setMessage(`Deleted account: ${deleteTarget.full_name}.`)
+    setDeleteTarget(null)
+    await load()
+  }
+
   return (
     <div>
       <PageHeader
         kicker="HR"
         title="Create account"
-        subtitle="Provision clinic logins for staff, HR, inventory, and other roles. Accounts are ready to sign in immediately."
+        subtitle="Provision clinic logins, edit account details, or delete accounts (Owner/Admin)."
         actions={
           <button className="btn btn-primary" type="button" onClick={openCreate}>
             <UserPlus size={16} />
@@ -240,6 +376,7 @@ export function CreateAccount() {
       />
 
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+      {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
 
       <div className="panel">
         <div className="panel-header">
@@ -263,6 +400,7 @@ export function CreateAccount() {
                     <th>Role</th>
                     <th>Created by</th>
                     <th>Password</th>
+                    {canManageAccounts ? <th>Actions</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -311,6 +449,31 @@ export function CreateAccount() {
                             </button>
                           </div>
                         </td>
+                        {canManageAccounts ? (
+                          <td>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                className="btn-icon"
+                                type="button"
+                                aria-label={`Edit ${row.full_name}`}
+                                title="Edit account"
+                                onClick={() => openEdit(row)}
+                              >
+                                <Pencil size={16} />
+                              </button>
+                              <button
+                                className="btn-icon"
+                                type="button"
+                                aria-label={`Delete ${row.full_name}`}
+                                title="Delete account"
+                                disabled={row.user_id === user?.id}
+                                onClick={() => openDelete(row)}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        ) : null}
                       </tr>
                     )
                   })}
@@ -321,6 +484,9 @@ export function CreateAccount() {
           <p className="muted" style={{ marginTop: 12, fontSize: '0.82rem' }}>
             Passwords are masked by default — use the eye icon to show or hide them.
             {callerRole === 'HR' ? ' HR cannot create Owner or Admin accounts.' : null}
+            {canManageAccounts
+              ? ' Owner/Admin can edit details or delete accounts (except your own).'
+              : null}
           </p>
         </div>
       </div>
@@ -338,7 +504,7 @@ export function CreateAccount() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-account-title"
-            onSubmit={onCreate}
+            onSubmit={(e) => void onCreate(e)}
           >
             <div className="confirm-modal-header">
               <div>
@@ -360,8 +526,8 @@ export function CreateAccount() {
 
             <div className="confirm-modal-body">
               <p className="confirm-modal-text">
-                The account is created in Auth with email confirmed, so the person can sign in right
-                away with the password below.
+                The account is created with email confirmed, so they can sign in immediately with the
+                password below.
               </p>
 
               <div
@@ -560,6 +726,242 @@ export function CreateAccount() {
         </div>
       ) : null}
 
+      {editTarget && editForm ? (
+        <div className="confirm-modal-overlay" role="presentation">
+          <form
+            className="confirm-modal"
+            style={{
+              maxWidth: 640,
+              width: 'min(640px, calc(100vw - 32px))',
+              maxHeight: 'min(90vh, 900px)',
+              overflow: 'auto',
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-account-title"
+            onSubmit={(e) => void onEdit(e)}
+          >
+            <div className="confirm-modal-header">
+              <div>
+                <p className="confirm-modal-kicker">Edit account</p>
+                <h2 id="edit-account-title" className="confirm-modal-title">
+                  Update details
+                </h2>
+              </div>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close"
+                onClick={closeEdit}
+                disabled={editSaving}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="confirm-modal-body">
+              <p className="confirm-modal-text">
+                Changes update the clinic profile and login email. Password is not changed here —
+                Admins can update their own password under My Account.
+              </p>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  marginTop: 14,
+                }}
+              >
+                <div className="field">
+                  <label>
+                    Full name <span className="req">*</span>
+                  </label>
+                  <input
+                    className="input"
+                    required
+                    value={editForm.fullName}
+                    onChange={(e) => setEditForm((f) => (f ? { ...f, fullName: e.target.value } : f))}
+                  />
+                </div>
+                <div className="field">
+                  <label>
+                    Email <span className="req">*</span>
+                  </label>
+                  <input
+                    className="input"
+                    type="email"
+                    required
+                    value={editForm.email}
+                    onChange={(e) => setEditForm((f) => (f ? { ...f, email: e.target.value } : f))}
+                  />
+                </div>
+                <div className="field">
+                  <label>
+                    Phone number <span className="req">*</span>
+                  </label>
+                  <input
+                    className="input"
+                    type="tel"
+                    required
+                    value={editForm.phone}
+                    onChange={(e) => setEditForm((f) => (f ? { ...f, phone: e.target.value } : f))}
+                  />
+                </div>
+                <div className="field">
+                  <label>
+                    Role <span className="req">*</span>
+                  </label>
+                  <select
+                    className="select"
+                    required
+                    value={editForm.role}
+                    onChange={(e) =>
+                      setEditForm((f) =>
+                        f ? { ...f, role: e.target.value as AppRole } : f,
+                      )
+                    }
+                  >
+                    {roleOptions.map((role) => (
+                      <option key={role} value={role}>
+                        {roleLabel(role)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Birthday</label>
+                  <input
+                    className="input"
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    value={editForm.birthday}
+                    onChange={(e) => {
+                      const birthday = e.target.value
+                      setEditForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              birthday,
+                              age: ageFromBirthday(birthday) || f.age,
+                            }
+                          : f,
+                      )
+                    }}
+                  />
+                </div>
+                <div className="field">
+                  <label>Age</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={editForm.age}
+                    onChange={(e) => setEditForm((f) => (f ? { ...f, age: e.target.value } : f))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Gender</label>
+                  <select
+                    className="select"
+                    value={editForm.gender}
+                    onChange={(e) => setEditForm((f) => (f ? { ...f, gender: e.target.value } : f))}
+                  >
+                    <option value="">Select</option>
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                    <option value="Prefer not to say">Prefer not to say</option>
+                  </select>
+                </div>
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <label>Address</label>
+                  <input
+                    className="input"
+                    value={editForm.address}
+                    onChange={(e) => setEditForm((f) => (f ? { ...f, address: e.target.value } : f))}
+                  />
+                </div>
+              </div>
+
+              {editError ? (
+                <p style={{ color: 'var(--danger)', margin: '12px 0 0', fontSize: '0.9rem' }}>
+                  {editError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="confirm-modal-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={closeEdit}
+                disabled={editSaving}
+              >
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="submit" disabled={editSaving}>
+                {editSaving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="confirm-modal-overlay" role="presentation" onClick={closeDelete}>
+          <div
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-modal-header">
+              <div>
+                <p className="confirm-modal-kicker">Delete account</p>
+                <h2 id="delete-account-title" className="confirm-modal-title">
+                  Remove this login?
+                </h2>
+              </div>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close"
+                disabled={deleteSaving}
+                onClick={closeDelete}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="confirm-modal-body">
+              <p className="confirm-modal-text">
+                Are you sure you want to delete <strong>{deleteTarget.full_name}</strong> (
+                {deleteTarget.email})? They will no longer be able to sign in.
+              </p>
+            </div>
+            <div className="confirm-modal-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={deleteSaving}
+                onClick={closeDelete}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={deleteSaving}
+                onClick={() => void confirmDelete()}
+              >
+                {deleteSaving ? 'Deleting…' : 'Yes, delete account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showSuccess ? (
         <div
           className="confirm-modal-overlay"
@@ -633,7 +1035,6 @@ export function CreateAccount() {
           </div>
         </div>
       ) : null}
-
     </div>
   )
 }

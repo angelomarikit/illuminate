@@ -1,15 +1,16 @@
-import { startTransition, useCallback, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   BadgePercent,
   Banknote,
   Briefcase,
+  KeyRound,
   RefreshCw,
   Sparkles,
   Wallet,
 } from 'lucide-react'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
-import { roleLabel } from '../lib/roles'
+import { isElevatedRole, roleLabel } from '../lib/roles'
 import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import './my-account.css'
@@ -100,6 +101,7 @@ function statusClass(status: string) {
 
 export function MyAccount() {
   const { user } = useAuth()
+  const canChangeOwnPassword = isElevatedRole(user?.role)
   const [comp, setComp] = useState<Comp | null>(null)
   const [payroll, setPayroll] = useState<PayrollRow[]>([])
   const [incentives, setIncentives] = useState<IncentiveRow[]>([])
@@ -111,7 +113,11 @@ export function MyAccount() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
   const [tab, setTab] = useState<'payroll' | 'incentives'>('payroll')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
 
   const load = useCallback(async () => {
     if (!user?.id) return
@@ -258,6 +264,35 @@ export function MyAccount() {
     await load()
   }
 
+  async function onChangePassword(e: FormEvent) {
+    e.preventDefault()
+    setError('')
+    setMessage('')
+    if (!canChangeOwnPassword) {
+      setError('Only Admin or Owner can change password here.')
+      return
+    }
+    if (newPassword.trim().length < 8) {
+      setError('New password must be at least 8 characters.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setError('New password and confirmation do not match.')
+      return
+    }
+
+    setPasswordSaving(true)
+    const { error: err } = await supabase.auth.updateUser({ password: newPassword.trim() })
+    setPasswordSaving(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setNewPassword('')
+    setConfirmPassword('')
+    setMessage('Your password was updated. Use it the next time you sign in.')
+  }
+
   const rateDisplay = comp
     ? comp.pay_type === 'hourly'
       ? formatCurrency(comp.hourly_rate)
@@ -276,6 +311,7 @@ export function MyAccount() {
   return (
     <div className="ma-page">
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+      {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
 
       {loading ? (
         <div className="ma-loading">
@@ -420,6 +456,58 @@ export function MyAccount() {
                   )}
                 </div>
               </section>
+
+              {canChangeOwnPassword ? (
+                <section className="ma-section">
+                  <div className="ma-section-head">
+                    <h2 className="ma-section-title">
+                      <KeyRound size={16} />
+                      Change password
+                    </h2>
+                  </div>
+                  <div className="ma-section-body">
+                    <p className="ma-password-hint">
+                      Admin and Owner can update their own login password here. Other staff passwords
+                      are managed from Create Account.
+                    </p>
+                    <form className="ma-password-form" onSubmit={(e) => void onChangePassword(e)}>
+                      <div className="field">
+                        <label htmlFor="ma-new-password">New password</label>
+                        <input
+                          id="ma-new-password"
+                          className="input"
+                          type="password"
+                          minLength={8}
+                          autoComplete="new-password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="At least 8 characters"
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="ma-confirm-password">Confirm password</label>
+                        <input
+                          id="ma-confirm-password"
+                          className="input"
+                          type="password"
+                          minLength={8}
+                          autoComplete="new-password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="Re-enter new password"
+                        />
+                      </div>
+                      <button
+                        className="btn btn-primary"
+                        type="submit"
+                        disabled={passwordSaving}
+                      >
+                        {passwordSaving ? 'Updating…' : 'Update password'}
+                      </button>
+                    </form>
+                  </div>
+                </section>
+              ) : null}
             </div>
 
             <section className="ma-section ma-reveal ma-reveal-4">
