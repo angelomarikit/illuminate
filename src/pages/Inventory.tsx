@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { X } from 'lucide-react'
 import { InventorySubnav } from '../components/InventorySubnav'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
@@ -65,6 +66,8 @@ export function Inventory() {
   const [links, setLinks] = useState<ServiceLink[]>([])
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<'none' | 'add' | 'adjust' | 'link'>('none')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState(emptyItem)
   const [form, setForm] = useState(emptyItem)
   const [adjustId, setAdjustId] = useState('')
   const [adjustQty, setAdjustQty] = useState('0')
@@ -213,7 +216,63 @@ export function Inventory() {
     await load()
   }
 
-  async function unlink(id: string) {
+  function openEdit(item: InventoryItem) {
+    setError('')
+    setMessage('')
+    setEditingId(item.id)
+    setEditForm({
+      name: item.name,
+      sku: item.sku,
+      category: item.category,
+      stock: String(item.stock),
+      reorderLevel: String(item.reorderLevel),
+      unit: item.unit,
+      expiry: item.expiry ? item.expiry.slice(0, 10) : '',
+    })
+  }
+
+  function closeEdit() {
+    if (saving) return
+    setEditingId(null)
+    setEditForm(emptyItem)
+  }
+
+  async function onEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!editingId) return
+    const name = editForm.name.trim()
+    const sku = editForm.sku.trim()
+    if (!name || !sku) {
+      setError('Name and SKU are required.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setMessage('')
+    const { error: err } = await supabase
+      .from('inventory_items')
+      .update({
+        name,
+        sku,
+        category: editForm.category.trim() || 'Supplies',
+        stock: Math.max(0, Number(editForm.stock) || 0),
+        reorder_level: Math.max(0, Number(editForm.reorderLevel) || 0),
+        unit: editForm.unit.trim() || 'pc',
+        expiry: editForm.expiry || null,
+      })
+      .eq('id', editingId)
+    setSaving(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setMessage(`Updated item: ${name}.`)
+    setEditingId(null)
+    setEditForm(emptyItem)
+    await load()
+  }
+
+    async function unlink(id: string) {
     const { error: err } = await supabase.from('service_inventory').delete().eq('id', id)
     if (err) {
       setError(err.message)
@@ -504,9 +563,18 @@ export function Inventory() {
                     const low = item.stock <= item.reorderLevel
                     const itemLinks = linksByItem.get(item.id) ?? []
                     return (
-                      <tr key={item.id}>
+                      <tr
+                        key={item.id}
+                        className="inv-catalog-row"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => openEdit(item)}
+                        title="Click to view / edit item"
+                      >
                         <td>
                           <strong>{item.name}</strong>
+                          <div style={{ color: 'var(--muted)', fontSize: '0.78rem' }}>
+                            Click to edit
+                          </div>
                         </td>
                         <td>{item.sku}</td>
                         <td>{item.category}</td>
@@ -545,7 +613,10 @@ export function Inventory() {
                                       cursor: 'pointer',
                                       fontSize: '0.78rem',
                                     }}
-                                    onClick={() => unlink(link.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void unlink(link.id)
+                                    }}
                                   >
                                     Remove
                                   </button>
@@ -569,6 +640,142 @@ export function Inventory() {
           )}
         </div>
       </div>
+      {editingId ? (
+        <div
+          className="confirm-modal-overlay"
+          role="presentation"
+          onClick={closeEdit}
+        >
+          <div
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-inventory-title"
+            style={{ width: 'min(640px, 100%)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-modal-header">
+              <div>
+                <p className="confirm-modal-kicker">Stock catalog</p>
+                <h2 id="edit-inventory-title" className="confirm-modal-title">
+                  Edit item
+                </h2>
+              </div>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close"
+                disabled={saving}
+                onClick={closeEdit}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={(e) => void onEdit(e)}>
+              <div className="confirm-modal-body">
+                <p className="confirm-modal-text">
+                  Update product details and on-hand quantity. Changes save to the stock catalog.
+                </p>
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 12,
+                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  }}
+                >
+                  <div className="field">
+                    <label>Name</label>
+                    <input
+                      className="input"
+                      required
+                      autoFocus
+                      value={editForm.name}
+                      onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>SKU</label>
+                    <input
+                      className="input"
+                      required
+                      value={editForm.sku}
+                      onChange={(e) => setEditForm((f) => ({ ...f, sku: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Category</label>
+                    <input
+                      className="input"
+                      list="inv-edit-categories"
+                      value={editForm.category}
+                      onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))}
+                    />
+                    <datalist id="inv-edit-categories">
+                      <option value="Supplies" />
+                      <option value="Injectables" />
+                      <option value="Retail" />
+                      <option value="Consumables" />
+                    </datalist>
+                  </div>
+                  <div className="field">
+                    <label>Unit</label>
+                    <input
+                      className="input"
+                      value={editForm.unit}
+                      onChange={(e) => setEditForm((f) => ({ ...f, unit: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Quantity (stock)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      required
+                      value={editForm.stock}
+                      onChange={(e) => setEditForm((f) => ({ ...f, stock: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Reorder level</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      value={editForm.reorderLevel}
+                      onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field" style={{ gridColumn: '1 / -1' }}>
+                    <label>Expiry</label>
+                    <input
+                      className="input"
+                      type="date"
+                      value={editForm.expiry}
+                      onChange={(e) => setEditForm((f) => ({ ...f, expiry: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="confirm-modal-actions">
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  disabled={saving}
+                  onClick={closeEdit}
+                >
+                  Cancel
+                </button>
+                <button className="btn btn-primary" type="submit" disabled={saving}>
+                  {saving ? 'Saving…' : 'Save changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
     </div>
   )
 }
