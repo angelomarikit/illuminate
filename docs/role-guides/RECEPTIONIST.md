@@ -2,7 +2,7 @@
 
 Use this guide if you work the front desk or clinic floor. After you log in, you land on **POS / Sales**. The left menu only shows pages you can use.
 
-**You can:** appointments, customers, POS, sales proof, client sessions, services, loyalty, QR check-in, expenses, consultations, chat, My Work, account settings.
+**You can:** appointments, customers, POS, sales proof, client sessions, services, loyalty, QR check-in, expenses, chat, My Work, account settings.
 
 **You cannot:** dashboard, inventory, HR/payroll, clinic settings.
 
@@ -141,7 +141,6 @@ Leave requests wait for Owner/Admin approval.
 | Page | What to do |
 |------|------------|
 | **Services** | Check prices and active treatments (edit only if your clinic allows reception to maintain the menu). |
-| **AI Consultations** | Save before/after notes or consultation media when used at your clinic. |
 | **Expenses** | **Log Expense** → category, amount, description, date, paid by → save. |
 | **Sales Proof** | Find past sales, open payment proof, export if needed. |
 

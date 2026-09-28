@@ -74,6 +74,8 @@ After setup.sql, also run (in order):
 32. `supabase/fix_create_account_receptionist_role.sql` (**fix Create Account “Invalid role”**) — allow `Receptionist` in `create_clinic_account` (maps legacy `Staff`)
 33. `supabase/add_admin_account_manage.sql` (**Admin edit/delete/reset password**) - `update_clinic_account` (details + optional password reset) + tightened `delete_clinic_account` (Admin/Owner; Admin cannot edit/delete Owner)
 34. `supabase/add_inventory_issues.sql` (**Stock Assessment issued/used**) - `inventory_issues` + `inventory_issue_lines` for period assessment sheet
+35. `supabase/add_customer_intake.sql` (**Register Clients intake**) - occupation, socials, medical checklist, lifestyle, history notes, dual signatures on `customers`
+36. `supabase/add_service_series.sql` (**Services and Series**) - series plans with multiple category+service lines (`service_series` + `service_series_items`) for POS / Avail Service
 
 Mobile client (Expo) uses the **same** Supabase project. See `docs/MOBILE_EXPO.md`, `docs/MOBILE_NOTIFICATIONS.md`, and `mobile/.env.example` (`EXPO_PUBLIC_SUPABASE_*`).
 

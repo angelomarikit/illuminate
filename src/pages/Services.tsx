@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { FolderPlus, Plus, Trash2, X } from 'lucide-react'
+import { FolderPlus, Layers, Plus, Trash2, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { isElevatedRole } from '../lib/roles'
 import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
-import type { ServiceCategory, ServiceItem } from '../types'
+import type { ServiceCategory, ServiceItem, ServiceSeries } from '../types'
 import './services.css'
 
 type Row = {
@@ -48,6 +48,93 @@ const empty = {
   description: '',
 }
 
+type SeriesItemDraft = {
+  key: string
+  category: string
+  serviceId: string
+  pricePerSession: string
+  sessions: string
+}
+
+function newSeriesItemDraft(partial?: Partial<SeriesItemDraft>): SeriesItemDraft {
+  return {
+    key: crypto.randomUUID(),
+    category: '',
+    serviceId: '',
+    pricePerSession: '',
+    sessions: '1',
+    ...partial,
+  }
+}
+
+function draftsForAllCategories(
+  categoryNames: string[],
+  activeServices: { id: string; category: string; price: number }[],
+): SeriesItemDraft[] {
+  const names = categoryNames.length ? categoryNames : ['']
+  return names.map((category) => {
+    const first = activeServices.find((s) => !category || s.category === category)
+    return newSeriesItemDraft({
+      category,
+      serviceId: first?.id || '',
+      pricePerSession: first ? String(first.price) : '',
+    })
+  })
+}
+
+const emptySeries = {
+  name: '',
+  description: '',
+  specialPackage: '',
+  items: [newSeriesItemDraft()] as SeriesItemDraft[],
+}
+
+type SeriesItemDbRow = {
+  id: string
+  category: string
+  service_id: string | null
+  price_per_session: number | string
+  sessions: number
+  sort_order: number
+  services: { name: string } | null
+}
+
+type SeriesDbRow = {
+  id: string
+  name: string
+  description: string | null
+  special_package: number | string | null
+  active: boolean
+  service_series_items: SeriesItemDbRow[] | null
+}
+
+function mapSeries(row: SeriesDbRow): ServiceSeries {
+  const items = (row.service_series_items ?? [])
+    .slice()
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((item) => ({
+      id: item.id,
+      seriesId: row.id,
+      category: item.category,
+      serviceId: item.service_id,
+      serviceName: item.services?.name ?? null,
+      pricePerSession: Number(item.price_per_session ?? 0),
+      sessions: Number(item.sessions ?? 1),
+      sortOrder: item.sort_order,
+    }))
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    specialPackage:
+      row.special_package === null || row.special_package === undefined
+        ? null
+        : Number(row.special_package),
+    active: row.active,
+    items,
+  }
+}
+
 function mapRow(row: Row): ServiceItem {
   return {
     id: row.id,
@@ -66,19 +153,24 @@ export function Services() {
   const { user } = useAuth()
   const canManageCategories = isElevatedRole(user?.role)
   const [items, setItems] = useState<ServiceItem[]>([])
+  const [series, setSeries] = useState<ServiceSeries[]>([])
   const [categories, setCategories] = useState<CategoryRow[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [showSeriesForm, setShowSeriesForm] = useState(false)
   const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [form, setForm] = useState(empty)
+  const [seriesForm, setSeriesForm] = useState(emptySeries)
   const [categoryName, setCategoryName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [savingSeries, setSavingSeries] = useState(false)
   const [savingCategory, setSavingCategory] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<
     | { type: 'service'; item: ServiceItem }
+    | { type: 'series'; item: ServiceSeries }
     | { type: 'category'; id: string; name: string; count: number }
     | null
   >(null)
@@ -98,14 +190,23 @@ export function Services() {
     return map
   }, [items])
 
+  const activeServices = useMemo(() => items.filter((s) => s.active), [items])
+
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data, error: err }, { data: catData, error: catErr }] = await Promise.all([
+    const [{ data, error: err }, { data: catData, error: catErr }, seriesRes] = await Promise.all([
       supabase.from('services').select('*').order('name'),
       supabase
         .from('service_categories')
         .select('id, name, sort_order, active')
         .eq('active', true)
+        .order('sort_order')
+        .order('name'),
+      supabase
+        .from('service_series')
+        .select(
+          'id, name, description, special_package, active, service_series_items(id, category, service_id, price_per_session, sessions, sort_order, services(name))',
+        )
         .order('sort_order')
         .order('name'),
     ])
@@ -125,6 +226,25 @@ export function Services() {
         setForm((f) => (cats.some((c) => c.name === f.category) ? f : { ...f, category: first }))
       }
     }
+
+    if (seriesRes.error) {
+      if (
+        seriesRes.error.message.includes('service_series') ||
+        seriesRes.error.message.includes('schema cache')
+      ) {
+        setSeries([])
+        if (!err && !catErr) {
+          setError(
+            `${seriesRes.error.message} — run supabase/add_service_series.sql in Supabase.`,
+          )
+        }
+      } else {
+        setError(seriesRes.error.message)
+        setSeries([])
+      }
+    } else {
+      setSeries(((seriesRes.data as SeriesDbRow[] | null) ?? []).map(mapSeries))
+    }
     setLoading(false)
   }, [])
 
@@ -133,7 +253,7 @@ export function Services() {
   }, [load])
 
   useEffect(() => {
-    if (!showForm && !showCategoryForm && !confirmDelete) return
+    if (!showForm && !showSeriesForm && !showCategoryForm && !confirmDelete) return
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
       if (confirmDelete && !deleting) {
@@ -143,6 +263,11 @@ export function Services() {
       if (showCategoryForm && !savingCategory) {
         setShowCategoryForm(false)
         setCategoryName('')
+        return
+      }
+      if (showSeriesForm && !savingSeries) {
+        setShowSeriesForm(false)
+        setSeriesForm(emptySeries)
         return
       }
       if (showForm && !saving) {
@@ -156,7 +281,17 @@ export function Services() {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [showForm, showCategoryForm, confirmDelete, saving, savingCategory, deleting, categoryOptions])
+  }, [
+    showForm,
+    showSeriesForm,
+    showCategoryForm,
+    confirmDelete,
+    saving,
+    savingSeries,
+    savingCategory,
+    deleting,
+    categoryOptions,
+  ])
 
   function openCategoryModal() {
     setCategoryName('')
@@ -182,6 +317,55 @@ export function Services() {
     setForm({ ...empty, category: categoryOptions[0] || 'Facials' })
   }
 
+  function openSeriesModal() {
+    if (!canManageCategories) return
+    setError('')
+    setSeriesForm({
+      name: '',
+      description: '',
+      specialPackage: '',
+      items: draftsForAllCategories(categoryOptions, activeServices),
+    })
+    setShowSeriesForm(true)
+  }
+
+  function closeSeriesModal() {
+    if (savingSeries) return
+    setShowSeriesForm(false)
+    setSeriesForm(emptySeries)
+  }
+
+  function updateSeriesItem(key: string, patch: Partial<SeriesItemDraft>) {
+    setSeriesForm((f) => ({
+      ...f,
+      items: f.items.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+    }))
+  }
+
+  function addSeriesCategoryLine() {
+    const used = new Set(seriesForm.items.map((item) => item.category).filter(Boolean))
+    const nextCategory = categoryOptions.find((c) => !used.has(c)) || ''
+    const first = activeServices.find((s) => !nextCategory || s.category === nextCategory)
+    setSeriesForm((f) => ({
+      ...f,
+      items: [
+        ...f.items,
+        newSeriesItemDraft({
+          category: nextCategory,
+          serviceId: first?.id || '',
+          pricePerSession: first ? String(first.price) : '',
+        }),
+      ],
+    }))
+  }
+
+  function removeSeriesCategoryLine(key: string) {
+    setSeriesForm((f) => ({
+      ...f,
+      items: f.items.filter((item) => item.key !== key),
+    }))
+  }
+
   async function onAdd(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
@@ -205,6 +389,99 @@ export function Services() {
     setForm({ ...empty, category: categoryOptions[0] || 'Facials' })
     setShowForm(false)
     setMessage('Service added.')
+    await load()
+  }
+
+  async function onAddSeries(e: FormEvent) {
+    e.preventDefault()
+    if (!canManageCategories) return
+    const name = seriesForm.name.trim()
+    if (!name) {
+      setError('Enter a series name.')
+      return
+    }
+
+    const prepared = seriesForm.items.map((item, index) => ({
+      category: item.category.trim(),
+      service_id: item.serviceId || null,
+      price_per_session: Math.max(0, Number(item.pricePerSession) || 0),
+      sessions: Math.max(1, Math.floor(Number(item.sessions) || 0)),
+      sort_order: (index + 1) * 10,
+    }))
+
+    if (prepared.length === 0) {
+      setError('Add at least one category line to this series (or keep some from the list).')
+      return
+    }
+    if (prepared.some((item) => !item.category)) {
+      setError('Each line needs a category. Remove blank lines or pick a category.')
+      return
+    }
+    const missingService = prepared.filter((item) => !item.service_id)
+    if (missingService.length) {
+      setError(
+        `Pick a service or remove these categories: ${missingService
+          .map((item) => item.category)
+          .join(', ')}.`,
+      )
+      return
+    }
+
+    const specialRaw = seriesForm.specialPackage.trim()
+    const specialPackage = specialRaw === '' ? null : Math.max(0, Number(specialRaw) || 0)
+
+    setSavingSeries(true)
+    setMessage('')
+    setError('')
+
+    const { data: created, error: err } = await supabase
+      .from('service_series')
+      .insert({
+        name,
+        description: seriesForm.description.trim() || null,
+        special_package: specialPackage,
+        active: true,
+        created_by: user?.id ?? null,
+        // Legacy flat columns (nullable after re-running add_service_series.sql)
+        category: prepared[0]?.category ?? null,
+        service_id: prepared[0]?.service_id ?? null,
+        price_per_session: prepared[0]?.price_per_session ?? null,
+        sessions: prepared[0]?.sessions ?? null,
+      })
+      .select('id')
+      .single()
+
+    if (err || !created) {
+      setSavingSeries(false)
+      setError(
+        err?.message.includes('service_series') || err?.message.includes('schema cache')
+          ? `${err?.message ?? 'Could not create series'} — run supabase/add_service_series.sql in Supabase.`
+          : err?.message || 'Could not create series.',
+      )
+      return
+    }
+
+    const { error: itemsErr } = await supabase.from('service_series_items').insert(
+      prepared.map((item) => ({
+        series_id: created.id,
+        ...item,
+      })),
+    )
+
+    setSavingSeries(false)
+    if (itemsErr) {
+      await supabase.from('service_series').delete().eq('id', created.id)
+      setError(
+        itemsErr.message.includes('service_series_items') || itemsErr.message.includes('schema cache')
+          ? `${itemsErr.message} — re-run supabase/add_service_series.sql in Supabase.`
+          : itemsErr.message,
+      )
+      return
+    }
+
+    setShowSeriesForm(false)
+    setSeriesForm(emptySeries)
+    setMessage(`Series “${name}” created with ${prepared.length} categor${prepared.length === 1 ? 'y' : 'ies'}.`)
     await load()
   }
 
@@ -255,6 +532,20 @@ export function Services() {
     await load()
   }
 
+  async function toggleSeries(item: ServiceSeries) {
+    setError('')
+    const { error: err } = await supabase
+      .from('service_series')
+      .update({ active: !item.active })
+      .eq('id', item.id)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setMessage(item.active ? 'Series hidden from POS / Avail.' : 'Series restored.')
+    await load()
+  }
+
   async function confirmDeleteAction() {
     if (!canManageCategories || !confirmDelete) return
     setDeleting(true)
@@ -278,6 +569,23 @@ export function Services() {
       }
       setConfirmDelete(null)
       setMessage(`Service “${confirmDelete.item.name}” deleted.`)
+      await load()
+      return
+    }
+
+    if (confirmDelete.type === 'series') {
+      const { error: err } = await supabase
+        .from('service_series')
+        .delete()
+        .eq('id', confirmDelete.item.id)
+      setDeleting(false)
+      if (err) {
+        setError(err.message)
+        setConfirmDelete(null)
+        return
+      }
+      setConfirmDelete(null)
+      setMessage(`Series “${confirmDelete.item.name}” deleted.`)
       await load()
       return
     }
@@ -330,14 +638,20 @@ export function Services() {
     <div>
       <PageHeader
         kicker="Catalog"
-        title="Services & Products"
-        subtitle="Add or remove treatments and retail items available for booking and POS checkout."
+        title="Services and Series"
+        subtitle="Manage treatments, retail items, and multi-session series plans for POS and Avail service."
         actions={
           <>
             {canManageCategories ? (
               <button className="btn btn-ghost" type="button" onClick={openCategoryModal}>
                 <FolderPlus size={15} />
                 Categories
+              </button>
+            ) : null}
+            {canManageCategories ? (
+              <button className="btn btn-ghost" type="button" onClick={openSeriesModal}>
+                <Layers size={15} />
+                Create Series
               </button>
             ) : null}
             <button className="btn btn-primary" type="button" onClick={openServiceModal}>
@@ -348,7 +662,7 @@ export function Services() {
         }
       />
 
-      {error && !showForm && !showCategoryForm && !confirmDelete ? (
+      {error && !showForm && !showSeriesForm && !showCategoryForm && !confirmDelete ? (
         <StatusMessage type="error">{error}</StatusMessage>
       ) : null}
       {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
@@ -421,6 +735,116 @@ export function Services() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header">
+          <div>
+            <h2 className="panel-title">Series plans</h2>
+            <p className="svc-panel-sub">
+              A series is a plan made of category + service lines (e.g. Gluta Push → Gluta Drip).
+            </p>
+          </div>
+          {canManageCategories ? (
+            <button className="btn btn-primary" type="button" onClick={openSeriesModal}>
+              <Layers size={15} />
+              Create Series
+            </button>
+          ) : null}
+        </div>
+        <div className="panel-body">
+          {loading ? (
+            <div className="empty-state">Loading series…</div>
+          ) : series.length === 0 ? (
+            <div className="empty-state">
+              No series yet. Owner/Admin can create a plan that appears in POS and Avail service.
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Series</th>
+                    <th>Categories in series</th>
+                    <th>Package</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {series.map((plan) => {
+                    const itemsTotal = plan.items.reduce((sum, line) => {
+                      return sum + line.pricePerSession * line.sessions
+                    }, 0)
+                    const packageTotal =
+                      plan.specialPackage != null && plan.specialPackage > 0
+                        ? plan.specialPackage
+                        : itemsTotal
+                    return (
+                      <tr key={plan.id}>
+                        <td>
+                          <strong>{plan.name}</strong>
+                          {plan.description ? (
+                            <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
+                              {plan.description}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td>
+                          {plan.items.length === 0 ? (
+                            '—'
+                          ) : (
+                            <ul className="svc-series-lines">
+                              {plan.items.map((line) => (
+                                <li key={line.id}>
+                                  <strong>{line.category}</strong>
+                                  <span>
+                                    {line.serviceName || '—'} · {line.sessions} sess ·{' '}
+                                    {formatCurrency(line.pricePerSession)}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                        <td>{formatCurrency(packageTotal)}</td>
+                        <td>
+                          <span className={`badge ${plan.active ? 'badge-success' : ''}`}>
+                            {plan.active ? 'Active' : 'Hidden'}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="svc-row-actions">
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              type="button"
+                              onClick={() => void toggleSeries(plan)}
+                            >
+                              {plan.active ? 'Hide' : 'Restore'}
+                            </button>
+                            {canManageCategories ? (
+                              <button
+                                className="btn btn-ghost btn-sm svc-delete-btn"
+                                type="button"
+                                onClick={() => {
+                                  setError('')
+                                  setConfirmDelete({ type: 'series', item: plan })
+                                }}
+                              >
+                                <Trash2 size={14} />
+                                Delete
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -570,6 +994,228 @@ export function Services() {
         </div>
       ) : null}
 
+      {canManageCategories && showSeriesForm ? (
+        <div className="confirm-modal-overlay svc-modal-overlay" role="presentation">
+          <div
+            className="svc-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="series-modal-title"
+          >
+            <div className="svc-modal-top">
+              <div className="svc-modal-accent" aria-hidden />
+              <div className="svc-modal-head">
+                <div>
+                  <p className="svc-modal-kicker">Series plan</p>
+                  <h2 id="series-modal-title" className="svc-modal-title">
+                    Create series
+                  </h2>
+                </div>
+                <button
+                  className="btn-icon"
+                  type="button"
+                  aria-label="Close"
+                  disabled={savingSeries}
+                  onClick={closeSeriesModal}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="svc-modal-lead">
+                A series is a combination of services. Add category lines inside it (category name +
+                service). Those lines show in POS and Avail service.
+              </p>
+            </div>
+
+            <form className="svc-modal-form" onSubmit={(e) => void onAddSeries(e)}>
+              <div className="svc-modal-body">
+                {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+                <div className="svc-modal-grid">
+                  <div className="field svc-span-2">
+                    <label>Series name</label>
+                    <input
+                      className="input"
+                      required
+                      autoFocus
+                      placeholder="e.g. Derma-approved Gluta Drips"
+                      value={seriesForm.name}
+                      onChange={(e) => setSeriesForm((f) => ({ ...f, name: e.target.value }))}
+                    />
+                  </div>
+
+                  <div className="field svc-span-2">
+                    <div className="svc-field-label-row">
+                      <label>Categories in this series</label>
+                      <button type="button" className="svc-inline-link" onClick={addSeriesCategoryLine}>
+                        <Plus size={13} />
+                        Add category
+                      </button>
+                    </div>
+                    <p className="svc-field-hint">
+                      All catalog categories start listed here. Remove any you don’t want in this
+                      series.
+                    </p>
+                    <div className="svc-series-item-list">
+                      {seriesForm.items.length === 0 ? (
+                        <p className="svc-field-hint">
+                          No categories left. Use Add category to put one back.
+                        </p>
+                      ) : null}
+                      {seriesForm.items.map((line, index) => (
+                        <div key={line.key} className="svc-series-item">
+                          <div className="svc-series-item-head">
+                            <span>Category {index + 1}</span>
+                            <button
+                              type="button"
+                              className="svc-inline-link"
+                              onClick={() => removeSeriesCategoryLine(line.key)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="svc-series-item-grid">
+                            <div className="field">
+                              <label>Category name</label>
+                              <select
+                                className="select"
+                                required
+                                value={line.category}
+                                onChange={(e) => {
+                                  const category = e.target.value
+                                  const first = activeServices.find((s) => s.category === category)
+                                  updateSeriesItem(line.key, {
+                                    category,
+                                    serviceId: first?.id || '',
+                                    pricePerSession: first
+                                      ? String(first.price)
+                                      : line.pricePerSession,
+                                  })
+                                }}
+                              >
+                                <option value="">Select category…</option>
+                                {categoryOptions.map((c) => (
+                                  <option key={c} value={c}>
+                                    {c}
+                                  </option>
+                                ))}
+                                {line.category && !categoryOptions.includes(line.category) ? (
+                                  <option value={line.category}>{line.category}</option>
+                                ) : null}
+                              </select>
+                            </div>
+                            <div className="field">
+                              <label>Service</label>
+                              <select
+                                className="select"
+                                required
+                                value={line.serviceId}
+                                onChange={(e) => {
+                                  const serviceId = e.target.value
+                                  const svc = activeServices.find((s) => s.id === serviceId)
+                                  updateSeriesItem(line.key, {
+                                    serviceId,
+                                    pricePerSession: svc
+                                      ? String(svc.price)
+                                      : line.pricePerSession,
+                                  })
+                                }}
+                              >
+                                <option value="">
+                                  {line.category
+                                    ? activeServices.some((s) => s.category === line.category)
+                                      ? 'Select service…'
+                                      : 'No services in this category'
+                                    : 'Select category first…'}
+                                </option>
+                                {activeServices
+                                  .filter((s) => !line.category || s.category === line.category)
+                                  .map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.name} — {formatCurrency(s.price)}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                            <div className="field">
+                              <label>Price per session</label>
+                              <input
+                                className="input"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                required
+                                value={line.pricePerSession}
+                                onChange={(e) =>
+                                  updateSeriesItem(line.key, { pricePerSession: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="field">
+                              <label>Sessions</label>
+                              <input
+                                className="input"
+                                type="number"
+                                min="1"
+                                step="1"
+                                required
+                                value={line.sessions}
+                                onChange={(e) =>
+                                  updateSeriesItem(line.key, { sessions: e.target.value })
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="field svc-span-2">
+                    <label>Special package (optional series total)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Leave blank to sum category lines"
+                      value={seriesForm.specialPackage}
+                      onChange={(e) =>
+                        setSeriesForm((f) => ({ ...f, specialPackage: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="field svc-span-2">
+                    <label>Description</label>
+                    <textarea
+                      className="textarea"
+                      rows={2}
+                      value={seriesForm.description}
+                      onChange={(e) =>
+                        setSeriesForm((f) => ({ ...f, description: e.target.value }))
+                      }
+                      placeholder="Optional plan notes"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="svc-modal-actions">
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  disabled={savingSeries}
+                  onClick={closeSeriesModal}
+                >
+                  Cancel
+                </button>
+                <button className="btn btn-primary" type="submit" disabled={savingSeries}>
+                  {savingSeries ? 'Saving…' : 'Save series'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {canManageCategories && showCategoryForm ? (
         <div
           className="confirm-modal-overlay svc-modal-overlay svc-category-overlay"
@@ -706,7 +1352,11 @@ export function Services() {
                 <div>
                   <p className="svc-modal-kicker">Owner / Admin</p>
                   <h2 id="delete-confirm-title" className="svc-modal-title">
-                    {confirmDelete.type === 'service' ? 'Delete service' : 'Delete category'}
+                    {confirmDelete.type === 'service'
+                      ? 'Delete service'
+                      : confirmDelete.type === 'series'
+                        ? 'Delete series'
+                        : 'Delete category'}
                   </h2>
                 </div>
                 <button
@@ -724,6 +1374,11 @@ export function Services() {
                   <>
                     Permanently delete <strong>{confirmDelete.item.name}</strong>? This cannot be
                     undone. If it is linked to past sales, use Hide instead.
+                  </>
+                ) : confirmDelete.type === 'series' ? (
+                  <>
+                    Permanently delete series <strong>{confirmDelete.item.name}</strong>? Past sales
+                    and session packages are kept.
                   </>
                 ) : confirmDelete.count > 0 ? (
                   <>

@@ -8,7 +8,7 @@ This guide sets up app permissions without breaking your current clinic web app.
 |------|-----|--------|
 | **Owner** | Business owner | Full app: dashboard, clinic tools, HR, inventory (incl. **Ops board**), settings. Inbox includes reorder / receiving / stocktake alerts |
 | **Admin** | Trusted manager | Same elevated access as Owner (clinic + HR + inventory Ops board + settings + dashboard + inventory inbox alerts) |
-| **Receptionist** | Front desk / therapists (formerly Staff) | Day-to-day ops: POS, sales, appointments, customers, services, expenses, consultations, loyalty, QR, chat, store open/close (**no inventory**) |
+| **Receptionist** | Front desk / therapists (formerly Staff) | Day-to-day ops: POS, sales, appointments, customers, services, expenses, loyalty, QR, chat, store open/close (**no inventory**) |
 | **HR** | Human resources | **HR section only:** Staff & Attendance, Create account, Payroll, Incentives. No dashboard, POS, clients, or clinic ops |
 | **Inventory** | Inventory Specialist | **Inventory section only:** Stock catalog, Stocktake, Receiving, Reorder (+ service supply links). Also available to Owner/Admin |
 | **Client** | Patient / member | **Portal only:** appointments, packages, wallet/cash-in, loyalty points, doctor notes, support, profile. Cannot open clinic/admin/HR/inventory pages |

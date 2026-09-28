@@ -14,7 +14,7 @@ import { Sales } from './pages/Sales'
 import { Sessions } from './pages/Sessions'
 import { Appointments } from './pages/Appointments'
 import { Customers } from './pages/Customers'
-import { Consultations } from './pages/Consultations'
+import { RegisterClients } from './pages/RegisterClients'
 import { Services } from './pages/Services'
 import { Loyalty } from './pages/Loyalty'
 import { QRCheckin } from './pages/QRCheckin'
@@ -73,7 +73,7 @@ export default function App() {
                     <Route path="sessions" element={<Sessions />} />
                     <Route path="appointments" element={<Appointments />} />
                     <Route path="customers" element={<Customers />} />
-                    <Route path="consultations" element={<Consultations />} />
+                    <Route path="register-clients" element={<RegisterClients />} />
                     <Route path="services" element={<Services />} />
                     <Route path="loyalty" element={<Loyalty />} />
                     <Route path="qr-checkin" element={<QRCheckin />} />

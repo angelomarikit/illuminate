@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { CareNotesPanel } from '../components/CareNotesPanel'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
@@ -36,6 +37,7 @@ type CustomerMembership = {
 
 export function Sessions() {
   const { branchId } = useBranch()
+  const location = useLocation()
   const [rows, setRows] = useState<SessionPackage[]>([])
   const [membershipByCustomer, setMembershipByCustomer] = useState<
     Record<string, CustomerMembership>
@@ -46,6 +48,18 @@ export function Sessions() {
   const [message, setMessage] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const state = location.state as { availed?: string; receipt?: string } | null
+    if (state?.availed) {
+      setMessage(
+        state.receipt
+          ? `Service availed for ${state.availed} (${state.receipt}).`
+          : `Service availed for ${state.availed}.`,
+      )
+      window.history.replaceState({}, document.title)
+    }
+  }, [location.state])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -221,8 +235,8 @@ export function Sessions() {
             <div className="empty-state">Loading sessions…</div>
           ) : filtered.length === 0 ? (
             <div className="empty-state">
-              No session packages yet. When checking out in POS, set sessions advised and package
-              amount under a service.
+              No session packages yet. Create them from POS or Avail service on a client intake
+              profile (set sessions and package amount).
             </div>
           ) : (
             <div className="table-wrap">

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { FileText, Pencil, Search, Trash2, Upload, X } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
 import { CareNotesPanel } from '../components/CareNotesPanel'
+import { AvailServiceModal } from '../components/AvailServiceModal'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
@@ -10,7 +12,12 @@ import { isClinicRole } from '../lib/roles'
 import { normalizeMembership } from '../lib/membership'
 import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
-import type { Customer } from '../types'
+import type {
+  Customer,
+  CustomerHistoryNote,
+  CustomerLifestyle,
+  CustomerMedicalConditions,
+} from '../types'
 import './Customers.css'
 
 function isUuid(value: string) {
@@ -37,10 +44,64 @@ type CustomerRow = {
   address: string | null
   medical_history: string | null
   notes: string | null
+  occupation: string | null
+  facebook: string | null
+  instagram: string | null
+  medical_conditions: CustomerMedicalConditions | null
+  topical_medications: string | null
+  medications_intake: string | null
+  lifestyle: CustomerLifestyle | null
+  history_notes: CustomerHistoryNote[] | null
+  signature_primary: string | null
+  signature_confirm: string | null
+  intake_completed_at: string | null
+}
+
+function displayOrNA(value: unknown): string {
+  if (value === null || value === undefined) return 'N/A'
+  if (typeof value === 'string' && !value.trim()) return 'N/A'
+  if (Array.isArray(value) && value.length === 0) return 'N/A'
+  if (typeof value === 'number' && Number.isNaN(value)) return 'N/A'
+  return String(value)
+}
+
+const MEDICAL_LABELS: { key: keyof CustomerMedicalConditions; label: string }[] = [
+  { key: 'hypertension', label: 'Hypertension' },
+  { key: 'kidney_disease', label: 'Kidney disease' },
+  { key: 'skin_disease', label: 'Skin disease' },
+  { key: 'diabetes', label: 'Diabetes' },
+  { key: 'stroke', label: 'Stroke' },
+  { key: 'previous_surgeries', label: 'Previous surgeries' },
+  { key: 'blood_disorders', label: 'Blood disorders' },
+  { key: 'heart_disorders', label: 'Heart disorders' },
+  { key: 'allergies', label: 'Allergies' },
+  { key: 'liver_disease', label: 'Liver disease' },
+  { key: 'asthma', label: 'Asthma' },
+]
+
+const LIFESTYLE_LABELS: { key: keyof CustomerLifestyle; label: string }[] = [
+  { key: 'smoking', label: 'Smoking' },
+  { key: 'alcohol', label: 'Alcohol' },
+  { key: 'beverages', label: 'Beverages' },
+]
+
+function formatCheckedChips(
+  source: CustomerMedicalConditions | CustomerLifestyle | null | undefined,
+  labels: { key: string; label: string }[],
+): { chips: string[]; others: string } {
+  if (!source || typeof source !== 'object') return { chips: [], others: '' }
+  const chips = labels
+    .filter((item) => Boolean((source as Record<string, unknown>)[item.key]))
+    .map((item) => item.label)
+  const others =
+    typeof (source as { others?: unknown }).others === 'string'
+      ? (source as { others?: string }).others?.trim() || ''
+      : ''
+  return { chips, others }
 }
 
 function formatBirthday(value: string | null | undefined) {
-  if (!value) return '—'
+  if (!value) return 'N/A'
   const d = new Date(`${value.slice(0, 10)}T12:00:00`)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleDateString('en-PH', {
@@ -108,6 +169,17 @@ function mapCustomer(row: CustomerRow): Customer {
     address: row.address ?? '',
     medicalHistory: row.medical_history ?? '',
     notes: row.notes ?? '',
+    occupation: row.occupation ?? null,
+    facebook: row.facebook ?? null,
+    instagram: row.instagram ?? null,
+    medicalConditions: row.medical_conditions ?? null,
+    topicalMedications: row.topical_medications ?? null,
+    medicationsIntake: row.medications_intake ?? null,
+    lifestyle: row.lifestyle ?? null,
+    historyNotes: Array.isArray(row.history_notes) ? row.history_notes : null,
+    signaturePrimary: row.signature_primary ?? null,
+    signatureConfirm: row.signature_confirm ?? null,
+    intakeCompletedAt: row.intake_completed_at ?? null,
   }
 }
 
@@ -127,6 +199,7 @@ const emptyForm = {
 export function Customers() {
   const { branchId } = useBranch()
   const { user } = useAuth()
+  const location = useLocation()
   const canManageConsent = isClinicRole(user?.role)
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<Customer[]>([])
@@ -138,6 +211,8 @@ export function Customers() {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [profileModalOpen, setProfileModalOpen] = useState(false)
+  const [availOpen, setAvailOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [visits, setVisits] = useState<VisitRow[]>([])
@@ -156,6 +231,14 @@ export function Customers() {
     [rows, selectedId],
   )
 
+  useEffect(() => {
+    const registered = (location.state as { registered?: string } | null)?.registered
+    if (registered) {
+      setMessage(`Client registered: ${registered}`)
+      window.history.replaceState({}, document.title)
+    }
+  }, [location.state])
+
   const loadCustomers = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -163,7 +246,7 @@ export function Customers() {
     let request = supabase
       .from('customers')
       .select(
-        'id, branch_id, full_name, phone, email, membership, membership_expires_at, points, cash_in_balance, visits, last_visit, age, birthday, sex, address, medical_history, notes',
+        'id, branch_id, full_name, phone, email, membership, membership_expires_at, points, cash_in_balance, visits, last_visit, age, birthday, sex, address, medical_history, notes, occupation, facebook, instagram, medical_conditions, topical_medications, medications_intake, lifestyle, history_notes, signature_primary, signature_confirm, intake_completed_at',
       )
       .order('full_name')
 
@@ -175,11 +258,16 @@ export function Customers() {
 
     if (fetchError) {
       setError(
-        fetchError.message.includes('birthday')
-          ? `${fetchError.message} — run supabase/add_customer_birthday.sql in Supabase.`
-          : fetchError.message.includes('age') || fetchError.message.includes('medical_history')
-            ? `${fetchError.message} — run supabase/fix_public_booking_flow.sql in Supabase.`
-            : fetchError.message,
+        fetchError.message.includes('occupation') ||
+          fetchError.message.includes('history_notes') ||
+          fetchError.message.includes('signature_primary') ||
+          fetchError.message.includes('schema cache')
+          ? `${fetchError.message} — run supabase/add_customer_intake.sql in Supabase.`
+          : fetchError.message.includes('birthday')
+            ? `${fetchError.message} — run supabase/add_customer_birthday.sql in Supabase.`
+            : fetchError.message.includes('age') || fetchError.message.includes('medical_history')
+              ? `${fetchError.message} — run supabase/fix_public_booking_flow.sql in Supabase.`
+              : fetchError.message,
       )
       setRows([])
     } else {
@@ -563,6 +651,7 @@ export function Customers() {
 
     setMessage(`Deleted client: ${selected.name}.`)
     setConfirmDelete(false)
+    setProfileModalOpen(false)
     setShowForm(false)
     setEditingId(null)
     setSelectedId(null)
@@ -751,14 +840,8 @@ export function Customers() {
       <div className={`crm-shell ${selected ? 'has-detail' : ''}`}>
         <section className="crm-list">
           <div className="crm-list-head">
-            <div>
-              <p className="crm-kicker">Directory</p>
-              <h2>
-                {filtered.length} client{filtered.length === 1 ? '' : 's'}
-              </h2>
-            </div>
             <label className="crm-search">
-              <Search size={15} strokeWidth={2} aria-hidden />
+              <Search size={18} strokeWidth={2} aria-hidden />
               <input
                 type="search"
                 placeholder="Search name, phone, or email"
@@ -766,6 +849,12 @@ export function Customers() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </label>
+            <div className="crm-list-count">
+              <p className="crm-kicker">Directory</p>
+              <h2>
+                {filtered.length} client{filtered.length === 1 ? '' : 's'}
+              </h2>
+            </div>
           </div>
 
           <div className="crm-list-body">
@@ -793,19 +882,27 @@ export function Customers() {
                       <tr
                         key={client.id}
                         className={selectedId === client.id ? 'is-active' : ''}
-                        onClick={() => setSelectedId(client.id)}
+                        onClick={() => {
+                          setSelectedId(client.id)
+                          setProfileModalOpen(true)
+                          setConfirmDelete(false)
+                        }}
                       >
                         <td>
                           <div className="crm-person">
                             <span className="crm-avatar" aria-hidden>
                               {initials(client.name)}
                             </span>
-                            <div>
-                              <strong>{client.name}</strong>
-                              <span>
-                                {[client.sex, client.age ? `${client.age}y` : null, formatBirthday(client.birthday)]
+                            <div className="crm-person-copy">
+                              <strong className="crm-person-name">{client.name}</strong>
+                              <span className="crm-person-meta">
+                                {[
+                                  client.sex || null,
+                                  client.age ? `${client.age}y` : null,
+                                  client.birthday ? formatBirthday(client.birthday) : null,
+                                ]
                                   .filter(Boolean)
-                                  .join(' · ') || 'Profile'}
+                                  .join(' · ') || 'No profile details'}
                               </span>
                             </div>
                           </div>
@@ -860,6 +957,13 @@ export function Customers() {
                 />
               </div>
               <div className="crm-detail-actions">
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => setProfileModalOpen(true)}
+                >
+                  Intake profile
+                </button>
                 {canManageConsent ? (
                   <>
                     <button className="btn btn-ghost" type="button" onClick={() => openEdit(selected)}>
@@ -886,6 +990,7 @@ export function Customers() {
                   aria-label="Close details"
                   onClick={() => {
                     setConfirmDelete(false)
+                    setProfileModalOpen(false)
                     setSelectedId(null)
                   }}
                 >
@@ -954,7 +1059,7 @@ export function Customers() {
                   <p className="crm-muted">Loading sessions…</p>
                 ) : packages.length === 0 ? (
                   <p className="crm-muted">
-                    No session packages yet. Create them from POS with sessions advised.
+                    No session packages yet. Create them from POS or Avail service.
                   </p>
                 ) : (
                   <div className="crm-stack">
@@ -1128,7 +1233,234 @@ export function Customers() {
           </aside>
         ) : null}
       </div>
-      {confirmDelete && selected ? (
+      {profileModalOpen && selected ? (
+        <div
+          className="confirm-modal-overlay crm-intake-overlay"
+          role="presentation"
+          onClick={() => setProfileModalOpen(false)}
+        >
+          <div
+            className="confirm-modal crm-intake-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="client-intake-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="crm-intake-head">
+              <div className="crm-intake-head-copy">
+                <p className="confirm-modal-kicker">Client intake</p>
+                <h2 id="client-intake-title" className="confirm-modal-title">
+                  {selected.name}
+                </h2>
+                <div className="crm-intake-head-meta">
+                  <MembershipBadge
+                    membership={selected.membership}
+                    expiresAt={selected.membershipExpiresAt}
+                    showExpiry
+                  />
+                  <span>
+                    Completed:{' '}
+                    {selected.intakeCompletedAt
+                      ? new Date(selected.intakeCompletedAt).toLocaleString('en-PH')
+                      : 'N/A'}
+                  </span>
+                </div>
+              </div>
+              <button
+                className="btn-icon"
+                type="button"
+                aria-label="Close"
+                onClick={() => setProfileModalOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="crm-intake-body">
+              <section className="crm-intake-card">
+                <h3>Profile</h3>
+                <div className="crm-intake-facts">
+                  <div>
+                    <span>Name</span>
+                    <strong>{displayOrNA(selected.name)}</strong>
+                  </div>
+                  <div>
+                    <span>Sex</span>
+                    <strong>{displayOrNA(selected.sex)}</strong>
+                  </div>
+                  <div>
+                    <span>Contact</span>
+                    <strong>{displayOrNA(selected.phone)}</strong>
+                  </div>
+                  <div>
+                    <span>Email</span>
+                    <strong>{displayOrNA(selected.email)}</strong>
+                  </div>
+                  <div>
+                    <span>Occupation</span>
+                    <strong>{displayOrNA(selected.occupation)}</strong>
+                  </div>
+                  <div>
+                    <span>Birthdate</span>
+                    <strong>
+                      {selected.birthday ? formatBirthday(selected.birthday) : 'N/A'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Facebook</span>
+                    <strong>{displayOrNA(selected.facebook)}</strong>
+                  </div>
+                  <div>
+                    <span>Instagram</span>
+                    <strong>{displayOrNA(selected.instagram)}</strong>
+                  </div>
+                  <div className="crm-intake-full">
+                    <span>Address</span>
+                    <strong>{displayOrNA(selected.address)}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <div className="crm-intake-grid">
+                <section className="crm-intake-card">
+                  <h3>History</h3>
+                  {!selected.historyNotes || selected.historyNotes.length === 0 ? (
+                    <p className="crm-intake-na">N/A</p>
+                  ) : (
+                    <ul className="crm-intake-history">
+                      {selected.historyNotes.map((note) => (
+                        <li key={note.id || note.created_at + note.text}>
+                          <div>{note.text}</div>
+                          {note.created_at ? (
+                            <span>{new Date(note.created_at).toLocaleString('en-PH')}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="crm-intake-card">
+                  <h3>Topical medications</h3>
+                  <p className="crm-intake-block">{displayOrNA(selected.topicalMedications)}</p>
+                </section>
+
+                <section className="crm-intake-card">
+                  <h3>Medical checklist</h3>
+                  {(() => {
+                    const { chips, others } = formatCheckedChips(
+                      selected.medicalConditions,
+                      MEDICAL_LABELS,
+                    )
+                    if (chips.length === 0 && !others) {
+                      return <p className="crm-intake-na">N/A</p>
+                    }
+                    return (
+                      <div className="crm-intake-chips">
+                        {chips.map((chip) => (
+                          <span key={chip} className="crm-intake-chip">
+                            {chip}
+                          </span>
+                        ))}
+                        {others ? (
+                          <span className="crm-intake-chip is-other">Others: {others}</span>
+                        ) : null}
+                      </div>
+                    )
+                  })()}
+                </section>
+
+                <section className="crm-intake-card">
+                  <h3>Medications / herbal intake</h3>
+                  <p className="crm-intake-block">{displayOrNA(selected.medicationsIntake)}</p>
+                </section>
+
+                <section className="crm-intake-card">
+                  <h3>Lifestyle</h3>
+                  {(() => {
+                    const { chips, others } = formatCheckedChips(
+                      selected.lifestyle,
+                      LIFESTYLE_LABELS,
+                    )
+                    if (chips.length === 0 && !others) {
+                      return <p className="crm-intake-na">N/A</p>
+                    }
+                    return (
+                      <div className="crm-intake-chips">
+                        {chips.map((chip) => (
+                          <span key={chip} className="crm-intake-chip">
+                            {chip}
+                          </span>
+                        ))}
+                        {others ? (
+                          <span className="crm-intake-chip is-other">Others: {others}</span>
+                        ) : null}
+                      </div>
+                    )
+                  })()}
+                </section>
+
+                <section className="crm-intake-card">
+                  <h3>Signatures</h3>
+                  <div className="crm-intake-signs">
+                    <div>
+                      <span>Primary</span>
+                      {selected.signaturePrimary ? (
+                        <img src={selected.signaturePrimary} alt="Primary signature" />
+                      ) : (
+                        <p className="crm-intake-na">N/A</p>
+                      )}
+                    </div>
+                    <div>
+                      <span>Confirmation</span>
+                      {selected.signatureConfirm ? (
+                        <img src={selected.signatureConfirm} alt="Confirmation signature" />
+                      ) : (
+                        <p className="crm-intake-na">N/A</p>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div className="crm-intake-foot">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => setProfileModalOpen(false)}
+              >
+                Close
+              </button>
+              {canManageConsent ? (
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => setAvailOpen(true)}
+                >
+                  Avail service
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {availOpen && selected ? (
+        <AvailServiceModal
+          customer={selected}
+          open={availOpen}
+          onClose={() => setAvailOpen(false)}
+          onSuccess={(receipt) => {
+            setMessage('Service availed for ' + selected.name + ' (' + receipt + ').')
+            setAvailOpen(false)
+            setProfileModalOpen(false)
+            void loadCustomers()
+          }}
+        />
+      ) : null}
+
+            {confirmDelete && selected ? (
         <div
           className="confirm-modal-overlay"
           role="presentation"

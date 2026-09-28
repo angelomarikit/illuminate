@@ -16,6 +16,28 @@
   grid-column: 1 / -1;
 }
 
+.pos-series-block {
+  margin-bottom: 14px;
+}
+
+.pos-series-label {
+  margin: 0 0 8px;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #8a6d2f;
+}
+
+.pos-card-series {
+  border-color: rgba(184, 149, 74, 0.45);
+  background: linear-gradient(180deg, #fffdf8, #fff);
+}
+
+.pos-card-series .pos-card-cat {
+  color: #8a6d2f;
+}
+
 .pos-custom-modal-overlay {
   position: fixed;
   inset: 0;

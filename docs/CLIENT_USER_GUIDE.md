@@ -83,7 +83,7 @@ Clients use the **same email and password** on the **mobile app** and the **web 
 |---|---|
 | **Owner** | Everything: dashboard, POS, clinic tools, inventory, HR, settings, chat |
 | **Admin** | Same elevated access as Owner |
-| **Receptionist** | POS, sales, appointments, customers, services, loyalty, QR check-in, expenses, consultations, chat (**no full inventory / HR**) |
+| **Receptionist** | POS, sales, appointments, customers, services, loyalty, QR check-in, expenses, chat (**no full inventory / HR**) |
 | **HR** | Staff & attendance, create accounts, payroll, incentives |
 | **Inventory** | Stock catalog, stocktake, receiving, reorder |
 | **Client** | Portal + mobile only — cannot open clinic admin pages |
@@ -142,17 +142,12 @@ Sign in at your clinic URL with a staff email and password. The left menu shows 
 - Link memberships (Regular / VIP / VVIP where configured)  
 - Keep emails accurate so portal/mobile accounts can match  
 
-### 4.7 AI Consultations
-
-- Capture before / after documentation  
-- Store consultation media and AI-assisted summaries for care planning  
-
-### 4.8 Services
+### 4.7 Services
 
 - Maintain the service menu (name, category, price, duration, points)  
 - Activate / deactivate services shown in POS and booking  
 
-### 4.9 Loyalty & Points (Cash-in)
+### 4.8 Loyalty & Points (Cash-in)
 
 **Purpose:** Manage loyalty points and the client **cash-in wallet**.
 
@@ -165,11 +160,11 @@ Sign in at your clinic URL with a staff email and password. The left menu shows 
 
 **Tip:** Match cash-in requests from **Chat Support** (receipt photos) before topping up.
 
-### 4.10 QR Check-in
+### 4.9 QR Check-in
 
 - Generate / scan check-in flows for visits (as configured for your clinic)  
 
-### 4.11 Inventory *(Owner / Admin / Inventory)*
+### 4.10 Inventory *(Owner / Admin / Inventory)*
 
 | Page | Use |
 |---|---|
@@ -179,15 +174,15 @@ Sign in at your clinic URL with a staff email and password. The left menu shows 
 | **Receiving** | Incoming stock / deliveries |
 | **Reorder** | Reorder suggestions and requests |
 
-### 4.12 Expenses
+### 4.11 Expenses
 
 - Log clinic expenses for reporting  
 
-### 4.13 My Work *(Receptionist)*
+### 4.12 My Work *(Receptionist)*
 
 - Personal duty / attendance shortcuts for front-desk users  
 
-### 4.14 Chat Support *(Owner / Admin / Receptionist)*
+### 4.13 Chat Support *(Owner / Admin / Receptionist)*
 
 **Purpose:** Central inbox for client messages and cash-in requests (including mobile).
 
@@ -204,7 +199,7 @@ Sign in at your clinic URL with a staff email and password. The left menu shows 
 6. Reply in the composer — the client sees your reply in the **mobile Support chat** and web portal.  
 7. When finished, click **Close chat**. The client can still **read** history but **cannot send** until you **Reopen** or they start a **new** conversation.
 
-### 4.15 HR *(Owner / Admin / HR)*
+### 4.14 HR *(Owner / Admin / HR)*
 
 | Page | Use |
 |---|---|
@@ -213,12 +208,12 @@ Sign in at your clinic URL with a staff email and password. The left menu shows 
 | **Payroll** | Pay drafts and entries |
 | **Incentives** | Incentive rules and payouts |
 
-### 4.16 Account settings *(all clinic roles)*
+### 4.15 Account settings *(all clinic roles)*
 
 - Update your own profile preferences  
 - Separate from clinic-wide **Clinic settings**  
 
-### 4.17 Feedback & Clinic settings *(Owner / Admin)*
+### 4.16 Feedback & Clinic settings *(Owner / Admin)*
 
 - **Feedback:** review client feedback  
 - **Clinic settings:** brand, support email, branches, loyalty defaults, store readiness  

@@ -9,7 +9,6 @@ Clinic POS and operations dashboard for **Illuminate Medical Aesthetics** — Re
 - Sales proof / receipts
 - Appointment calendar + walk-ins
 - Customers, services, inventory, expenses
-- AI consultations (before / after)
 - Staff time in/out and leaves
 - Loyalty & points management
 - QR check-in

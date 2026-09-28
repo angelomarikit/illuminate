@@ -14,7 +14,7 @@ import {
 } from '../lib/membership'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, isUuid, receiptNumber } from '../lib/utils'
-import type { Customer, ServiceCategory, ServiceItem } from '../types'
+import type { Customer, ServiceCategory, ServiceItem, ServiceSeries, ServiceSeriesItem } from '../types'
 import './pos.css'
 
 type CartLine = {
@@ -55,6 +55,7 @@ export function POS() {
   const [category, setCategory] = useState<string>('All')
   const [cart, setCart] = useState<CartLine[]>([])
   const [services, setServices] = useState<ServiceItem[]>([])
+  const [seriesList, setSeriesList] = useState<ServiceSeries[]>([])
   const [catalogCategories, setCatalogCategories] = useState<string[]>(FALLBACK_CATEGORIES)
   const [customers, setCustomers] = useState<Customer[]>([])
   const [profiles, setProfiles] = useState<ProfileOption[]>([])
@@ -81,7 +82,7 @@ export function POS() {
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const [svcRes, cusRes, profRes, catsRes] = await Promise.all([
+    const [svcRes, cusRes, profRes, catsRes, seriesRes] = await Promise.all([
       supabase.from('services').select('*').eq('active', true).order('name'),
       supabase.from('customers').select('*').order('full_name'),
       supabase
@@ -92,6 +93,14 @@ export function POS() {
       supabase
         .from('service_categories')
         .select('name')
+        .eq('active', true)
+        .order('sort_order')
+        .order('name'),
+      supabase
+        .from('service_series')
+        .select(
+          'id, name, description, special_package, active, service_series_items(id, category, service_id, price_per_session, sessions, sort_order, services(name))',
+        )
         .eq('active', true)
         .order('sort_order')
         .order('name'),
@@ -153,6 +162,49 @@ export function POS() {
     setProfiles((prof as ProfileOption[] | null) ?? [])
     setCustomerId((current) => current || mappedCustomers[0]?.id || '')
     setSalesBy((current) => current || user?.name || '')
+
+    if (!seriesRes.error && seriesRes.data) {
+      setSeriesList(
+        seriesRes.data.map((row) => {
+          const rawItems = (row.service_series_items as
+            | Array<{
+                id: string
+                category: string
+                service_id: string | null
+                price_per_session: number | string
+                sessions: number
+                sort_order: number
+                services: { name: string } | null
+              }>
+            | null) ?? []
+          return {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            specialPackage:
+              row.special_package === null || row.special_package === undefined
+                ? null
+                : Number(row.special_package),
+            active: row.active,
+            items: rawItems
+              .slice()
+              .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+              .map((item) => ({
+                id: item.id,
+                seriesId: row.id,
+                category: item.category,
+                serviceId: item.service_id,
+                serviceName: item.services?.name ?? null,
+                pricePerSession: Number(item.price_per_session ?? 0),
+                sessions: Number(item.sessions ?? 1),
+                sortOrder: item.sort_order,
+              })),
+          }
+        }),
+      )
+    } else {
+      setSeriesList([])
+    }
   }, [branchId, user?.name])
 
   const categories = useMemo(() => ['All', ...catalogCategories], [catalogCategories])
@@ -164,6 +216,20 @@ export function POS() {
   const filtered = useMemo(
     () => services.filter((s) => category === 'All' || s.category === category),
     [services, category],
+  )
+
+  const filteredSeries = useMemo(
+    () =>
+      seriesList
+        .map((plan) => ({
+          ...plan,
+          items:
+            category === 'All'
+              ? plan.items
+              : plan.items.filter((line) => line.category === category),
+        }))
+        .filter((plan) => plan.items.length > 0),
+    [seriesList, category],
   )
 
   const customer = customers.find((c) => c.id === customerId)
@@ -201,6 +267,43 @@ export function POS() {
       ]
     })
     setOpenSection('items')
+  }
+
+  function addSeriesItemToCart(plan: ServiceSeries, line: ServiceSeriesItem) {
+    const base =
+      (line.serviceId && services.find((s) => s.id === line.serviceId)) ||
+      ({
+        id: line.serviceId || `series-item-${line.id}`,
+        name: line.serviceName || line.category,
+        category: line.category,
+        price: line.pricePerSession,
+        durationMin: 0,
+        pointsEarn: 0,
+        pointsCost: 0,
+        active: true,
+        description: plan.description ?? '',
+      } as ServiceItem)
+
+    const packageAmount = line.pricePerSession * line.sessions
+    const cartItem: ServiceItem = {
+      ...base,
+      name: `${plan.name} · ${line.category} (${base.name})`,
+      price: line.pricePerSession,
+    }
+
+    setCart((prev) => [
+      ...prev,
+      {
+        item: cartItem,
+        qty: 1,
+        sessionsAdvised: line.sessions,
+        packageAmount: String(packageAmount),
+        nextSessionDate: '',
+      },
+    ])
+    setSessionOpenIds((prev) => ({ ...prev, [cartItem.id]: true }))
+    setOpenSection('items')
+    setMessage(`Added “${plan.name} / ${line.category}” to order.`)
   }
 
   function openCustomService(mode: 'manual' | 'catalog' = 'manual') {
@@ -648,6 +751,44 @@ export function POS() {
                 </button>
               ))}
             </div>
+
+            {filteredSeries.length > 0 ? (
+              <div className="pos-series-block">
+                <p className="pos-series-label">Series plans</p>
+                <div className="pos-grid">
+                  {filteredSeries.flatMap((plan) =>
+                    plan.items.map((line) => {
+                      const total = line.pricePerSession * line.sessions
+                      return (
+                        <button
+                          key={line.id}
+                          type="button"
+                          className="pos-card pos-card-series"
+                          onClick={() => {
+                            addSeriesItemToCart(plan, line)
+                            if (
+                              typeof window !== 'undefined' &&
+                              window.matchMedia('(max-width: 900px)').matches
+                            ) {
+                              setMobilePane('order')
+                            }
+                          }}
+                        >
+                          <div className="pos-card-cat">
+                            Series · {plan.name}
+                          </div>
+                          <div className="pos-card-name">{line.category}</div>
+                          <div className="pos-card-meta">
+                            {line.serviceName || 'Service'} · {line.sessions} sessions
+                          </div>
+                          <div className="pos-card-price">{formatCurrency(total)}</div>
+                        </button>
+                      )
+                    }),
+                  )}
+                </div>
+              </div>
+            ) : null}
 
             <div className="pos-grid">
               <button

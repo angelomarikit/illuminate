@@ -23,6 +23,28 @@ export type ServiceItem = {
   membershipTier?: 'VIP' | 'VVIP' | null
 }
 
+/** One category+service line inside a series plan. */
+export type ServiceSeriesItem = {
+  id: string
+  seriesId: string
+  category: string
+  serviceId: string | null
+  serviceName?: string | null
+  pricePerSession: number
+  sessions: number
+  sortOrder?: number
+}
+
+/** Named plan made of multiple category+service lines. */
+export type ServiceSeries = {
+  id: string
+  name: string
+  description?: string | null
+  specialPackage: number | null
+  active: boolean
+  items: ServiceSeriesItem[]
+}
+
 export type InventoryItem = {
   id: string
   name: string
@@ -33,6 +55,34 @@ export type InventoryItem = {
   unit: string
   branchId: string
   expiry?: string
+}
+
+export type CustomerHistoryNote = {
+  id: string
+  text: string
+  created_at: string
+}
+
+export type CustomerMedicalConditions = {
+  hypertension?: boolean
+  kidney_disease?: boolean
+  skin_disease?: boolean
+  diabetes?: boolean
+  stroke?: boolean
+  previous_surgeries?: boolean
+  blood_disorders?: boolean
+  heart_disorders?: boolean
+  allergies?: boolean
+  liver_disease?: boolean
+  asthma?: boolean
+  others?: string
+}
+
+export type CustomerLifestyle = {
+  smoking?: boolean
+  alcohol?: boolean
+  beverages?: boolean
+  others?: string
 }
 
 export type Customer = {
@@ -53,6 +103,17 @@ export type Customer = {
   address?: string
   medicalHistory?: string
   notes?: string
+  occupation?: string | null
+  facebook?: string | null
+  instagram?: string | null
+  medicalConditions?: CustomerMedicalConditions | null
+  topicalMedications?: string | null
+  medicationsIntake?: string | null
+  lifestyle?: CustomerLifestyle | null
+  historyNotes?: CustomerHistoryNote[] | null
+  signaturePrimary?: string | null
+  signatureConfirm?: string | null
+  intakeCompletedAt?: string | null
 }
 
 export type AppointmentStatus =
@@ -112,18 +173,6 @@ export type Expense = {
   date: string
   branchId: string
   paidBy: string
-}
-
-export type Consultation = {
-  id: string
-  customerName: string
-  treatment: string
-  date: string
-  notes: string
-  beforeImage: string
-  afterImage: string
-  aiSummary: string
-  branchId: string
 }
 
 export type StaffMember = {

@@ -1,4 +1,8 @@
-/* Services catalog modals */
+.svc-panel-sub {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted, #6b6b6b);
+}
 
 .svc-modal-overlay {
   align-items: center;
@@ -143,6 +147,68 @@
 
 .svc-inline-link:hover {
   color: #0a0a0a;
+}
+
+.svc-field-hint {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--muted, #6b6b6b);
+  line-height: 1.35;
+}
+
+.svc-series-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.svc-series-lines li {
+  display: grid;
+  gap: 2px;
+}
+
+.svc-series-lines li span {
+  font-size: 0.8rem;
+  color: var(--muted, #6b6b6b);
+}
+
+.svc-series-item-list {
+  display: grid;
+  gap: 12px;
+}
+
+.svc-series-item {
+  padding: 12px;
+  border: 1px solid rgba(184, 149, 74, 0.28);
+  border-radius: 14px;
+  background: #fffdf8;
+}
+
+.svc-series-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a6d2f;
+}
+
+.svc-series-item-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+@media (max-width: 640px) {
+  .svc-series-item-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .svc-category-create {

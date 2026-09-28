@@ -106,7 +106,6 @@ npm run preview
 | POS + sales proof | `sales`, `sale_items` |
 | Expenses | `expenses` |
 | Staff time / leaves | `staff`, `attendance`, `leave_requests` |
-| AI consultations before/after | `consultations` + Storage |
 | Chat (phase 2) | Realtime + `messages` |
 
 ---
