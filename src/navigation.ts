@@ -35,6 +35,7 @@ export type NavItem = {
   path: string
   icon: LucideIcon
   roles: AppRole[]
+  children?: NavItem[]
 }
 
 export type NavSection = {
@@ -43,41 +44,55 @@ export type NavSection = {
 }
 
 const INV: AppRole[] = ['Owner', 'Admin', 'Inventory']
+const CLINIC: AppRole[] = ['Owner', 'Admin', 'Receptionist']
 
 export const navSections: NavSection[] = [
   {
     title: 'Main',
     items: [
       { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Owner', 'Admin'] },
-      { label: 'POS / Sales', path: '/pos', icon: ShoppingBag, roles: ['Owner', 'Admin', 'Receptionist'] },
-      { label: 'Sales Proof', path: '/sales', icon: Receipt, roles: ['Owner', 'Admin', 'Receptionist'] },
-      {
-        label: 'Client Sessions',
-        path: '/sessions',
-        icon: CalendarCheck2,
-        roles: ['Owner', 'Admin', 'Receptionist'],
-      },
+      { label: 'POS / Sales', path: '/pos', icon: ShoppingBag, roles: CLINIC },
+      { label: 'Sales Proof', path: '/sales', icon: Receipt, roles: CLINIC },
       {
         label: 'Appointments',
         path: '/appointments',
         icon: CalendarDays,
-        roles: ['Owner', 'Admin', 'Receptionist'],
+        roles: CLINIC,
       },
     ],
   },
   {
     title: 'Clinic',
     items: [
-      { label: 'Customers', path: '/customers', icon: Users, roles: ['Owner', 'Admin', 'Receptionist'] },
       {
-        label: 'Register Clients',
-        path: '/register-clients',
-        icon: UserPlus,
-        roles: ['Owner', 'Admin', 'Receptionist'],
+        label: 'Clients',
+        path: '/clients',
+        icon: Users,
+        roles: CLINIC,
+        children: [
+          {
+            label: 'Register clients',
+            path: '/register-clients',
+            icon: UserPlus,
+            roles: CLINIC,
+          },
+          {
+            label: 'Clients list',
+            path: '/clients',
+            icon: Users,
+            roles: CLINIC,
+          },
+          {
+            label: 'Client sessions',
+            path: '/sessions',
+            icon: CalendarCheck2,
+            roles: CLINIC,
+          },
+        ],
       },
-      { label: 'Services and Series', path: '/services', icon: ClipboardList, roles: ['Owner', 'Admin', 'Receptionist'] },
-      { label: 'Loyalty & Points', path: '/loyalty', icon: Gift, roles: ['Owner', 'Admin', 'Receptionist'] },
-      { label: 'QR Check-in', path: '/qr-checkin', icon: QrCode, roles: ['Owner', 'Admin', 'Receptionist'] },
+      { label: 'Services and Series', path: '/services', icon: ClipboardList, roles: CLINIC },
+      { label: 'Loyalty & Points', path: '/loyalty', icon: Gift, roles: CLINIC },
+      { label: 'QR Check-in', path: '/qr-checkin', icon: QrCode, roles: CLINIC },
     ],
   },
   {
@@ -99,14 +114,14 @@ export const navSections: NavSection[] = [
   {
     title: 'Operations',
     items: [
-      { label: 'Expenses', path: '/expenses', icon: Wallet, roles: ['Owner', 'Admin', 'Receptionist'] },
+      { label: 'Expenses', path: '/expenses', icon: Wallet, roles: CLINIC },
       {
         label: 'My Work',
         path: '/my-work',
         icon: Clock3,
         roles: ['Receptionist'],
       },
-      { label: 'Chat Support', path: '/chat', icon: MessageSquare, roles: ['Owner', 'Admin', 'Receptionist'] },
+      { label: 'Chat Support', path: '/chat', icon: MessageSquare, roles: CLINIC },
     ],
   },
   {
@@ -181,14 +196,32 @@ export const navSections: NavSection[] = [
   },
 ]
 
+function isNavItemVisible(item: NavItem, appRole: AppRole): boolean {
+  if (!item.roles.includes(appRole)) return false
+  if (item.children?.length) {
+    return item.children.some(
+      (child) => child.roles.includes(appRole) && canAccessPath(appRole, child.path),
+    )
+  }
+  return canAccessPath(appRole, item.path)
+}
+
 export function navForRole(role: string | null | undefined): NavSection[] {
   const appRole = normalizeRole(role)
   return navSections
     .map((section) => ({
       ...section,
-      items: section.items.filter(
-        (item) => item.roles.includes(appRole) && canAccessPath(appRole, item.path),
-      ),
+      items: section.items
+        .map((item) => {
+          if (!item.children?.length) return item
+          return {
+            ...item,
+            children: item.children.filter(
+              (child) => child.roles.includes(appRole) && canAccessPath(appRole, child.path),
+            ),
+          }
+        })
+        .filter((item) => isNavItemVisible(item, appRole)),
     }))
     .filter((section) => section.items.length > 0)
 }

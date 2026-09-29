@@ -1,13 +1,16 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { CareNotesPanel } from '../components/CareNotesPanel'
+import { CalendarDays, RefreshCw } from 'lucide-react'
+import { ClientsSubnav } from '../components/ClientsSubnav'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
+import { SessionScheduleModal } from '../components/SessionScheduleModal'
 import { StatusMessage } from '../components/StatusMessage'
 import { useBranch } from '../context/BranchContext'
 import { normalizeMembership } from '../lib/membership'
-import { formatCurrency, isUuid } from '../lib/utils'
+import { isUuid } from '../lib/utils'
 import { supabase } from '../lib/supabase'
+import './Sessions.css'
 
 type SessionPackage = {
   id: string
@@ -35,6 +38,24 @@ type CustomerMembership = {
   membershipExpiresAt: string | null
 }
 
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+}
+
+function formatDisplayDate(value: string | null | undefined) {
+  if (!value) return null
+  const d = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleDateString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 export function Sessions() {
   const { branchId } = useBranch()
   const location = useLocation()
@@ -47,7 +68,7 @@ export function Sessions() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   useEffect(() => {
     const state = location.state as { availed?: string; receipt?: string } | null
@@ -117,7 +138,7 @@ export function Sessions() {
   }, [branchId])
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
 
   const filtered = useMemo(() => {
@@ -126,54 +147,19 @@ export function Sessions() {
     return rows.filter((r) => r.status === 'active')
   }, [rows, filter])
 
-  async function useSession(pkg: SessionPackage) {
-    if (pkg.status !== 'active') return
-    const left = pkg.total_sessions - pkg.sessions_used
-    if (left <= 0) return
+  const selected = useMemo(
+    () => rows.find((r) => r.id === selectedId) ?? null,
+    [rows, selectedId],
+  )
 
-    setSavingId(pkg.id)
-    setError('')
-    const nextUsed = pkg.sessions_used + 1
-    const completed = nextUsed >= pkg.total_sessions
-    const { error: err } = await supabase
-      .from('client_session_packages')
-      .update({
-        sessions_used: nextUsed,
-        status: completed ? 'completed' : 'active',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', pkg.id)
-    setSavingId(null)
-    if (err) {
-      setError(err.message)
-      return
-    }
-    setMessage(
-      completed
-        ? `${pkg.customer_name} finished all sessions for ${pkg.service_name}.`
-        : `Session used for ${pkg.customer_name}. ${pkg.total_sessions - nextUsed} left.`,
-    )
-    await load()
-  }
-
-  async function saveNextSession(pkg: SessionPackage, date: string) {
-    setSavingId(pkg.id)
-    setError('')
-    const { error: err } = await supabase
-      .from('client_session_packages')
-      .update({
-        next_session_date: date || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', pkg.id)
-    setSavingId(null)
-    if (err) {
-      setError(err.message)
-      return
-    }
-    setMessage('Next session date saved.')
-    await load()
-  }
+  const counts = useMemo(
+    () => ({
+      active: rows.filter((r) => r.status === 'active').length,
+      completed: rows.filter((r) => r.status === 'completed').length,
+      all: rows.length,
+    }),
+    [rows],
+  )
 
   async function saveDoctorNotes(pkg: SessionPackage, notes: string) {
     setSavingId(pkg.id)
@@ -192,213 +178,169 @@ export function Sessions() {
   }
 
   return (
-    <div>
+    <div className="cs-page">
       <PageHeader
-        kicker="Clinic"
-        title="Client Sessions"
-        subtitle="Track session packages, staff attribution, doctor notes, and remaining visits."
+        kicker="Clients"
+        title="Client sessions"
+        subtitle="Schedule each visit for a package and keep pending or finished status up to date."
         actions={
-          <button className="btn btn-ghost" type="button" onClick={() => load()}>
+          <button className="btn btn-ghost cs-refresh" type="button" onClick={() => void load()}>
+            <RefreshCw size={15} />
             Refresh
           </button>
         }
       />
 
+      <ClientsSubnav />
+
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
       {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
 
-      <div className="chips" style={{ marginBottom: 16 }}>
-        {(
-          [
-            ['active', 'Active'],
-            ['completed', 'Completed'],
-            ['all', 'All'],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            className={`chip ${filter === key ? 'active' : ''}`}
-            onClick={() => setFilter(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <section className="cs-board">
+        <div className="cs-board-head">
+          <div className="cs-board-intro">
+            <p className="cs-kicker">Packages</p>
+            <h2>
+              {filtered.length} package{filtered.length === 1 ? '' : 's'}
+            </h2>
+          </div>
 
-      <div className="panel">
-        <div className="panel-header">
-          <h2 className="panel-title">Session packages</h2>
+          <div className="cs-filters" role="tablist" aria-label="Filter packages">
+            {(
+              [
+                ['active', 'Active', counts.active],
+                ['completed', 'Completed', counts.completed],
+                ['all', 'All', counts.all],
+              ] as const
+            ).map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={filter === key}
+                className={`cs-filter ${filter === key ? 'is-active' : ''}`}
+                onClick={() => setFilter(key)}
+              >
+                <span>{label}</span>
+                <em>{count}</em>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="panel-body">
+
+        <div className="cs-board-body">
           {loading ? (
-            <div className="empty-state">Loading sessions…</div>
+            <div className="cs-empty">Loading sessions…</div>
           ) : filtered.length === 0 ? (
-            <div className="empty-state">
-              No session packages yet. Create them from POS or Avail service on a client intake
-              profile (set sessions and package amount).
+            <div className="cs-empty">
+              <CalendarDays size={22} aria-hidden />
+              <p>
+                No {filter === 'all' ? '' : `${filter} `}session packages yet. Create them from POS
+                or Avail service.
+              </p>
             </div>
           ) : (
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Client</th>
-                    <th>Service</th>
-                    <th>Sold on</th>
-                    <th>Next session</th>
-                    <th>Sessions left</th>
-                    <th>Sales by</th>
-                    <th>Status</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((pkg) => {
-                    const left = Math.max(0, pkg.total_sessions - pkg.sessions_used)
-                    const open = expandedId === pkg.id
-                    return (
-                      <Fragment key={pkg.id}>
-                        <tr>
-                          <td>
-                            <button
-                              type="button"
-                              className="btn-link"
-                              style={{
-                                background: 'none',
-                                border: 0,
-                                padding: 0,
-                                cursor: 'pointer',
-                                color: 'inherit',
-                                textAlign: 'left',
-                                font: 'inherit',
-                              }}
-                              onClick={() => setExpandedId(open ? null : pkg.id)}
-                            >
-                              <strong>{pkg.customer_name}</strong>
-                            </button>
-                            {pkg.customer_id && membershipByCustomer[pkg.customer_id] ? (
-                              <div style={{ marginTop: 4 }}>
-                                <MembershipBadge
-                                  membership={membershipByCustomer[pkg.customer_id].membership}
-                                  expiresAt={
-                                    membershipByCustomer[pkg.customer_id].membershipExpiresAt
-                                  }
-                                  showExpiry
-                                />
-                              </div>
-                            ) : null}
-                            {pkg.sale_receipt_no ? (
-                              <div className="muted" style={{ fontSize: '0.78rem' }}>
-                                {pkg.sale_receipt_no}
-                              </div>
-                            ) : null}
-                          </td>
-                          <td>{pkg.service_name}</td>
-                          <td>{pkg.sold_on}</td>
-                          <td>
-                            <input
-                              className="input"
-                              type="date"
-                              style={{ height: 34, minWidth: 140 }}
-                              value={pkg.next_session_date ?? ''}
-                              disabled={pkg.status !== 'active' || savingId === pkg.id}
-                              onChange={(e) => saveNextSession(pkg, e.target.value)}
+            <div className="cs-directory" role="list">
+              <div className="cs-directory-cols" aria-hidden>
+                <span>Client</span>
+                <span>Service</span>
+                <span>Progress</span>
+                <span>Next visit</span>
+                <span>Status</span>
+                <span />
+              </div>
+
+              {filtered.map((pkg) => {
+                const left = Math.max(0, pkg.total_sessions - pkg.sessions_used)
+                const progress =
+                  pkg.total_sessions > 0
+                    ? Math.min(100, Math.round((pkg.sessions_used / pkg.total_sessions) * 100))
+                    : 0
+                const membership = pkg.customer_id
+                  ? membershipByCustomer[pkg.customer_id]
+                  : undefined
+
+                return (
+                  <button
+                    key={pkg.id}
+                    type="button"
+                    role="listitem"
+                    className={`cs-row ${selectedId === pkg.id ? 'is-active' : ''}`}
+                    onClick={() => setSelectedId(pkg.id)}
+                  >
+                    <div className="cs-client">
+                      <span className="cs-avatar" aria-hidden>
+                        {initials(pkg.customer_name)}
+                      </span>
+                      <div className="cs-client-copy">
+                        <strong>{pkg.customer_name}</strong>
+                        <div className="cs-client-meta">
+                          {membership ? (
+                            <MembershipBadge
+                              membership={membership.membership}
+                              expiresAt={membership.membershipExpiresAt}
+                              showExpiry
                             />
-                          </td>
-                          <td>
-                            <strong>
-                              {left} / {pkg.total_sessions}
-                            </strong>
-                            <div className="muted" style={{ fontSize: '0.78rem' }}>
-                              Used {pkg.sessions_used}
-                            </div>
-                          </td>
-                          <td>{pkg.sales_by || '—'}</td>
-                          <td>
-                            <span
-                              className={`badge ${
-                                pkg.status === 'active'
-                                  ? 'badge-success'
-                                  : pkg.status === 'completed'
-                                    ? 'badge-neutral'
-                                    : 'badge-warning'
-                              }`}
-                            >
-                              {pkg.status}
-                            </span>
-                          </td>
-                          <td style={{ whiteSpace: 'nowrap' }}>
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              type="button"
-                              onClick={() => setExpandedId(open ? null : pkg.id)}
-                            >
-                              {open ? 'Hide' : 'Details'}
-                            </button>{' '}
-                            {pkg.status === 'active' && left > 0 ? (
-                              <button
-                                className="btn btn-primary btn-sm"
-                                type="button"
-                                disabled={savingId === pkg.id}
-                                onClick={() => useSession(pkg)}
-                              >
-                                {savingId === pkg.id ? 'Saving…' : 'Use 1 session'}
-                              </button>
-                            ) : null}
-                          </td>
-                        </tr>
-                        {open ? (
-                          <tr>
-                            <td colSpan={8}>
-                              <div
-                                style={{
-                                  display: 'grid',
-                                  gap: 14,
-                                  padding: '8px 4px 12px',
-                                  gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.2fr)',
-                                }}
-                              >
-                                <div style={{ display: 'grid', gap: 8, fontSize: '0.92rem' }}>
-                                  <div>
-                                    <strong>Package amount:</strong>{' '}
-                                    {formatCurrency(pkg.package_amount)}
-                                  </div>
-                                  <div>
-                                    <strong>Discount:</strong>{' '}
-                                    {formatCurrency(pkg.discount_amount || 0)}
-                                  </div>
-                                  <div>
-                                    <strong>Administered by:</strong> {pkg.administered_by || '—'}
-                                  </div>
-                                  <div>
-                                    <strong>Consult by:</strong> {pkg.consult_by || '—'}
-                                  </div>
-                                  <div>
-                                    <strong>Sales by:</strong> {pkg.sales_by || '—'}
-                                  </div>
-                                </div>
-                                <CareNotesPanel
-                                  customerId={pkg.customer_id}
-                                  sessionPackageId={pkg.id}
-                                  doctorNotes={pkg.doctor_notes ?? ''}
-                                  savingNotes={savingId === pkg.id}
-                                  compact
-                                  onSaveDoctorNotes={(notes) => saveDoctorNotes(pkg, notes)}
-                                />
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    )
-                  })}
-                </tbody>
-              </table>
+                          ) : null}
+                          {pkg.sale_receipt_no ? <span>{pkg.sale_receipt_no}</span> : null}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="cs-service">
+                      <strong>{pkg.service_name}</strong>
+                      <span>
+                        Sold {formatDisplayDate(pkg.sold_on) || pkg.sold_on}
+                        {pkg.sales_by ? ` · ${pkg.sales_by}` : ''}
+                      </span>
+                    </div>
+
+                    <div className="cs-progress">
+                      <div className="cs-progress-top">
+                        <strong>
+                          {left}/{pkg.total_sessions}
+                        </strong>
+                        <span>{pkg.sessions_used} used</span>
+                      </div>
+                      <div className="cs-progress-track" aria-hidden>
+                        <span style={{ width: `${progress}%` }} />
+                      </div>
+                    </div>
+
+                    <div className="cs-next">
+                      <strong>{formatDisplayDate(pkg.next_session_date) || 'Not set'}</strong>
+                      <span>{pkg.next_session_date ? 'Next session' : 'Schedule to plan visits'}</span>
+                    </div>
+
+                    <div className="cs-status">
+                      <span className={`cs-status-pill is-${pkg.status}`}>{pkg.status}</span>
+                    </div>
+
+                    <span className="cs-row-action">Schedule</span>
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
-      </div>
+      </section>
+
+      {selected ? (
+        <SessionScheduleModal
+          pkg={selected}
+          membership={
+            selected.customer_id ? membershipByCustomer[selected.customer_id] ?? null : null
+          }
+          open={Boolean(selected)}
+          onClose={() => setSelectedId(null)}
+          onSaved={(msg) => {
+            setMessage(msg)
+            void load()
+          }}
+          savingNotes={savingId === selected.id}
+          onSaveDoctorNotes={(notes) => saveDoctorNotes(selected, notes)}
+        />
+      ) : null}
     </div>
   )
 }

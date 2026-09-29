@@ -442,16 +442,12 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
     <div
       className="confirm-modal-overlay avail-overlay"
       role="presentation"
-      onClick={() => {
-        if (!saving) onClose()
-      }}
     >
       <div
         className="confirm-modal avail-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="avail-service-title"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="avail-head">
           <div>

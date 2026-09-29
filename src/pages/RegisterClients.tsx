@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ClientsSubnav } from '../components/ClientsSubnav'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useBranch } from '../context/BranchContext'
@@ -314,16 +315,18 @@ export function RegisterClients() {
     }
 
     setMessage('Client registered successfully.')
-    navigate('/customers', { state: { registered: profile.name.trim() } })
+    navigate('/clients', { state: { registered: profile.name.trim() } })
   }
 
   return (
     <div className="rc-page">
       <PageHeader
-        kicker="Clinic"
-        title="Register Clients"
+        kicker="Clients"
+        title="Register clients"
         subtitle="Multi-step client intake with medical history, lifestyle checklist, and signatures."
       />
+
+      <ClientsSubnav />
 
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
       {message ? <StatusMessage type="success">{message}</StatusMessage> : null}

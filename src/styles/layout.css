@@ -81,6 +81,99 @@
   flex-shrink: 0;
 }
 
+.nav-group {
+  margin-bottom: 2px;
+}
+
+.nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-group-toggle:hover,
+.nav-group-toggle.is-open,
+.nav-group-toggle.is-active {
+  background: rgba(255, 255, 255, 0.08);
+  color: white;
+}
+
+.nav-group-toggle svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #b8954a;
+}
+
+.nav-group-toggle .nav-chevron {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+  color: rgba(255, 255, 255, 0.55);
+  transition: transform 0.15s ease;
+}
+
+.nav-group-toggle.is-open .nav-chevron {
+  transform: rotate(180deg);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.nav-group-children {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  margin: 2px 0 8px;
+  padding: 2px 0 2px 22px;
+}
+
+.nav-group-children::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.nav-link.nav-sublink {
+  position: relative;
+  padding: 9px 10px 9px 12px;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.nav-link.nav-sublink svg {
+  color: #b8954a;
+}
+
+.nav-link.nav-sublink:hover {
+  color: white;
+}
+
+.nav-link.nav-sublink.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  font-weight: 650;
+}
+
+.nav-link.nav-sublink.active svg {
+  color: #d4b36a;
+}
+
 .sidebar-footer {
   margin-top: auto;
   padding: 14px 10px 6px;

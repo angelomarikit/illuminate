@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { FileText, Pencil, Search, Trash2, Upload, X } from 'lucide-react'
+import { Pencil, Search, Trash2, X } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
-import { CareNotesPanel } from '../components/CareNotesPanel'
 import { AvailServiceModal } from '../components/AvailServiceModal'
+import { ClientsSubnav } from '../components/ClientsSubnav'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
@@ -65,6 +65,21 @@ function displayOrNA(value: unknown): string {
   return String(value)
 }
 
+function IntakeFact({ label, value, full }: { label: string; value: string; full?: boolean }) {
+  const empty = value === 'N/A'
+  return (
+    <div className={full ? 'crm-intake-full' : undefined}>
+      <span>{label}</span>
+      <strong className={empty ? 'is-empty' : undefined}>{value}</strong>
+    </div>
+  )
+}
+
+function IntakeText({ value }: { value: unknown }) {
+  const text = displayOrNA(value)
+  return <p className={`crm-intake-block${text === 'N/A' ? ' is-empty' : ''}`}>{text}</p>
+}
+
 const MEDICAL_LABELS: { key: keyof CustomerMedicalConditions; label: string }[] = [
   { key: 'hypertension', label: 'Hypertension' },
   { key: 'kidney_disease', label: 'Kidney disease' },
@@ -109,45 +124,6 @@ function formatBirthday(value: string | null | undefined) {
     day: 'numeric',
     year: 'numeric',
   })
-}
-
-type VisitRow = {
-  id: string
-  appointment_date: string
-  appointment_time: string
-  service_name: string
-  status: string
-  source: string | null
-  special_note: string | null
-  medical_history: string | null
-}
-
-type SessionPkgRow = {
-  id: string
-  service_name: string
-  total_sessions: number
-  sessions_used: number
-  package_amount: number
-  discount_amount: number
-  sold_on: string
-  next_session_date: string | null
-  doctor_notes: string | null
-  administered_by: string | null
-  consult_by: string | null
-  sales_by: string | null
-  status: string
-  sale_receipt_no: string | null
-}
-
-type ConsentFormRow = {
-  id: string
-  customer_id: string
-  file_name: string
-  file_url: string
-  storage_path: string
-  note: string | null
-  uploaded_by_name: string | null
-  created_at: string
 }
 
 function mapCustomer(row: CustomerRow): Customer {
@@ -202,6 +178,7 @@ export function Customers() {
   const location = useLocation()
   const canManageConsent = isClinicRole(user?.role)
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
   const [rows, setRows] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -215,16 +192,6 @@ export function Customers() {
   const [availOpen, setAvailOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [visits, setVisits] = useState<VisitRow[]>([])
-  const [visitsLoading, setVisitsLoading] = useState(false)
-  const [packages, setPackages] = useState<SessionPkgRow[]>([])
-  const [packagesLoading, setPackagesLoading] = useState(false)
-  const [activePkgId, setActivePkgId] = useState<string | null>(null)
-  const [savingNotes, setSavingNotes] = useState(false)
-  const [consentForms, setConsentForms] = useState<ConsentFormRow[]>([])
-  const [consentLoading, setConsentLoading] = useState(false)
-  const [consentUploading, setConsentUploading] = useState(false)
-  const [consentNote, setConsentNote] = useState('')
 
   const selected = useMemo(
     () => rows.find((c) => c.id === selectedId) ?? null,
@@ -281,203 +248,6 @@ export function Customers() {
     loadCustomers()
   }, [loadCustomers])
 
-  useEffect(() => {
-    async function loadVisits() {
-      if (!selected) {
-        setVisits([])
-        return
-      }
-      setVisitsLoading(true)
-      let q = supabase
-        .from('appointments')
-        .select(
-          'id, appointment_date, appointment_time, service_name, status, source, special_note, medical_history',
-        )
-        .order('appointment_date', { ascending: false })
-        .order('appointment_time', { ascending: false })
-        .limit(20)
-
-      q = q.or(
-        [
-          `customer_id.eq.${selected.id}`,
-          selected.email ? `customer_email.ilike.${selected.email}` : null,
-          selected.phone ? `customer_phone.eq.${selected.phone}` : null,
-        ]
-          .filter(Boolean)
-          .join(','),
-      )
-
-      const { data, error: visitErr } = await q
-      if (visitErr) {
-        const { data: byName } = await supabase
-          .from('appointments')
-          .select(
-            'id, appointment_date, appointment_time, service_name, status, source, special_note, medical_history',
-          )
-          .eq('customer_name', selected.name)
-          .order('appointment_date', { ascending: false })
-          .limit(20)
-        setVisits((byName as VisitRow[] | null) ?? [])
-      } else {
-        setVisits((data as VisitRow[] | null) ?? [])
-      }
-      setVisitsLoading(false)
-    }
-    loadVisits()
-  }, [selected])
-
-  const loadPackages = useCallback(async (customerId: string) => {
-    setPackagesLoading(true)
-    const { data } = await supabase
-      .from('client_session_packages')
-      .select(
-        'id, service_name, total_sessions, sessions_used, package_amount, discount_amount, sold_on, next_session_date, doctor_notes, administered_by, consult_by, sales_by, status, sale_receipt_no',
-      )
-      .eq('customer_id', customerId)
-      .order('sold_on', { ascending: false })
-    const mapped =
-      ((data as SessionPkgRow[] | null) ?? []).map((row) => ({
-        ...row,
-        package_amount: Number(row.package_amount ?? 0),
-        discount_amount: Number(row.discount_amount ?? 0),
-        total_sessions: Number(row.total_sessions ?? 0),
-        sessions_used: Number(row.sessions_used ?? 0),
-      })) ?? []
-    setPackages(mapped)
-    setActivePkgId((current) => current && mapped.some((p) => p.id === current) ? current : mapped[0]?.id ?? null)
-    setPackagesLoading(false)
-  }, [])
-
-  useEffect(() => {
-    if (!selected) {
-      setPackages([])
-      setActivePkgId(null)
-      return
-    }
-    void loadPackages(selected.id)
-  }, [selected, loadPackages])
-
-  const loadConsentForms = useCallback(async (customerId: string) => {
-    setConsentLoading(true)
-    const { data, error: err } = await supabase
-      .from('customer_consent_forms')
-      .select('id, customer_id, file_name, file_url, storage_path, note, uploaded_by_name, created_at')
-      .eq('customer_id', customerId)
-      .order('created_at', { ascending: false })
-    if (err) {
-      setConsentForms([])
-      if (
-        err.message.includes('customer_consent_forms') ||
-        err.message.includes('schema cache')
-      ) {
-        setError(`${err.message} — run supabase/add_customer_consent_forms.sql in Supabase.`)
-      }
-    } else {
-      setConsentForms((data as ConsentFormRow[] | null) ?? [])
-    }
-    setConsentLoading(false)
-  }, [])
-
-  useEffect(() => {
-    if (!selected) {
-      setConsentForms([])
-      setConsentNote('')
-      return
-    }
-    void loadConsentForms(selected.id)
-  }, [selected, loadConsentForms])
-
-  async function uploadConsentForm(file: File | null) {
-    if (!selected || !canManageConsent || !file) return
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-      setError('Consent form must be a PDF file.')
-      return
-    }
-    setConsentUploading(true)
-    setError('')
-    setMessage('')
-    const safeName = file.name.replace(/[^\w.\-() ]+/g, '_').slice(0, 120)
-    const path = `${selected.id}/${Date.now()}-${safeName}`
-    const { error: uploadErr } = await supabase.storage
-      .from('customer-consent-forms')
-      .upload(path, file, {
-        cacheControl: '3600',
-        upsert: false,
-        contentType: 'application/pdf',
-      })
-    if (uploadErr) {
-      setConsentUploading(false)
-      setError(
-        uploadErr.message.includes('Bucket') || uploadErr.message.includes('not found')
-          ? `${uploadErr.message} — run supabase/add_customer_consent_forms.sql in Supabase.`
-          : uploadErr.message,
-      )
-      return
-    }
-    const { data: urlData } = supabase.storage.from('customer-consent-forms').getPublicUrl(path)
-    const { error: insertErr } = await supabase.from('customer_consent_forms').insert({
-      customer_id: selected.id,
-      file_name: file.name,
-      file_url: urlData.publicUrl,
-      storage_path: path,
-      note: consentNote.trim() || null,
-      uploaded_by: user?.id ?? null,
-      uploaded_by_name: user?.name ?? null,
-    })
-    setConsentUploading(false)
-    if (insertErr) {
-      setError(
-        insertErr.message.includes('customer_consent_forms') ||
-          insertErr.message.includes('schema cache')
-          ? `${insertErr.message} — run supabase/add_customer_consent_forms.sql in Supabase.`
-          : insertErr.message,
-      )
-      return
-    }
-    setConsentNote('')
-    setMessage(`Consent form “${file.name}” attached to ${selected.name}.`)
-    await loadConsentForms(selected.id)
-  }
-
-  async function deleteConsentForm(formRow: ConsentFormRow) {
-    if (!canManageConsent) return
-    const ok = window.confirm(`Remove consent form “${formRow.file_name}”?`)
-    if (!ok) return
-    setError('')
-    setMessage('')
-    await supabase.storage.from('customer-consent-forms').remove([formRow.storage_path])
-    const { error: delErr } = await supabase
-      .from('customer_consent_forms')
-      .delete()
-      .eq('id', formRow.id)
-    if (delErr) {
-      setError(delErr.message)
-      return
-    }
-    setMessage('Consent form removed.')
-    if (selected) await loadConsentForms(selected.id)
-  }
-
-  const activePkg = useMemo(
-    () => packages.find((p) => p.id === activePkgId) ?? null,
-    [packages, activePkgId],
-  )
-
-  async function saveDoctorNotes(notes: string) {
-    if (!activePkg) return
-    setSavingNotes(true)
-    const { error: err } = await supabase
-      .from('client_session_packages')
-      .update({
-        doctor_notes: notes.trim() || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', activePkg.id)
-    setSavingNotes(false)
-    if (err) throw new Error(err.message)
-    if (selected) await loadPackages(selected.id)
-  }
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return rows
@@ -488,6 +258,22 @@ export function Customers() {
         c.email.toLowerCase().includes(q),
     )
   }, [rows, query])
+
+  const PAGE_SIZE = 10
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE
+    return filtered.slice(start, start + PAGE_SIZE)
+  }, [filtered, currentPage])
+
+  useEffect(() => {
+    setPage(1)
+  }, [query, branchId])
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
 
   function openCreate() {
     setError('')
@@ -668,8 +454,8 @@ export function Customers() {
   return (
     <div className="crm-page">
       <PageHeader
-        kicker="CRM"
-        title="Client Management"
+        kicker="Clients"
+        title="Clients list"
         subtitle="Clean client profiles with membership, wallet, sessions, and consent forms."
         actions={
           <button
@@ -682,6 +468,7 @@ export function Customers() {
         }
       />
 
+      <ClientsSubnav />
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
       {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
 
@@ -837,24 +624,27 @@ export function Customers() {
         </section>
       ) : null}
 
-      <div className={`crm-shell ${selected ? 'has-detail' : ''}`}>
+      <div className="crm-shell">
         <section className="crm-list">
           <div className="crm-list-head">
-            <label className="crm-search">
-              <Search size={18} strokeWidth={2} aria-hidden />
-              <input
-                type="search"
-                placeholder="Search name, phone, or email"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </label>
-            <div className="crm-list-count">
+            <div className="crm-list-intro">
               <p className="crm-kicker">Directory</p>
               <h2>
                 {filtered.length} client{filtered.length === 1 ? '' : 's'}
               </h2>
             </div>
+            <label className="crm-search">
+              <Search size={17} strokeWidth={2} aria-hidden />
+              <input
+                type="search"
+                placeholder="Search by name, phone, or email"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setPage(1)
+                }}
+              />
+            </label>
           </div>
 
           <div className="crm-list-body">
@@ -866,378 +656,115 @@ export function Customers() {
                 <strong>Add Client</strong>.
               </div>
             ) : (
-              <div className="crm-table-wrap">
-                <table className="crm-table">
-                  <thead>
-                    <tr>
-                      <th>Client</th>
-                      <th>Contact</th>
-                      <th>Membership</th>
-                      <th>Wallet</th>
-                      <th>Visits</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((client) => (
-                      <tr
-                        key={client.id}
-                        className={selectedId === client.id ? 'is-active' : ''}
-                        onClick={() => {
-                          setSelectedId(client.id)
-                          setProfileModalOpen(true)
-                          setConfirmDelete(false)
-                        }}
-                      >
-                        <td>
-                          <div className="crm-person">
-                            <span className="crm-avatar" aria-hidden>
-                              {initials(client.name)}
-                            </span>
-                            <div className="crm-person-copy">
-                              <strong className="crm-person-name">{client.name}</strong>
-                              <span className="crm-person-meta">
-                                {[
-                                  client.sex || null,
-                                  client.age ? `${client.age}y` : null,
-                                  client.birthday ? formatBirthday(client.birthday) : null,
-                                ]
-                                  .filter(Boolean)
-                                  .join(' · ') || 'No profile details'}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="crm-contact">
-                            <strong>{client.phone || '—'}</strong>
-                            <span>{client.email || '—'}</span>
-                          </div>
-                        </td>
-                        <td>
-                          <MembershipBadge
-                            membership={client.membership}
-                            expiresAt={client.membershipExpiresAt}
-                            showExpiry
-                          />
-                        </td>
-                        <td>
-                          <div className="crm-contact">
-                            <strong>{formatCurrency(client.cashInBalance)}</strong>
-                            <span>{client.points} pts</span>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="crm-contact">
-                            <strong>{client.visits}</strong>
-                            <span>{client.lastVisit}</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {selected ? (
-          <aside className="crm-detail">
-            <div className="crm-detail-hero">
-              <span className="crm-avatar crm-avatar-lg" aria-hidden>
-                {initials(selected.name)}
-              </span>
-              <div className="crm-detail-hero-copy">
-                <p className="crm-kicker">Client profile</p>
-                <h2>{selected.name}</h2>
-                <MembershipBadge
-                  membership={selected.membership}
-                  expiresAt={selected.membershipExpiresAt}
-                  showExpiry
-                />
-              </div>
-              <div className="crm-detail-actions">
-                <button
-                  className="btn btn-ghost"
-                  type="button"
-                  onClick={() => setProfileModalOpen(true)}
-                >
-                  Intake profile
-                </button>
-                {canManageConsent ? (
-                  <>
-                    <button className="btn btn-ghost" type="button" onClick={() => openEdit(selected)}>
-                      <Pencil size={15} />
-                      Edit
-                    </button>
-                    <button
-                      className="btn btn-ghost"
-                      type="button"
-                      onClick={() => {
-                        setConfirmDelete(true)
-                        setError('')
-                        setMessage('')
-                      }}
-                    >
-                      <Trash2 size={15} />
-                      Delete
-                    </button>
-                  </>
-                ) : null}
-                <button
-                  className="btn-icon crm-detail-close"
-                  type="button"
-                  aria-label="Close details"
-                  onClick={() => {
-                    setConfirmDelete(false)
-                    setProfileModalOpen(false)
-                    setSelectedId(null)
-                  }}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-
-            <div className="crm-stat-row">
-              <div className="crm-stat">
-                <span>Points</span>
-                <strong>{selected.points}</strong>
-              </div>
-              <div className="crm-stat">
-                <span>Wallet</span>
-                <strong>{formatCurrency(selected.cashInBalance)}</strong>
-              </div>
-              <div className="crm-stat">
-                <span>Visits</span>
-                <strong>{selected.visits}</strong>
-              </div>
-            </div>
-
-            <div className="crm-detail-scroll">
-              <section className="crm-section">
-                <h3>Profile</h3>
-                <div className="crm-facts">
-                  <div>
-                    <span>Email</span>
-                    <strong>{selected.email || '—'}</strong>
-                  </div>
-                  <div>
-                    <span>Phone</span>
-                    <strong>{selected.phone || '—'}</strong>
-                  </div>
-                  <div>
-                    <span>Birthday</span>
-                    <strong>{formatBirthday(selected.birthday)}</strong>
-                  </div>
-                  <div>
-                    <span>Age / Sex</span>
-                    <strong>
-                      {[selected.age ? `${selected.age}` : null, selected.sex || null]
-                        .filter(Boolean)
-                        .join(' · ') || '—'}
-                    </strong>
-                  </div>
-                  <div className="crm-fact-full">
-                    <span>Address</span>
-                    <strong>{selected.address || '—'}</strong>
-                  </div>
-                  <div className="crm-fact-full">
-                    <span>Medical history</span>
-                    <strong>{selected.medicalHistory || '—'}</strong>
-                  </div>
-                  <div className="crm-fact-full">
-                    <span>Notes / goals</span>
-                    <strong>{selected.notes || '—'}</strong>
-                  </div>
+              <div className="crm-directory" role="list">
+                <div className="crm-directory-cols" aria-hidden>
+                  <span>Client</span>
+                  <span>Contact</span>
+                  <span>Membership</span>
+                  <span>Wallet</span>
+                  <span>Visits</span>
+                  <span />
                 </div>
-              </section>
-
-              <section className="crm-section">
-                <h3>Treatment sessions</h3>
-                {packagesLoading ? (
-                  <p className="crm-muted">Loading sessions…</p>
-                ) : packages.length === 0 ? (
-                  <p className="crm-muted">
-                    No session packages yet. Create them from POS or Avail service.
-                  </p>
-                ) : (
-                  <div className="crm-stack">
-                    <select
-                      className="select"
-                      value={activePkgId ?? ''}
-                      onChange={(e) => setActivePkgId(e.target.value)}
-                    >
-                      {packages.map((p) => {
-                        const left = Math.max(0, p.total_sessions - p.sessions_used)
-                        return (
-                          <option key={p.id} value={p.id}>
-                            {p.service_name} · {left} left · {p.sold_on}
-                          </option>
-                        )
-                      })}
-                    </select>
-                    {activePkg ? (
-                      <div className="crm-session-card">
-                        <div className="crm-facts">
-                          <div>
-                            <span>Sessions left</span>
-                            <strong>
-                              {Math.max(0, activePkg.total_sessions - activePkg.sessions_used)} /{' '}
-                              {activePkg.total_sessions}
-                            </strong>
-                          </div>
-                          <div>
-                            <span>Next session</span>
-                            <strong>{activePkg.next_session_date || '—'}</strong>
-                          </div>
-                          <div>
-                            <span>Package</span>
-                            <strong>
-                              {formatCurrency(activePkg.package_amount)}
-                              {activePkg.discount_amount
-                                ? ` (−${formatCurrency(activePkg.discount_amount)})`
-                                : ''}
-                            </strong>
-                          </div>
-                          <div>
-                            <span>Sales by</span>
-                            <strong>{activePkg.sales_by || '—'}</strong>
-                          </div>
-                          <div>
-                            <span>Administered by</span>
-                            <strong>{activePkg.administered_by || '—'}</strong>
-                          </div>
-                          <div>
-                            <span>Consult by</span>
-                            <strong>{activePkg.consult_by || '—'}</strong>
-                          </div>
-                        </div>
-                        <p className="crm-session-meta">
-                          {activePkg.status}
-                          {activePkg.sale_receipt_no ? ` · ${activePkg.sale_receipt_no}` : ''}
-                        </p>
+                {paged.map((client) => (
+                  <button
+                    key={client.id}
+                    type="button"
+                    role="listitem"
+                    className={`crm-client-row ${selectedId === client.id ? 'is-active' : ''}`}
+                    onClick={() => {
+                      setSelectedId(client.id)
+                      setProfileModalOpen(true)
+                      setConfirmDelete(false)
+                    }}
+                  >
+                    <div className="crm-person">
+                      <span className="crm-avatar" aria-hidden>
+                        {initials(client.name)}
+                      </span>
+                      <div className="crm-person-copy">
+                        <strong className="crm-person-name">{client.name}</strong>
+                        <span className="crm-person-meta">
+                          {[
+                            client.sex || null,
+                            client.age ? `${client.age}y` : null,
+                            client.birthday ? formatBirthday(client.birthday) : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || 'Profile incomplete'}
+                        </span>
                       </div>
-                    ) : null}
-                    {activePkg ? (
-                      <CareNotesPanel
-                        customerId={selected.id}
-                        sessionPackageId={activePkg.id}
-                        doctorNotes={activePkg.doctor_notes ?? ''}
-                        savingNotes={savingNotes}
-                        compact
-                        onSaveDoctorNotes={saveDoctorNotes}
-                      />
-                    ) : null}
-                  </div>
-                )}
-              </section>
+                    </div>
 
-              <section className="crm-section">
-                <h3>Consent forms</h3>
-                {canManageConsent ? (
-                  <div className="customer-consent-upload">
-                    <div className="field" style={{ margin: 0 }}>
-                      <label htmlFor="consent-note">Note (optional)</label>
-                      <input
-                        id="consent-note"
-                        className="input"
-                        placeholder="e.g. Laser consent · signed today"
-                        value={consentNote}
-                        onChange={(e) => setConsentNote(e.target.value)}
-                        disabled={consentUploading}
+                    <div className="crm-contact">
+                      <strong>{client.phone || '—'}</strong>
+                      <span>{client.email || 'No email'}</span>
+                    </div>
+
+                    <div className="crm-row-badge">
+                      <MembershipBadge
+                        membership={client.membership}
+                        expiresAt={client.membershipExpiresAt}
+                        showExpiry
                       />
                     </div>
-                    <label
-                      className={`customer-consent-file-btn ${consentUploading ? 'is-busy' : ''}`}
-                    >
-                      <input
-                        type="file"
-                        accept="application/pdf,.pdf"
-                        hidden
-                        disabled={consentUploading}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] ?? null
-                          e.target.value = ''
-                          void uploadConsentForm(file)
-                        }}
-                      />
-                      <Upload size={15} />
-                      {consentUploading ? 'Uploading…' : 'Upload PDF consent'}
-                    </label>
-                  </div>
-                ) : (
-                  <p className="crm-muted">Only clinic staff can upload consent forms.</p>
-                )}
 
-                {consentLoading ? (
-                  <p className="crm-muted">Loading consent forms…</p>
-                ) : consentForms.length === 0 ? (
-                  <p className="crm-muted">No consent form attachments yet.</p>
-                ) : (
-                  <ul className="customer-consent-list">
-                    {consentForms.map((formRow) => (
-                      <li key={formRow.id} className="customer-consent-item">
-                        <FileText size={16} aria-hidden />
-                        <div className="customer-consent-copy">
-                          <a href={formRow.file_url} target="_blank" rel="noreferrer">
-                            {formRow.file_name}
-                          </a>
-                          <span>
-                            {new Date(formRow.created_at).toLocaleString()}
-                            {formRow.uploaded_by_name ? ` · ${formRow.uploaded_by_name}` : ''}
-                            {formRow.note ? ` · ${formRow.note}` : ''}
-                          </span>
-                        </div>
-                        {canManageConsent ? (
-                          <button
-                            type="button"
-                            className="btn-icon"
-                            aria-label={`Delete ${formRow.file_name}`}
-                            onClick={() => void deleteConsentForm(formRow)}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
+                    <div className="crm-metric crm-metric-wallet">
+                      <strong>{formatCurrency(client.cashInBalance)}</strong>
+                      <span>{client.points} pts</span>
+                    </div>
 
-              <section className="crm-section">
-                <h3>Appointments</h3>
-                {visitsLoading ? (
-                  <p className="crm-muted">Loading visits…</p>
-                ) : visits.length === 0 ? (
-                  <p className="crm-muted">No linked appointments yet.</p>
-                ) : (
-                  <div className="crm-visit-list">
-                    {visits.map((v) => (
-                      <article key={v.id} className="crm-visit-card">
-                        <strong>
-                          {v.appointment_date} · {String(v.appointment_time).slice(0, 5)}
-                        </strong>
-                        <p>{v.service_name}</p>
-                        <span>
-                          {v.status}
-                          {v.source === 'web' ? ' · website' : ''}
-                          {v.special_note ? ` · ${v.special_note}` : ''}
-                        </span>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-            </div>
-          </aside>
-        ) : null}
+                    <div className="crm-metric crm-metric-visits">
+                      <strong>{client.visits}</strong>
+                      <span>{client.lastVisit && client.lastVisit !== '—' ? client.lastVisit : 'No visits'}</span>
+                    </div>
+
+                    <span className="crm-row-action" aria-hidden>
+                      View
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {!loading && filtered.length > 0 ? (
+              <div className="crm-pagination">
+                <p>
+                  Showing {(currentPage - 1) * PAGE_SIZE + 1}–
+                  {Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length}
+                </p>
+                <div className="crm-pagination-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={currentPage <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </button>
+                  <span className="crm-pagination-page">
+                    Page {currentPage} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </section>
       </div>
       {profileModalOpen && selected ? (
         <div
           className="confirm-modal-overlay crm-intake-overlay"
           role="presentation"
-          onClick={() => setProfileModalOpen(false)}
+          onClick={() => {
+            setProfileModalOpen(false)
+            setSelectedId(null)
+          }}
         >
           <div
             className="confirm-modal crm-intake-modal"
@@ -1270,7 +797,10 @@ export function Customers() {
                 className="btn-icon"
                 type="button"
                 aria-label="Close"
-                onClick={() => setProfileModalOpen(false)}
+                onClick={() => {
+                  setProfileModalOpen(false)
+                  setSelectedId(null)
+                }}
               >
                 <X size={16} />
               </button>
@@ -1280,44 +810,18 @@ export function Customers() {
               <section className="crm-intake-card">
                 <h3>Profile</h3>
                 <div className="crm-intake-facts">
-                  <div>
-                    <span>Name</span>
-                    <strong>{displayOrNA(selected.name)}</strong>
-                  </div>
-                  <div>
-                    <span>Sex</span>
-                    <strong>{displayOrNA(selected.sex)}</strong>
-                  </div>
-                  <div>
-                    <span>Contact</span>
-                    <strong>{displayOrNA(selected.phone)}</strong>
-                  </div>
-                  <div>
-                    <span>Email</span>
-                    <strong>{displayOrNA(selected.email)}</strong>
-                  </div>
-                  <div>
-                    <span>Occupation</span>
-                    <strong>{displayOrNA(selected.occupation)}</strong>
-                  </div>
-                  <div>
-                    <span>Birthdate</span>
-                    <strong>
-                      {selected.birthday ? formatBirthday(selected.birthday) : 'N/A'}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>Facebook</span>
-                    <strong>{displayOrNA(selected.facebook)}</strong>
-                  </div>
-                  <div>
-                    <span>Instagram</span>
-                    <strong>{displayOrNA(selected.instagram)}</strong>
-                  </div>
-                  <div className="crm-intake-full">
-                    <span>Address</span>
-                    <strong>{displayOrNA(selected.address)}</strong>
-                  </div>
+                  <IntakeFact label="Name" value={displayOrNA(selected.name)} full />
+                  <IntakeFact label="Sex" value={displayOrNA(selected.sex)} />
+                  <IntakeFact label="Contact" value={displayOrNA(selected.phone)} />
+                  <IntakeFact label="Email" value={displayOrNA(selected.email)} full />
+                  <IntakeFact label="Occupation" value={displayOrNA(selected.occupation)} />
+                  <IntakeFact
+                    label="Birthdate"
+                    value={selected.birthday ? formatBirthday(selected.birthday) : 'N/A'}
+                  />
+                  <IntakeFact label="Facebook" value={displayOrNA(selected.facebook)} />
+                  <IntakeFact label="Instagram" value={displayOrNA(selected.instagram)} />
+                  <IntakeFact label="Address" value={displayOrNA(selected.address)} full />
                 </div>
               </section>
 
@@ -1342,7 +846,7 @@ export function Customers() {
 
                 <section className="crm-intake-card">
                   <h3>Topical medications</h3>
-                  <p className="crm-intake-block">{displayOrNA(selected.topicalMedications)}</p>
+                  <IntakeText value={selected.topicalMedications} />
                 </section>
 
                 <section className="crm-intake-card">
@@ -1372,7 +876,7 @@ export function Customers() {
 
                 <section className="crm-intake-card">
                   <h3>Medications / herbal intake</h3>
-                  <p className="crm-intake-block">{displayOrNA(selected.medicationsIntake)}</p>
+                  <IntakeText value={selected.medicationsIntake} />
                 </section>
 
                 <section className="crm-intake-card">
@@ -1426,20 +930,48 @@ export function Customers() {
 
             <div className="crm-intake-foot">
               <button
-                className="btn btn-ghost"
+                className="btn crm-btn-close"
                 type="button"
-                onClick={() => setProfileModalOpen(false)}
+                onClick={() => {
+                  setProfileModalOpen(false)
+                  setSelectedId(null)
+                }}
               >
                 Close
               </button>
               {canManageConsent ? (
-                <button
-                  className="btn btn-primary"
-                  type="button"
-                  onClick={() => setAvailOpen(true)}
-                >
-                  Avail service
-                </button>
+                <>
+                  <button
+                    className="btn crm-btn-edit"
+                    type="button"
+                    onClick={() => {
+                      setProfileModalOpen(false)
+                      openEdit(selected)
+                    }}
+                  >
+                    <Pencil size={15} />
+                    Edit
+                  </button>
+                  <button
+                    className="btn crm-btn-delete"
+                    type="button"
+                    onClick={() => {
+                      setConfirmDelete(true)
+                      setError('')
+                      setMessage('')
+                    }}
+                  >
+                    <Trash2 size={15} />
+                    Delete
+                  </button>
+                  <button
+                    className="btn crm-btn-avail"
+                    type="button"
+                    onClick={() => setAvailOpen(true)}
+                  >
+                    Avail service
+                  </button>
+                </>
               ) : null}
             </div>
           </div>
@@ -1455,12 +987,13 @@ export function Customers() {
             setMessage('Service availed for ' + selected.name + ' (' + receipt + ').')
             setAvailOpen(false)
             setProfileModalOpen(false)
+            setSelectedId(null)
             void loadCustomers()
           }}
         />
       ) : null}
 
-            {confirmDelete && selected ? (
+      {confirmDelete && selected ? (
         <div
           className="confirm-modal-overlay"
           role="presentation"

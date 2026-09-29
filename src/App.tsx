@@ -72,7 +72,8 @@ export default function App() {
                     <Route path="sales" element={<Sales />} />
                     <Route path="sessions" element={<Sessions />} />
                     <Route path="appointments" element={<Appointments />} />
-                    <Route path="customers" element={<Customers />} />
+                    <Route path="clients" element={<Customers />} />
+                    <Route path="customers" element={<Navigate to="/clients" replace />} />
                     <Route path="register-clients" element={<RegisterClients />} />
                     <Route path="services" element={<Services />} />
                     <Route path="loyalty" element={<Loyalty />} />

@@ -17,6 +17,7 @@ const BRANCH_NULL_TABLES = [
   'consultations',
   'staff',
   'client_session_packages',
+  'client_session_slots',
   'payroll_entries',
   'incentive_payouts',
   'inventory_receipts',

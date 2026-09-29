@@ -656,7 +656,7 @@ export function Appointments() {
 
       setMessage(
         decision.action === 'approve'
-          ? 'Appointment approved and saved to Customers.'
+          ? 'Appointment approved and saved to Clients.'
           : 'Appointment declined.',
       )
       setDecision(null)
