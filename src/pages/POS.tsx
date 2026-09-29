@@ -174,7 +174,7 @@ export function POS() {
                 price_per_session: number | string
                 sessions: number
                 sort_order: number
-                services: { name: string } | null
+                services: { name: string } | { name: string }[] | null
               }>
             | null) ?? []
           return {
@@ -189,16 +189,24 @@ export function POS() {
             items: rawItems
               .slice()
               .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-              .map((item) => ({
-                id: item.id,
-                seriesId: row.id,
-                category: item.category,
-                serviceId: item.service_id,
-                serviceName: item.services?.name ?? null,
-                pricePerSession: Number(item.price_per_session ?? 0),
-                sessions: Number(item.sessions ?? 1),
-                sortOrder: item.sort_order,
-              })),
+              .map((item) => {
+                const svc = item.services
+                const serviceName = !svc
+                  ? null
+                  : Array.isArray(svc)
+                    ? svc[0]?.name ?? null
+                    : svc.name ?? null
+                return {
+                  id: item.id,
+                  seriesId: row.id,
+                  category: item.category,
+                  serviceId: item.service_id,
+                  serviceName,
+                  pricePerSession: Number(item.price_per_session ?? 0),
+                  sessions: Number(item.sessions ?? 1),
+                  sortOrder: item.sort_order,
+                }
+              }),
           }
         }),
       )

@@ -16,6 +16,8 @@ type ProfileOption = {
   role?: string
 }
 
+type SeriesServiceEmbed = { name: string } | { name: string }[] | null
+
 type SeriesItemDbRow = {
   id: string
   category: string
@@ -23,7 +25,7 @@ type SeriesItemDbRow = {
   price_per_session: number | string
   sessions: number
   sort_order: number
-  services: { name: string } | null
+  services: SeriesServiceEmbed
 }
 
 type SeriesDbRow = {
@@ -33,6 +35,12 @@ type SeriesDbRow = {
   special_package: number | string | null
   active: boolean
   service_series_items: SeriesItemDbRow[] | null
+}
+
+function embedServiceName(services: SeriesServiceEmbed) {
+  if (!services) return null
+  if (Array.isArray(services)) return services[0]?.name ?? null
+  return services.name ?? null
 }
 
 type AvailLine = {
@@ -74,7 +82,7 @@ function mapSeries(row: SeriesDbRow): ServiceSeries {
       seriesId: row.id,
       category: item.category,
       serviceId: item.service_id,
-      serviceName: item.services?.name ?? null,
+      serviceName: embedServiceName(item.services),
       pricePerSession: Number(item.price_per_session ?? 0),
       sessions: Number(item.sessions ?? 1),
       sortOrder: item.sort_order,
