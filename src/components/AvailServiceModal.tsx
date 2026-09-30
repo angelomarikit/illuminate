@@ -100,10 +100,6 @@ function mapSeries(row: SeriesDbRow): ServiceSeries {
   }
 }
 
-function linePackage(line: ServiceSeriesItem) {
-  return line.pricePerSession * line.sessions
-}
-
 export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props) {
   const navigate = useNavigate()
   const { branchId } = useBranch()
@@ -120,11 +116,16 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
   const [seriesId, setSeriesId] = useState('')
   /** Category lines kept for this avail (user can remove some). */
   const [keptLineIds, setKeptLineIds] = useState<string[]>([])
+  /** Manual overrides for series line price / sessions / package total. */
+  const [lineEdits, setLineEdits] = useState<
+    Record<string, { pricePerSession: string; sessions: string; packageAmount: string }>
+  >({})
 
   const [category, setCategory] = useState('')
   const [serviceId, setServiceId] = useState('')
   const [pricePerSession, setPricePerSession] = useState('')
   const [specialPackage, setSpecialPackage] = useState('')
+  const [manualTotal, setManualTotal] = useState('')
   const [sessions, setSessions] = useState('1')
   const [attendant, setAttendant] = useState('')
   const [notes, setNotes] = useState('')
@@ -138,10 +139,12 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       setError('')
       setSeriesId('')
       setKeptLineIds([])
+      setLineEdits({})
       setCategory('')
       setServiceId('')
       setPricePerSession('')
       setSpecialPackage('')
+      setManualTotal('')
       setSessions('1')
       setAttendant('')
       setNotes('')
@@ -243,6 +246,32 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
     return selectedSeries.items.filter((line) => keptLineIds.includes(line.id))
   }, [selectedSeries, keptLineIds])
 
+  function seedLineEdits(items: ServiceSeriesItem[]) {
+    const next: Record<string, { pricePerSession: string; sessions: string; packageAmount: string }> =
+      {}
+    for (const line of items) {
+      next[line.id] = {
+        pricePerSession: '',
+        sessions: String(line.sessions ?? 1),
+        packageAmount: '',
+      }
+    }
+    setLineEdits(next)
+  }
+
+  function resolvedLine(line: ServiceSeriesItem) {
+    const edit = lineEdits[line.id]
+    const price = Math.max(0, Number(edit?.pricePerSession) || 0)
+    const sess = Math.max(1, Math.floor(Number(edit?.sessions ?? line.sessions) || 1))
+    const packageOverride = Math.max(0, Number(edit?.packageAmount) || 0)
+    return {
+      ...line,
+      pricePerSession: price,
+      sessions: sess,
+      packageAmount: packageOverride > 0 ? packageOverride : Number((price * sess).toFixed(2)),
+    }
+  }
+
   const filteredServices = useMemo(
     () => services.filter((s) => !category || s.category === category),
     [services, category],
@@ -256,12 +285,14 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
   const sessionCount = Math.max(0, Math.floor(Number(sessions) || 0))
   const unitPrice = Math.max(0, Number(pricePerSession) || 0)
   const specialAmount = Math.max(0, Number(specialPackage) || 0)
+  const typedTotal = Math.max(0, Number(manualTotal) || 0)
+  const computedTotal = Number((unitPrice * sessionCount).toFixed(2))
   const singleTotal =
-    specialAmount > 0 ? specialAmount : Number((unitPrice * sessionCount).toFixed(2))
+    typedTotal > 0 ? typedTotal : specialAmount > 0 ? specialAmount : computedTotal
 
   const keptTotal = useMemo(
-    () => keptLines.reduce((sum, line) => sum + linePackage(line), 0),
-    [keptLines],
+    () => keptLines.reduce((sum, line) => sum + resolvedLine(line).packageAmount, 0),
+    [keptLines, lineEdits],
   )
 
   function onChooseSeries(nextId: string) {
@@ -269,11 +300,14 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
     if (!nextId) {
       setSeriesId('')
       setKeptLineIds([])
+      setLineEdits({})
       return
     }
     const plan = seriesList.find((s) => s.id === nextId) ?? null
     setSeriesId(nextId)
-    setKeptLineIds(plan ? plan.items.map((line) => line.id) : [])
+    const items = plan?.items ?? []
+    setKeptLineIds(items.map((line) => line.id))
+    seedLineEdits(items)
   }
 
   function removeKeptLine(lineId: string) {
@@ -283,34 +317,57 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
   function restoreAllLines() {
     if (!selectedSeries) return
     setKeptLineIds(selectedSeries.items.map((line) => line.id))
+    seedLineEdits(selectedSeries.items)
+  }
+
+  function updateLineEdit(
+    lineId: string,
+    patch: Partial<{ pricePerSession: string; sessions: string; packageAmount: string }>,
+  ) {
+    setLineEdits((prev) => {
+      const base = prev[lineId] ?? {
+        pricePerSession: '0',
+        sessions: '1',
+        packageAmount: '',
+      }
+      return { ...prev, [lineId]: { ...base, ...patch } }
+    })
   }
 
   function buildManualLine(): AvailLine | null {
     const service = selectedService
     if (!service && !serviceId) return null
     const name = service?.name || services.find((s) => s.id === serviceId)?.name || category
+    const packageAmount = singleTotal
+    const price =
+      sessionCount > 0 && packageAmount > 0
+        ? Number((packageAmount / sessionCount).toFixed(2))
+        : unitPrice
     return {
       seriesName: null,
       category,
       serviceId: service?.id || serviceId || null,
       serviceName: name,
-      pricePerSession: unitPrice,
+      pricePerSession: price,
       sessions: sessionCount,
-      packageAmount: singleTotal,
+      packageAmount,
     }
   }
 
   function buildKeptLines(): AvailLine[] {
     if (!selectedSeries) return []
-    return keptLines.map((line) => ({
-      seriesName: selectedSeries.name,
-      category: line.category,
-      serviceId: line.serviceId,
-      serviceName: line.serviceName || line.category,
-      pricePerSession: line.pricePerSession,
-      sessions: line.sessions,
-      packageAmount: linePackage(line),
-    }))
+    return keptLines.map((line) => {
+      const resolved = resolvedLine(line)
+      return {
+        seriesName: selectedSeries.name,
+        category: line.category,
+        serviceId: line.serviceId,
+        serviceName: line.serviceName || line.category,
+        pricePerSession: resolved.pricePerSession,
+        sessions: resolved.sessions,
+        packageAmount: resolved.packageAmount,
+      }
+    })
   }
 
   async function persistAvail(lines: AvailLine[]) {
@@ -501,8 +558,8 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
               </select>
             </div>
             <p className="avail-hint">
-              Choose a series to load all of its categories below. Remove any category you don’t want
-              for this avail, then confirm.
+              Choose a series to load its services below. Enter the package price manually for this
+              avail, remove any category you don’t want, then confirm.
             </p>
           </div>
 
@@ -538,42 +595,98 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                   </div>
                 ) : (
                   <div className="avail-card-list">
-                    {keptLines.map((line, index) => (
-                      <article key={line.id} className="avail-cat-card">
-                        <div className="avail-cat-card-head">
-                          <span>
-                            Category {index + 1}: {line.category}
-                          </span>
-                          <button
-                            type="button"
-                            className="avail-remove-btn"
-                            onClick={() => removeKeptLine(line.id)}
-                            aria-label={`Remove ${line.category}`}
-                          >
-                            <Trash2 size={14} />
-                            Remove
-                          </button>
-                        </div>
-                        <div className="avail-cat-card-grid">
-                          <div>
-                            <span>Service</span>
-                            <strong>{line.serviceName || '—'}</strong>
+                    {keptLines.map((line, index) => {
+                      const edit = lineEdits[line.id] ?? {
+                        pricePerSession: '',
+                        sessions: String(line.sessions),
+                        packageAmount: '',
+                      }
+                      const resolved = resolvedLine(line)
+                      return (
+                        <article key={line.id} className="avail-cat-card">
+                          <div className="avail-cat-card-head">
+                            <span>
+                              Category {index + 1}: {line.category}
+                            </span>
+                            <button
+                              type="button"
+                              className="avail-remove-btn"
+                              onClick={() => removeKeptLine(line.id)}
+                              aria-label={`Remove ${line.category}`}
+                            >
+                              <Trash2 size={14} />
+                              Remove
+                            </button>
                           </div>
-                          <div>
-                            <span>Sessions</span>
-                            <strong>{line.sessions}</strong>
+                          <div className="avail-cat-card-grid">
+                            <div>
+                              <span>Service</span>
+                              <strong>{line.serviceName || '—'}</strong>
+                            </div>
+                            <div className="field" style={{ margin: 0 }}>
+                              <label htmlFor={`avail-sess-${line.id}`}>Sessions</label>
+                              <input
+                                id={`avail-sess-${line.id}`}
+                                className="input"
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={edit.sessions}
+                                onChange={(e) =>
+                                  updateLineEdit(line.id, {
+                                    sessions: e.target.value,
+                                    packageAmount: '',
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="field" style={{ margin: 0 }}>
+                              <label htmlFor={`avail-price-${line.id}`}>Price / session *</label>
+                              <input
+                                id={`avail-price-${line.id}`}
+                                className="input"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={edit.pricePerSession}
+                                onChange={(e) =>
+                                  updateLineEdit(line.id, {
+                                    pricePerSession: e.target.value,
+                                    packageAmount: '',
+                                  })
+                                }
+                                placeholder="Enter price"
+                                required
+                              />
+                            </div>
+                            <div className="field" style={{ margin: 0 }}>
+                              <label htmlFor={`avail-pkg-${line.id}`}>Package total</label>
+                              <input
+                                id={`avail-pkg-${line.id}`}
+                                className="input"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={
+                                  edit.packageAmount !== ''
+                                    ? edit.packageAmount
+                                    : resolved.packageAmount > 0
+                                      ? String(resolved.packageAmount)
+                                      : ''
+                                }
+                                onChange={(e) =>
+                                  updateLineEdit(line.id, { packageAmount: e.target.value })
+                                }
+                                placeholder="Or enter total"
+                              />
+                            </div>
                           </div>
-                          <div>
-                            <span>Price / session</span>
-                            <strong>{formatCurrency(line.pricePerSession)}</strong>
-                          </div>
-                          <div>
-                            <span>Package</span>
-                            <strong>{formatCurrency(linePackage(line))}</strong>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
+                          <p className="avail-hint" style={{ marginTop: 8 }}>
+                            Series has no stored price — enter the clinic package amount manually.
+                          </p>
+                        </article>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -626,7 +739,11 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                       const id = e.target.value
                       setServiceId(id)
                       const svc = services.find((s) => s.id === id)
-                      if (svc) setPricePerSession(String(svc.price))
+                      if (svc) {
+                        setPricePerSession(String(svc.price))
+                        setManualTotal('')
+                        setSpecialPackage('')
+                      }
                     }}
                     required
                   >
@@ -647,7 +764,11 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                     min="0"
                     step="0.01"
                     value={pricePerSession}
-                    onChange={(e) => setPricePerSession(e.target.value)}
+                    onChange={(e) => {
+                      setPricePerSession(e.target.value)
+                      setManualTotal('')
+                      setSpecialPackage('')
+                    }}
                     required
                   />
                 </div>
@@ -660,7 +781,10 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                     min="0"
                     step="0.01"
                     value={specialPackage}
-                    onChange={(e) => setSpecialPackage(e.target.value)}
+                    onChange={(e) => {
+                      setSpecialPackage(e.target.value)
+                      setManualTotal(e.target.value)
+                    }}
                     placeholder="Optional package total"
                   />
                 </div>
@@ -673,18 +797,33 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                     min="1"
                     step="1"
                     value={sessions}
-                    onChange={(e) => setSessions(e.target.value)}
+                    onChange={(e) => {
+                      setSessions(e.target.value)
+                      setManualTotal('')
+                    }}
                     required
                   />
                 </div>
 
                 <div className="field">
                   <label>Total price</label>
-                  <div className="avail-total">{formatCurrency(singleTotal)}</div>
+                  <input
+                    className="input avail-total-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={manualTotal !== '' ? manualTotal : String(singleTotal || '')}
+                    onChange={(e) => {
+                      setManualTotal(e.target.value)
+                      setSpecialPackage(e.target.value)
+                    }}
+                    placeholder="Enter amount"
+                    required
+                  />
                   <p className="avail-hint">
-                    {specialAmount > 0
-                      ? 'Using special package amount'
-                      : `${formatCurrency(unitPrice)} × ${sessionCount || 0} sessions`}
+                    {typedTotal > 0 || specialAmount > 0
+                      ? 'Using manually entered total'
+                      : `${formatCurrency(unitPrice)} × ${sessionCount || 0} sessions — edit to log a custom price`}
                   </p>
                 </div>
               </div>

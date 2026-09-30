@@ -235,6 +235,11 @@
   font-size: 1rem;
 }
 
+.avail-total-input {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
 .avail-loading {
   margin: 0;
   padding: 14px;

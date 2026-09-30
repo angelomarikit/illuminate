@@ -52,7 +52,6 @@ type SeriesItemDraft = {
   key: string
   category: string
   serviceId: string
-  pricePerSession: string
   sessions: string
 }
 
@@ -61,7 +60,6 @@ function newSeriesItemDraft(partial?: Partial<SeriesItemDraft>): SeriesItemDraft
     key: crypto.randomUUID(),
     category: '',
     serviceId: '',
-    pricePerSession: '',
     sessions: '1',
     ...partial,
   }
@@ -77,7 +75,6 @@ function draftsForAllCategories(
     return newSeriesItemDraft({
       category,
       serviceId: first?.id || '',
-      pricePerSession: first ? String(first.price) : '',
     })
   })
 }
@@ -85,7 +82,6 @@ function draftsForAllCategories(
 const emptySeries = {
   name: '',
   description: '',
-  specialPackage: '',
   items: [newSeriesItemDraft()] as SeriesItemDraft[],
 }
 
@@ -331,7 +327,6 @@ export function Services() {
     setSeriesForm({
       name: '',
       description: '',
-      specialPackage: '',
       items: draftsForAllCategories(categoryOptions, activeServices),
     })
     setShowSeriesForm(true)
@@ -361,7 +356,6 @@ export function Services() {
         newSeriesItemDraft({
           category: nextCategory,
           serviceId: first?.id || '',
-          pricePerSession: first ? String(first.price) : '',
         }),
       ],
     }))
@@ -412,7 +406,7 @@ export function Services() {
     const prepared = seriesForm.items.map((item, index) => ({
       category: item.category.trim(),
       service_id: item.serviceId || null,
-      price_per_session: Math.max(0, Number(item.pricePerSession) || 0),
+      price_per_session: 0,
       sessions: Math.max(1, Math.floor(Number(item.sessions) || 0)),
       sort_order: (index + 1) * 10,
     }))
@@ -435,9 +429,6 @@ export function Services() {
       return
     }
 
-    const specialRaw = seriesForm.specialPackage.trim()
-    const specialPackage = specialRaw === '' ? null : Math.max(0, Number(specialRaw) || 0)
-
     setSavingSeries(true)
     setMessage('')
     setError('')
@@ -447,13 +438,13 @@ export function Services() {
       .insert({
         name,
         description: seriesForm.description.trim() || null,
-        special_package: specialPackage,
+        special_package: null,
         active: true,
         created_by: user?.id ?? null,
         // Legacy flat columns (nullable after re-running add_service_series.sql)
         category: prepared[0]?.category ?? null,
         service_id: prepared[0]?.service_id ?? null,
-        price_per_session: prepared[0]?.price_per_session ?? null,
+        price_per_session: null,
         sessions: prepared[0]?.sessions ?? null,
       })
       .select('id')
@@ -755,7 +746,8 @@ export function Services() {
           <div>
             <h2 className="panel-title">Series plans</h2>
             <p className="svc-panel-sub">
-              A series is a plan made of category + service lines (e.g. Gluta Push → Gluta Drip).
+              A series is a plan of category + service lines. Prices are set manually on Avail /
+              POS.
             </p>
           </div>
           {canManageCategories ? (
@@ -778,21 +770,13 @@ export function Services() {
                 <thead>
                   <tr>
                     <th>Series</th>
-                    <th>Categories in series</th>
-                    <th>Package</th>
+                    <th>Services in series</th>
                     <th>Status</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {series.map((plan) => {
-                    const itemsTotal = plan.items.reduce((sum, line) => {
-                      return sum + line.pricePerSession * line.sessions
-                    }, 0)
-                    const packageTotal =
-                      plan.specialPackage != null && plan.specialPackage > 0
-                        ? plan.specialPackage
-                        : itemsTotal
                     return (
                       <tr key={plan.id}>
                         <td>
@@ -812,15 +796,14 @@ export function Services() {
                                 <li key={line.id}>
                                   <strong>{line.category}</strong>
                                   <span>
-                                    {line.serviceName || '—'} · {line.sessions} sess ·{' '}
-                                    {formatCurrency(line.pricePerSession)}
+                                    {line.serviceName || '—'}
+                                    {line.sessions > 1 ? ` · ${line.sessions} sessions` : ''}
                                   </span>
                                 </li>
                               ))}
                             </ul>
                           )}
                         </td>
-                        <td>{formatCurrency(packageTotal)}</td>
                         <td>
                           <span className={`badge ${plan.active ? 'badge-success' : ''}`}>
                             {plan.active ? 'Active' : 'Hidden'}
@@ -1094,9 +1077,6 @@ export function Services() {
                                   updateSeriesItem(line.key, {
                                     category,
                                     serviceId: first?.id || '',
-                                    pricePerSession: first
-                                      ? String(first.price)
-                                      : line.pricePerSession,
                                   })
                                 }}
                               >
@@ -1119,13 +1099,7 @@ export function Services() {
                                 value={line.serviceId}
                                 onChange={(e) => {
                                   const serviceId = e.target.value
-                                  const svc = activeServices.find((s) => s.id === serviceId)
-                                  updateSeriesItem(line.key, {
-                                    serviceId,
-                                    pricePerSession: svc
-                                      ? String(svc.price)
-                                      : line.pricePerSession,
-                                  })
+                                  updateSeriesItem(line.key, { serviceId })
                                 }}
                               >
                                 <option value="">
@@ -1139,24 +1113,10 @@ export function Services() {
                                   .filter((s) => !line.category || s.category === line.category)
                                   .map((s) => (
                                     <option key={s.id} value={s.id}>
-                                      {s.name} — {formatCurrency(s.price)}
+                                      {s.name}
                                     </option>
                                   ))}
                               </select>
-                            </div>
-                            <div className="field">
-                              <label>Price per session</label>
-                              <input
-                                className="input"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                required
-                                value={line.pricePerSession}
-                                onChange={(e) =>
-                                  updateSeriesItem(line.key, { pricePerSession: e.target.value })
-                                }
-                              />
                             </div>
                             <div className="field">
                               <label>Sessions</label>
@@ -1178,20 +1138,10 @@ export function Services() {
                     </div>
                   </div>
 
-                  <div className="field svc-span-2">
-                    <label>Special package (optional series total)</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="Leave blank to sum category lines"
-                      value={seriesForm.specialPackage}
-                      onChange={(e) =>
-                        setSeriesForm((f) => ({ ...f, specialPackage: e.target.value }))
-                      }
-                    />
-                  </div>
+                  <p className="form-req-note svc-span-2">
+                    Series only stores the services in the plan. Prices are entered manually when
+                    availing or selling.
+                  </p>
                   <div className="field svc-span-2">
                     <label>Description</label>
                     <textarea

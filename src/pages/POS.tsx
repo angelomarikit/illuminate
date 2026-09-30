@@ -284,7 +284,7 @@ export function POS() {
         id: line.serviceId || `series-item-${line.id}`,
         name: line.serviceName || line.category,
         category: line.category,
-        price: line.pricePerSession,
+        price: 0,
         durationMin: 0,
         pointsEarn: 0,
         pointsCost: 0,
@@ -292,11 +292,10 @@ export function POS() {
         description: plan.description ?? '',
       } as ServiceItem)
 
-    const packageAmount = line.pricePerSession * line.sessions
     const cartItem: ServiceItem = {
       ...base,
       name: `${plan.name} · ${line.category} (${base.name})`,
-      price: line.pricePerSession,
+      price: 0,
     }
 
     setCart((prev) => [
@@ -305,13 +304,13 @@ export function POS() {
         item: cartItem,
         qty: 1,
         sessionsAdvised: line.sessions,
-        packageAmount: String(packageAmount),
+        packageAmount: '',
         nextSessionDate: '',
       },
     ])
     setSessionOpenIds((prev) => ({ ...prev, [cartItem.id]: true }))
     setOpenSection('items')
-    setMessage(`Added “${plan.name} / ${line.category}” to order.`)
+    setMessage(`Added “${plan.name} / ${line.category}” — enter package price on the order.`)
   }
 
   function openCustomService(mode: 'manual' | 'catalog' = 'manual') {
@@ -766,7 +765,6 @@ export function POS() {
                 <div className="pos-grid">
                   {filteredSeries.flatMap((plan) =>
                     plan.items.map((line) => {
-                      const total = line.pricePerSession * line.sessions
                       return (
                         <button
                           key={line.id}
@@ -787,9 +785,10 @@ export function POS() {
                           </div>
                           <div className="pos-card-name">{line.category}</div>
                           <div className="pos-card-meta">
-                            {line.serviceName || 'Service'} · {line.sessions} sessions
+                            {line.serviceName || 'Service'}
+                            {line.sessions > 1 ? ` · ${line.sessions} sessions` : ''}
                           </div>
-                          <div className="pos-card-price">{formatCurrency(total)}</div>
+                          <div className="pos-card-price">Set price</div>
                         </button>
                       )
                     }),
