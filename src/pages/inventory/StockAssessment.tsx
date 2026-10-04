@@ -14,7 +14,6 @@ type ItemRow = {
   name: string
   sku: string
   stock: number
-  reorder_level: number
   unit: string
 }
 
@@ -102,9 +101,10 @@ function itemFromLine(line: IssueLineRow) {
   return Array.isArray(snap) ? snap[0] ?? null : snap
 }
 
+/** Variance = Required Stock − Ending Inventory. Positive ⇒ LACKING, negative ⇒ EXCESS. */
 function assessVariance(variance: number): SheetRow['assessment'] {
   if (variance === 0) return 'BALANCED'
-  if (variance < 0) return 'LACKING'
+  if (variance > 0) return 'LACKING'
   return 'EXCESS'
 }
 
@@ -131,7 +131,8 @@ export function StockAssessment() {
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [savingRequiredId, setSavingRequiredId] = useState<string | null>(null)
+  /** Manual physical counts keyed by item id (string so empty input stays blank). */
+  const [endingByItem, setEndingByItem] = useState<Record<string, string>>({})
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -159,7 +160,7 @@ export function StockAssessment() {
 
     let itemQ = supabase
       .from('inventory_items')
-      .select('id, name, sku, stock, reorder_level, unit')
+      .select('id, name, sku, stock, unit')
       .is('deleted_at', null)
       .order('name')
 
@@ -279,6 +280,11 @@ export function StockAssessment() {
     void load()
   }, [load])
 
+  // Physical ending counts are period-specific; clear when the sheet range/branch changes.
+  useEffect(() => {
+    setEndingByItem({})
+  }, [branchId, rangeStart, rangeEnd])
+
   const sheetRows = useMemo<SheetRow[]>(() => {
     return items.map((item) => {
       const beginning =
@@ -286,9 +292,12 @@ export function StockAssessment() {
       const received = receivedByItem[item.id] || 0
       const issued = issuedByItem[item.id] || 0
       const totalAvailable = beginning + received
-      const ending = totalAvailable - issued
-      const required = Number(item.reorder_level) || 0
-      const variance = ending - required
+      // Required Stock = Beginning + Received − Issued/Used (not Catalog Reorder).
+      const required = totalAvailable - issued
+      const endingRaw = endingByItem[item.id]
+      const ending =
+        endingRaw === undefined || endingRaw === '' ? 0 : Math.max(0, Number(endingRaw) || 0)
+      const variance = required - ending
       return {
         id: item.id,
         name: item.name,
@@ -304,7 +313,7 @@ export function StockAssessment() {
         assessment: assessVariance(variance),
       }
     })
-  }, [items, recvSinceStart, issuedSinceStart, receivedByItem, issuedByItem])
+  }, [items, recvSinceStart, issuedSinceStart, receivedByItem, issuedByItem, endingByItem])
 
   function updateLine(index: number, patch: Partial<LineForm>) {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)))
@@ -507,31 +516,12 @@ export function StockAssessment() {
     await load()
   }
 
-  async function saveRequired(itemId: string, value: number) {
-    setSavingRequiredId(itemId)
-    setError('')
-    const next = Math.max(0, value)
-    const { error: updErr } = await supabase
-      .from('inventory_items')
-      .update({ reorder_level: next })
-      .eq('id', itemId)
-    setSavingRequiredId(null)
-    if (updErr) {
-      setError(updErr.message)
-      return
-    }
-    setItems((prev) =>
-      prev.map((item) => (item.id === itemId ? { ...item, reorder_level: next } : item)),
-    )
-    setMessage('Required stock (reorder level) updated.')
-  }
-
   return (
     <div className="stock-assessment-page">
       <PageHeader
         kicker="Inventory"
         title="Stock assessment"
-        subtitle="Period sheet: beginning, received, issued/used, ending, required stock, and BALANCED / LACKING / EXCESS."
+        subtitle="Period sheet: beginning, received, issued/used, auto required stock, manual ending inventory, and BALANCED / LACKING / EXCESS."
       />
       <InventorySubnav />
 
@@ -597,7 +587,9 @@ export function StockAssessment() {
           </div>
           <p className="sa-hint">
             Beginning is reconstructed from current stock minus receipts/issues since the start
-            date. Received and Issued/Used are totals inside the selected range.
+            date. Received and Issued/Used are totals inside the selected range. Required stock is
+            Beginning + Received − Issued/Used. Ending inventory is your physical Supply Room
+            count; variance is Required − Ending.
           </p>
         </div>
       </div>
@@ -644,24 +636,23 @@ export function StockAssessment() {
                       <td>{row.received}</td>
                       <td>{row.totalAvailable}</td>
                       <td>{row.issued}</td>
-                      <td>{row.ending}</td>
                       <td>
                         <div className="sa-required">
                           <input
                             className="input"
                             type="number"
                             min={0}
-                            defaultValue={row.required}
-                            key={`${row.id}-${row.required}`}
-                            onBlur={(e) => {
-                              const next = Math.max(0, Number(e.target.value) || 0)
-                              if (next !== row.required) void saveRequired(row.id, next)
+                            value={endingByItem[row.id] ?? ''}
+                            onChange={(e) => {
+                              const next = e.target.value
+                              setEndingByItem((prev) => ({ ...prev, [row.id]: next }))
                             }}
-                            disabled={savingRequiredId === row.id}
-                            aria-label={`Required stock for ${row.name}`}
+                            placeholder="0"
+                            aria-label={`Ending inventory for ${row.name}`}
                           />
                         </div>
                       </td>
+                      <td>{row.required}</td>
                       <td>{row.variance > 0 ? `+${row.variance}` : row.variance}</td>
                       <td>
                         <span className={assessmentBadge(row.assessment)}>{row.assessment}</span>
