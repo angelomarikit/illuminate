@@ -36,7 +36,21 @@ import { isUuid } from '../lib/utils'
 import type { Appointment, AppointmentStatus } from '../types'
 import './appointments.css'
 
-const hours = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
+const hours = [
+  '09:00',
+  '10:00',
+  '11:00',
+  '12:00',
+  '13:00',
+  '14:00',
+  '15:00',
+  '16:00',
+  '17:00',
+  '18:00',
+  '19:00',
+  '20:00',
+  '21:00',
+]
 
 const CALENDAR_COLORS = [
   '#b8954a',

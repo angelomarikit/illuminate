@@ -15,6 +15,10 @@ const TIME_SLOTS = [
   '15:00',
   '16:00',
   '17:00',
+  '18:00',
+  '19:00',
+  '20:00',
+  '21:00',
 ]
 
 type ServiceOption = { id: string; name: string; duration_min: number }
