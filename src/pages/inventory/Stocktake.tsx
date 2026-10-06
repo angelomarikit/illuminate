@@ -55,6 +55,42 @@ function lineProduct(line: PastLine) {
   }
 }
 
+type DraftPayload = {
+  countedOn: string
+  notes: string
+  counts: Record<string, string>
+}
+
+function draftStorageKey(branchId: string) {
+  return `illuminate.stocktake.draft.${isUuid(branchId) ? branchId : 'all'}`
+}
+
+function readDraft(branchId: string): DraftPayload | null {
+  try {
+    const raw = localStorage.getItem(draftStorageKey(branchId))
+    if (!raw) return null
+    return JSON.parse(raw) as DraftPayload
+  } catch {
+    return null
+  }
+}
+
+function writeDraft(branchId: string, payload: DraftPayload) {
+  try {
+    localStorage.setItem(draftStorageKey(branchId), JSON.stringify(payload))
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function clearDraft(branchId: string) {
+  try {
+    localStorage.removeItem(draftStorageKey(branchId))
+  } catch {
+    // ignore
+  }
+}
+
 export function Stocktake() {
   const { user } = useAuth()
   const { branchId } = useBranch()
@@ -104,6 +140,9 @@ export function Stocktake() {
             : msg,
       )
     }
+    const draft = readDraft(branchId)
+    if (draft?.countedOn) setCountedOn(draft.countedOn)
+    if (typeof draft?.notes === 'string') setNotes(draft.notes)
     setLines(
       ((items as ItemRow[] | null) ?? []).map((item) => ({
         inventory_item_id: item.id,
@@ -111,7 +150,11 @@ export function Stocktake() {
         sku: item.sku,
         unit: item.unit,
         system_qty: item.stock,
-        counted_qty: String(item.stock),
+        // Restore in-progress counted qty after refresh; otherwise start from system qty.
+        counted_qty:
+          draft?.counts?.[item.id] !== undefined
+            ? String(draft.counts[item.id])
+            : String(item.stock),
       })),
     )
     setPast((pastData as unknown as PastStocktake[] | null) ?? [])
@@ -121,6 +164,16 @@ export function Stocktake() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // Persist in-progress count sheet so refresh does not reset to system qty.
+  useEffect(() => {
+    if (loading) return
+    const counts: Record<string, string> = {}
+    for (const line of lines) {
+      counts[line.inventory_item_id] = line.counted_qty
+    }
+    writeDraft(branchId, { countedOn, notes, counts })
+  }, [branchId, countedOn, notes, lines, loading])
 
   const affectedPastRows = useMemo(() => {
     const rows: Array<{
@@ -224,10 +277,21 @@ export function Stocktake() {
     }
 
     for (const line of payload) {
-      await supabase
+      const { data: updated, error: updErr } = await supabase
         .from('inventory_items')
         .update({ stock: line.counted_qty })
         .eq('id', line.inventory_item_id)
+        .select('id')
+        .maybeSingle()
+      if (updErr || !updated?.id) {
+        setSaving(false)
+        setError(
+          updErr?.message ||
+            'Stocktake posted lines but a catalog stock update did not persist. Re-check inventory role/RLS.',
+        )
+        await load()
+        return
+      }
     }
 
     const { error: doneErr } = await supabase
@@ -244,6 +308,7 @@ export function Stocktake() {
       return
     }
 
+    clearDraft(branchId)
     setNotes('')
     setMessage('Cycle count completed. On-hand stock updated to counted quantities.')
     await load()

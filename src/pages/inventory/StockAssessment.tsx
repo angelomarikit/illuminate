@@ -59,8 +59,21 @@ type SheetRow = {
 
 type QtyRow = { qty: number; inventory_item_id: string }
 
+type EndingRow = {
+  inventory_item_id: string
+  ending_qty: number
+  period_end?: string
+  updated_at?: string
+}
+
+const ZERO_BRANCH = '00000000-0000-0000-0000-000000000000'
+
 function emptyLine(): LineForm {
   return { itemId: '', qty: '1', notes: '' }
+}
+
+function branchKeyFor(branchId: string) {
+  return isUuid(branchId) ? branchId : ZERO_BRANCH
 }
 
 function toDateInput(d: Date) {
@@ -77,6 +90,13 @@ function startOfWeek(d: Date) {
   x.setDate(x.getDate() + diff)
   x.setHours(0, 0, 0, 0)
   return x
+}
+
+function endOfWeek(d: Date) {
+  const start = startOfWeek(d)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 6)
+  return end
 }
 
 function startOfMonth(d: Date) {
@@ -120,7 +140,7 @@ export function StockAssessment() {
 
   const [preset, setPreset] = useState<RangePreset>('week')
   const [rangeStart, setRangeStart] = useState(() => toDateInput(startOfWeek(new Date())))
-  const [rangeEnd, setRangeEnd] = useState(() => toDateInput(new Date()))
+  const [rangeEnd, setRangeEnd] = useState(() => toDateInput(endOfWeek(new Date())))
 
   const [items, setItems] = useState<ItemRow[]>([])
   const [issues, setIssues] = useState<IssueRow[]>([])
@@ -131,8 +151,9 @@ export function StockAssessment() {
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  /** Manual physical counts keyed by item id (string so empty input stays blank). */
+  /** Manual physical counts keyed by item id (string so empty input stays blank). Loaded/saved in DB. */
   const [endingByItem, setEndingByItem] = useState<Record<string, string>>({})
+  const [endingSavingId, setEndingSavingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -147,7 +168,7 @@ export function StockAssessment() {
     const now = new Date()
     if (next === 'week') {
       setRangeStart(toDateInput(startOfWeek(now)))
-      setRangeEnd(toDateInput(now))
+      setRangeEnd(toDateInput(endOfWeek(now)))
     } else if (next === 'month') {
       setRangeStart(toDateInput(startOfMonth(now)))
       setRangeEnd(toDateInput(endOfMonth(now)))
@@ -204,6 +225,22 @@ export function StockAssessment() {
       .gte('issued_at', rangeStart)
       .lte('issued_at', rangeEnd)
 
+    const bKey = branchKeyFor(branchId)
+    let endingExactQ = supabase
+      .from('inventory_assessment_endings')
+      .select('inventory_item_id, ending_qty, period_end, updated_at')
+      .eq('branch_key', bKey)
+      .eq('period_start', rangeStart)
+      .eq('period_end', rangeEnd)
+
+    // Same week/month start, any end date — recovers rows saved when "This week" used today as period_end
+    let endingFallbackQ = supabase
+      .from('inventory_assessment_endings')
+      .select('inventory_item_id, ending_qty, period_end, updated_at')
+      .eq('branch_key', bKey)
+      .eq('period_start', rangeStart)
+      .order('updated_at', { ascending: false })
+
     if (isUuid(branchId)) {
       const branchOr = `branch_id.eq.${branchId},branch_id.is.null`
       receiptSinceQ = receiptSinceQ.or(branchOr)
@@ -219,6 +256,8 @@ export function StockAssessment() {
       { data: issuedSinceData, error: issuedSinceErr },
       { data: recvPeriodData, error: recvPeriodErr },
       { data: issuedPeriodData, error: issuedPeriodErr },
+      { data: endingExactData, error: endingExactErr },
+      { data: endingFallbackData, error: endingFallbackErr },
     ] = await Promise.all([
       itemQ,
       issueQ,
@@ -226,19 +265,31 @@ export function StockAssessment() {
       issueSinceQ,
       receiptPeriodQ,
       issuePeriodQ,
+      endingExactQ,
+      endingFallbackQ,
     ])
 
+    const endingErr = endingExactErr || endingFallbackErr
     const firstErr =
-      itemErr || issueErr || recvSinceErr || issuedSinceErr || recvPeriodErr || issuedPeriodErr
+      itemErr ||
+      issueErr ||
+      recvSinceErr ||
+      issuedSinceErr ||
+      recvPeriodErr ||
+      issuedPeriodErr ||
+      endingErr
 
     if (firstErr) {
       const msg = firstErr.message
       setError(
-        msg.includes('inventory_issues') ||
-          msg.includes('inventory_issue_lines') ||
-          msg.includes('schema cache')
-          ? `${msg} — run supabase/add_inventory_issues.sql in Supabase.`
-          : msg,
+        msg.includes('inventory_assessment_endings') ||
+          (msg.includes('schema cache') && msg.toLowerCase().includes('ending'))
+          ? `${msg} — run supabase/add_inventory_persistence.sql in Supabase.`
+          : msg.includes('inventory_issues') ||
+              msg.includes('inventory_issue_lines') ||
+              msg.includes('schema cache')
+            ? `${msg} — run supabase/add_inventory_issues.sql in Supabase.`
+            : msg,
       )
     }
 
@@ -273,6 +324,19 @@ export function StockAssessment() {
     setIssuedSinceStart(sumByItem(flattenIssueLines(issuedSinceData as HeaderWithLines[] | null)))
     setReceivedByItem(sumByItem(flattenReceiptLines(recvPeriodData as HeaderWithLines[] | null)))
     setIssuedByItem(sumByItem(flattenIssueLines(issuedPeriodData as HeaderWithLines[] | null)))
+
+    const endingMap: Record<string, string> = {}
+    for (const row of (endingExactData as EndingRow[] | null) ?? []) {
+      endingMap[row.inventory_item_id] = String(Number(row.ending_qty) || 0)
+    }
+    // Fill gaps from same period_start (handles prior saves keyed with period_end = today)
+    if (!endingExactErr && !endingFallbackErr) {
+      for (const row of (endingFallbackData as EndingRow[] | null) ?? []) {
+        if (endingMap[row.inventory_item_id] !== undefined) continue
+        endingMap[row.inventory_item_id] = String(Number(row.ending_qty) || 0)
+      }
+    }
+    setEndingByItem(endingMap)
     setLoading(false)
   }, [branchId, rangeStart, rangeEnd])
 
@@ -280,10 +344,46 @@ export function StockAssessment() {
     void load()
   }, [load])
 
-  // Physical ending counts are period-specific; clear when the sheet range/branch changes.
-  useEffect(() => {
-    setEndingByItem({})
-  }, [branchId, rangeStart, rangeEnd])
+  async function persistEnding(itemId: string, raw: string) {
+    const qty = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw) || 0))
+    const bKey = branchKeyFor(branchId)
+    setEndingSavingId(itemId)
+    setError('')
+    const { data, error: upsertErr } = await supabase
+      .from('inventory_assessment_endings')
+      .upsert(
+        {
+          branch_key: bKey,
+          branch_id: isUuid(branchId) ? branchId : null,
+          period_start: rangeStart,
+          period_end: rangeEnd,
+          inventory_item_id: itemId,
+          ending_qty: qty,
+          updated_by: user?.id ?? null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'branch_key,period_start,period_end,inventory_item_id' },
+      )
+      .select('id')
+      .maybeSingle()
+    setEndingSavingId(null)
+    if (upsertErr) {
+      setError(
+        upsertErr.message.includes('inventory_assessment_endings') ||
+          upsertErr.message.includes('schema cache')
+          ? `${upsertErr.message} — run supabase/add_inventory_persistence.sql in Supabase.`
+          : upsertErr.message,
+      )
+      return
+    }
+    if (!data?.id) {
+      setError(
+        'Ending inventory did not persist. Use an Owner/Admin/Inventory account and run supabase/add_inventory_persistence.sql.',
+      )
+      return
+    }
+    setEndingByItem((prev) => ({ ...prev, [itemId]: String(qty) }))
+  }
 
   const sheetRows = useMemo<SheetRow[]>(() => {
     return items.map((item) => {
@@ -314,6 +414,49 @@ export function StockAssessment() {
       }
     })
   }, [items, recvSinceStart, issuedSinceStart, receivedByItem, issuedByItem, endingByItem])
+
+  async function saveAllEndings() {
+    if (!sheetRows.length) return
+    setSaving(true)
+    setError('')
+    setMessage('')
+    const bKey = branchKeyFor(branchId)
+    const rows = sheetRows.map((row) => {
+      const raw = endingByItem[row.id]
+      const qty = raw === undefined || raw === '' ? 0 : Math.max(0, Math.floor(Number(raw) || 0))
+      return {
+        branch_key: bKey,
+        branch_id: isUuid(branchId) ? branchId : null,
+        period_start: rangeStart,
+        period_end: rangeEnd,
+        inventory_item_id: row.id,
+        ending_qty: qty,
+        updated_by: user?.id ?? null,
+        updated_at: new Date().toISOString(),
+      }
+    })
+    const { data, error: upsertErr } = await supabase
+      .from('inventory_assessment_endings')
+      .upsert(rows, { onConflict: 'branch_key,period_start,period_end,inventory_item_id' })
+      .select('id')
+    setSaving(false)
+    if (upsertErr) {
+      setError(
+        upsertErr.message.includes('inventory_assessment_endings') ||
+          upsertErr.message.includes('schema cache')
+          ? `${upsertErr.message} — run supabase/add_inventory_persistence.sql in Supabase.`
+          : upsertErr.message,
+      )
+      return
+    }
+    if (!data?.length) {
+      setError(
+        'Ending inventory did not persist. Use an Owner/Admin/Inventory account and run supabase/add_inventory_persistence.sql.',
+      )
+      return
+    }
+    setMessage(`Saved ending inventory for ${data.length} item(s).`)
+  }
 
   function updateLine(index: number, patch: Partial<LineForm>) {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)))
@@ -348,7 +491,7 @@ export function StockAssessment() {
   }
 
   async function applyStockDelta(itemId: string, delta: number) {
-    if (delta === 0) return
+    if (delta === 0) return true
     const { data } = await supabase
       .from('inventory_items')
       .select('stock')
@@ -356,7 +499,20 @@ export function StockAssessment() {
       .maybeSingle()
     const current = Number((data as { stock?: number } | null)?.stock ?? 0)
     const next = Math.max(0, current + delta)
-    await supabase.from('inventory_items').update({ stock: next }).eq('id', itemId)
+    const { data: updated, error: updErr } = await supabase
+      .from('inventory_items')
+      .update({ stock: next })
+      .eq('id', itemId)
+      .select('id')
+      .maybeSingle()
+    if (updErr || !updated?.id) {
+      setError(
+        updErr?.message ||
+          'Stock change did not persist. Use an Owner/Admin/Inventory account.',
+      )
+      return false
+    }
+    return true
   }
 
   async function onSaveIssue(e: FormEvent) {
@@ -392,7 +548,12 @@ export function StockAssessment() {
       const prevLines = previous?.inventory_issue_lines ?? []
 
       for (const line of prevLines) {
-        await applyStockDelta(line.inventory_item_id, Number(line.qty) || 0)
+        const ok = await applyStockDelta(line.inventory_item_id, Number(line.qty) || 0)
+        if (!ok) {
+          setSaving(false)
+          await load()
+          return
+        }
       }
 
       const { error: headerErr } = await supabase
@@ -485,7 +646,12 @@ export function StockAssessment() {
     }
 
     for (const line of valid) {
-      await applyStockDelta(line.inventory_item_id, -line.qty)
+      const ok = await applyStockDelta(line.inventory_item_id, -line.qty)
+      if (!ok) {
+        setSaving(false)
+        await load()
+        return
+      }
     }
 
     setSaving(false)
@@ -503,7 +669,11 @@ export function StockAssessment() {
     setMessage('')
     const issueLines = issue.inventory_issue_lines ?? []
     for (const line of issueLines) {
-      await applyStockDelta(line.inventory_item_id, Number(line.qty) || 0)
+      const restored = await applyStockDelta(line.inventory_item_id, Number(line.qty) || 0)
+      if (!restored) {
+        await load()
+        return
+      }
     }
     const { error: delErr } = await supabase.from('inventory_issues').delete().eq('id', issue.id)
     if (delErr) {
@@ -588,18 +758,26 @@ export function StockAssessment() {
           <p className="sa-hint">
             Beginning is reconstructed from current stock minus receipts/issues since the start
             date. Received and Issued/Used are totals inside the selected range. Required stock is
-            Beginning + Received − Issued/Used. Ending inventory is your physical Supply Room
-            count; variance is Required − Ending.
+            Beginning + Received − Issued/Used (calculated, not stored). Ending inventory is your
+            physical Supply Room count and is persisted per period; variance is Required − Ending.
           </p>
         </div>
       </div>
 
       <div className="panel" style={{ marginBottom: 16 }}>
-        <div className="panel-header">
-          <h2 className="panel-title">
+        <div className="panel-header" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+          <h2 className="panel-title" style={{ flex: 1, margin: 0 }}>
             <ClipboardList size={16} style={{ marginRight: 8, verticalAlign: -2 }} />
             Assessment sheet
           </h2>
+          <button
+            className="btn btn-primary btn-sm"
+            type="button"
+            disabled={saving || loading || !sheetRows.length}
+            onClick={() => void saveAllEndings()}
+          >
+            {saving ? 'Saving…' : 'Save ending inventory'}
+          </button>
         </div>
         <div className="panel-body">
           {loading ? (
@@ -647,9 +825,16 @@ export function StockAssessment() {
                               const next = e.target.value
                               setEndingByItem((prev) => ({ ...prev, [row.id]: next }))
                             }}
+                            onBlur={(e) => {
+                              void persistEnding(row.id, e.target.value)
+                            }}
                             placeholder="0"
                             aria-label={`Ending inventory for ${row.name}`}
+                            disabled={endingSavingId === row.id}
                           />
+                          {endingSavingId === row.id ? (
+                            <div className="sa-muted">Saving…</div>
+                          ) : null}
                         </div>
                       </td>
                       <td>{row.required}</td>
@@ -663,6 +848,10 @@ export function StockAssessment() {
               </table>
             </div>
           )}
+          <p className="sa-hint" style={{ marginTop: 12 }}>
+            Ending inventory is saved to the database for this period (blur each cell or use Save
+            ending inventory). Required stock is calculated and not stored.
+          </p>
         </div>
       </div>
 

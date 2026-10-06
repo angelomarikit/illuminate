@@ -65,6 +65,8 @@ create table if not exists public.inventory_items (
   stock integer not null default 0,
   reorder_level integer not null default 0,
   unit text not null default 'pc',
+  unit_cost numeric(12,2) not null default 0,
+  selling_price numeric(12,2) not null default 0,
   expiry date,
   created_at timestamptz not null default now()
 );

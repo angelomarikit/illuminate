@@ -135,13 +135,52 @@ export function Receiving() {
     }
 
     for (const line of valid) {
-      const item = items.find((i) => i.id === line.inventory_item_id)
-      if (!item) continue
-      const patch: { stock: number; expiry?: string } = {
-        stock: item.stock + line.qty,
+      const { data: currentRow, error: readErr } = await supabase
+        .from('inventory_items')
+        .select('id, stock')
+        .eq('id', line.inventory_item_id)
+        .maybeSingle()
+      if (readErr || !currentRow) {
+        setSaving(false)
+        setError(
+          readErr?.message ||
+            'Could not read current stock after receipt. Re-check catalog permissions.',
+        )
+        await load()
+        return
       }
-      if (line.expiry) patch.expiry = line.expiry
-      await supabase.from('inventory_items').update(patch).eq('id', item.id)
+      const nextStock = Math.max(0, Number(currentRow.stock) || 0) + line.qty
+      const patchWithCost: { stock: number; expiry?: string; unit_cost?: number } = {
+        stock: nextStock,
+        unit_cost: line.unit_cost,
+      }
+      if (line.expiry) patchWithCost.expiry = line.expiry
+      let { data: updated, error: updErr } = await supabase
+        .from('inventory_items')
+        .update(patchWithCost)
+        .eq('id', line.inventory_item_id)
+        .select('id')
+        .maybeSingle()
+      // Catalog price columns require add_inventory_persistence.sql; still update stock if missing.
+      if (updErr?.message.includes('unit_cost')) {
+        const stockOnly: { stock: number; expiry?: string } = { stock: nextStock }
+        if (line.expiry) stockOnly.expiry = line.expiry
+        ;({ data: updated, error: updErr } = await supabase
+          .from('inventory_items')
+          .update(stockOnly)
+          .eq('id', line.inventory_item_id)
+          .select('id')
+          .maybeSingle())
+      }
+      if (updErr || !updated?.id) {
+        setSaving(false)
+        setError(
+          updErr?.message ||
+            'Stock update did not persist after receipt. Use Owner/Admin/Inventory access.',
+        )
+        await load()
+        return
+      }
     }
 
     setSaving(false)

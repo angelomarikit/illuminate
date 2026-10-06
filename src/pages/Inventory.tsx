@@ -18,6 +18,8 @@ type Row = {
   reorder_level: number
   unit: string
   expiry: string | null
+  unit_cost?: number | null
+  selling_price?: number | null
 }
 
 type ServiceOpt = { id: string; name: string; category: string }
@@ -37,6 +39,8 @@ const emptyItem = {
   reorderLevel: '5',
   unit: 'pc',
   expiry: '',
+  unitCost: '0',
+  sellingPrice: '0',
 }
 
 function mapRow(row: Row): InventoryItem {
@@ -45,11 +49,13 @@ function mapRow(row: Row): InventoryItem {
     name: row.name,
     sku: row.sku,
     category: row.category,
-    stock: row.stock,
-    reorderLevel: row.reorder_level,
+    stock: Number(row.stock) || 0,
+    reorderLevel: Number(row.reorder_level) || 0,
     unit: row.unit,
     branchId: row.branch_id ?? '',
     expiry: row.expiry ?? undefined,
+    unitCost: Number(row.unit_cost) || 0,
+    sellingPrice: Number(row.selling_price) || 0,
   }
 }
 
@@ -57,6 +63,19 @@ function serviceName(link: ServiceLink) {
   const s = link.services
   if (Array.isArray(s)) return s[0]?.name || '—'
   return s?.name || '—'
+}
+
+function persistenceHint(message: string) {
+  if (message.includes('unit_cost') || message.includes('selling_price')) {
+    return `${message} — run supabase/add_inventory_persistence.sql in Supabase.`
+  }
+  if (message.includes('deleted_at')) {
+    return `${message} — run supabase/add_stocktake_line_snapshots.sql in Supabase.`
+  }
+  if (message.includes('is_inventory_access') || message.includes('policy')) {
+    return `${message} — run supabase/add_inventory_role.sql and use an Owner/Admin/Inventory account.`
+  }
+  return message
 }
 
 export function Inventory() {
@@ -91,19 +110,12 @@ export function Inventory() {
           .select('id, service_id, inventory_item_id, qty_per_service, services(name)'),
       ])
     if (err) {
-      setError(
-        err.message.includes('deleted_at')
-          ? `${err.message} — run supabase/add_stocktake_line_snapshots.sql in Supabase.`
-          : err.message.includes('is_inventory_access') || err.message.includes('policy')
-            ? `${err.message} — run supabase/add_inventory_role.sql and use an Owner/Admin/Inventory account.`
-            : err.message,
-      )
+      setError(persistenceHint(err.message))
     } else {
       setError('')
       setRows((data as Row[] | null)?.map(mapRow) ?? [])
     }
     if (linkErr && !linkErr.message.includes('schema cache')) {
-      // table may not exist yet — surface once
       if (linkErr.message.includes('service_inventory')) {
         setError(`${linkErr.message} — run supabase/add_inventory_role.sql in Supabase.`)
       }
@@ -114,7 +126,7 @@ export function Inventory() {
   }, [branchId])
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
 
   const stats = useMemo(
@@ -142,19 +154,55 @@ export function Inventory() {
     e.preventDefault()
     setSaving(true)
     setError('')
-    const { error: err } = await supabase.from('inventory_items').insert({
+    const basePayload = {
       name: form.name.trim(),
       sku: form.sku.trim(),
       category: form.category,
-      stock: Number(form.stock) || 0,
-      reorder_level: Number(form.reorderLevel) || 0,
+      stock: Math.max(0, Number(form.stock) || 0),
+      reorder_level: Math.max(0, Number(form.reorderLevel) || 0),
       unit: form.unit.trim() || 'pc',
       expiry: form.expiry || null,
       branch_id: isUuid(branchId) ? branchId : null,
-    })
+    }
+    const withPrices = {
+      ...basePayload,
+      unit_cost: Math.max(0, Number(form.unitCost) || 0),
+      selling_price: Math.max(0, Number(form.sellingPrice) || 0),
+    }
+    let { data, error: err } = await supabase
+      .from('inventory_items')
+      .insert(withPrices)
+      .select('id')
+      .maybeSingle()
+    if (
+      err &&
+      (err.message.includes('unit_cost') || err.message.includes('selling_price'))
+    ) {
+      ;({ data, error: err } = await supabase
+        .from('inventory_items')
+        .insert(basePayload)
+        .select('id')
+        .maybeSingle())
+      if (!err && data?.id) {
+        setSaving(false)
+        setForm(emptyItem)
+        setMode('none')
+        setMessage(
+          'Item saved. Run supabase/add_inventory_persistence.sql to enable unit cost / selling price columns.',
+        )
+        await load()
+        return
+      }
+    }
     setSaving(false)
     if (err) {
-      setError(err.message)
+      setError(persistenceHint(err.message))
+      return
+    }
+    if (!data?.id) {
+      setError(
+        'Item was not saved. Confirm you are signed in as Owner, Admin, or Inventory Specialist, then run supabase/add_inventory_persistence.sql if needed.',
+      )
       return
     }
     setForm(emptyItem)
@@ -173,13 +221,21 @@ export function Inventory() {
     setSaving(true)
     setError('')
     const nextStock = Math.max(0, item.stock + (Number(adjustQty) || 0))
-    const { error: err } = await supabase
+    const { data, error: err } = await supabase
       .from('inventory_items')
       .update({ stock: nextStock })
       .eq('id', item.id)
+      .select('id, stock')
+      .maybeSingle()
     setSaving(false)
     if (err) {
-      setError(err.message)
+      setError(persistenceHint(err.message))
+      return
+    }
+    if (!data?.id) {
+      setError(
+        'Stock adjust did not persist. Use an Owner/Admin/Inventory account and confirm RLS migrations are applied.',
+      )
       return
     }
     setAdjustQty('0')
@@ -228,6 +284,8 @@ export function Inventory() {
       reorderLevel: String(item.reorderLevel),
       unit: item.unit,
       expiry: item.expiry ? item.expiry.slice(0, 10) : '',
+      unitCost: String(item.unitCost ?? 0),
+      sellingPrice: String(item.sellingPrice ?? 0),
     })
   }
 
@@ -249,21 +307,56 @@ export function Inventory() {
     setSaving(true)
     setError('')
     setMessage('')
-    const { error: err } = await supabase
+    const basePatch = {
+      name,
+      sku,
+      category: editForm.category.trim() || 'Supplies',
+      stock: Math.max(0, Number(editForm.stock) || 0),
+      reorder_level: Math.max(0, Number(editForm.reorderLevel) || 0),
+      unit: editForm.unit.trim() || 'pc',
+      expiry: editForm.expiry || null,
+    }
+    const withPrices = {
+      ...basePatch,
+      unit_cost: Math.max(0, Number(editForm.unitCost) || 0),
+      selling_price: Math.max(0, Number(editForm.sellingPrice) || 0),
+    }
+    let { data, error: err } = await supabase
       .from('inventory_items')
-      .update({
-        name,
-        sku,
-        category: editForm.category.trim() || 'Supplies',
-        stock: Math.max(0, Number(editForm.stock) || 0),
-        reorder_level: Math.max(0, Number(editForm.reorderLevel) || 0),
-        unit: editForm.unit.trim() || 'pc',
-        expiry: editForm.expiry || null,
-      })
+      .update(withPrices)
       .eq('id', editingId)
+      .select('id, stock, reorder_level')
+      .maybeSingle()
+    if (
+      err &&
+      (err.message.includes('unit_cost') || err.message.includes('selling_price'))
+    ) {
+      ;({ data, error: err } = await supabase
+        .from('inventory_items')
+        .update(basePatch)
+        .eq('id', editingId)
+        .select('id, stock, reorder_level')
+        .maybeSingle())
+      if (!err && data?.id) {
+        setMessage(
+          'Stock/reorder saved. Run supabase/add_inventory_persistence.sql to enable price columns.',
+        )
+        setEditingId(null)
+        setEditForm(emptyItem)
+        setSaving(false)
+        await load()
+        return
+      }
+    }
     setSaving(false)
     if (err) {
-      setError(err.message)
+      setError(persistenceHint(err.message))
+      return
+    }
+    if (!data?.id) {
+      setError(
+        'Update did not persist (0 rows). Sign in as Owner/Admin/Inventory and run supabase/add_inventory_persistence.sql if needed.',
+      )
       return
     }
     setMessage(`Updated item: ${name}.`)
@@ -272,7 +365,7 @@ export function Inventory() {
     await load()
   }
 
-    async function unlink(id: string) {
+  async function unlink(id: string) {
     const { error: err } = await supabase.from('service_inventory').delete().eq('id', id)
     if (err) {
       setError(err.message)
@@ -327,7 +420,7 @@ export function Inventory() {
           </div>
           <div className="panel-body">
             <form
-              onSubmit={onAdd}
+              onSubmit={(e) => void onAdd(e)}
               style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}
             >
               <div className="field">
@@ -369,6 +462,7 @@ export function Inventory() {
                 <input
                   className="input"
                   type="number"
+                  min={0}
                   value={form.stock}
                   onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
                 />
@@ -378,8 +472,31 @@ export function Inventory() {
                 <input
                   className="input"
                   type="number"
+                  min={0}
                   value={form.reorderLevel}
                   onChange={(e) => setForm((f) => ({ ...f, reorderLevel: e.target.value }))}
+                />
+              </div>
+              <div className="field">
+                <label>Unit cost</label>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.unitCost}
+                  onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
+                />
+              </div>
+              <div className="field">
+                <label>Selling price</label>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.sellingPrice}
+                  onChange={(e) => setForm((f) => ({ ...f, sellingPrice: e.target.value }))}
                 />
               </div>
               <div className="field">
@@ -408,7 +525,7 @@ export function Inventory() {
           </div>
           <div className="panel-body">
             <form
-              onSubmit={onAdjust}
+              onSubmit={(e) => void onAdjust(e)}
               style={{
                 display: 'grid',
                 gap: 12,
@@ -456,7 +573,7 @@ export function Inventory() {
           </div>
           <div className="panel-body">
             <form
-              onSubmit={onLink}
+              onSubmit={(e) => void onLink(e)}
               style={{
                 display: 'grid',
                 gap: 12,
@@ -553,6 +670,8 @@ export function Inventory() {
                     <th>Category</th>
                     <th>Stock</th>
                     <th>Reorder at</th>
+                    <th>Unit cost</th>
+                    <th>Sell price</th>
                     <th>Linked services</th>
                     <th>Expiry</th>
                     <th>Status</th>
@@ -584,6 +703,8 @@ export function Inventory() {
                         <td>
                           {item.reorderLevel} {item.unit}
                         </td>
+                        <td>{Number(item.unitCost ?? 0).toFixed(2)}</td>
+                        <td>{Number(item.sellingPrice ?? 0).toFixed(2)}</td>
                         <td>
                           {itemLinks.length === 0 ? (
                             <span style={{ color: 'var(--muted)' }}>—</span>
@@ -675,7 +796,7 @@ export function Inventory() {
             <form onSubmit={(e) => void onEdit(e)}>
               <div className="confirm-modal-body">
                 <p className="confirm-modal-text">
-                  Update product details and on-hand quantity. Changes save to the stock catalog.
+                  Updates write to the database. Refresh will reload these saved values.
                 </p>
                 <div
                   style={{
@@ -747,6 +868,28 @@ export function Inventory() {
                       onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))}
                     />
                   </div>
+                  <div className="field">
+                    <label>Unit cost</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editForm.unitCost}
+                      onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Selling price</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editForm.sellingPrice}
+                      onChange={(e) => setEditForm((f) => ({ ...f, sellingPrice: e.target.value }))}
+                    />
+                  </div>
                   <div className="field" style={{ gridColumn: '1 / -1' }}>
                     <label>Expiry</label>
                     <input
@@ -775,7 +918,6 @@ export function Inventory() {
           </div>
         </div>
       ) : null}
-
     </div>
   )
 }

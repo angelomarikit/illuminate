@@ -55,6 +55,8 @@ export type InventoryItem = {
   unit: string
   branchId: string
   expiry?: string
+  unitCost?: number
+  sellingPrice?: number
 }
 
 export type CustomerHistoryNote = {

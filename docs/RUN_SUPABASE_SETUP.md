@@ -76,6 +76,7 @@ After setup.sql, also run (in order):
 34. `supabase/add_inventory_issues.sql` (**Stock Assessment issued/used**) - `inventory_issues` + `inventory_issue_lines` for period assessment sheet
 35. `supabase/add_customer_intake.sql` (**Register Clients intake**) - occupation, socials, medical checklist, lifestyle, history notes, dual signatures on `customers`
 36. `supabase/add_service_series.sql` (**Services and Series**) - series plans with multiple category+service lines (`service_series` + `service_series_items`) for POS / Avail Service
+37. `supabase/add_inventory_persistence.sql` (**Inventory catalog prices + Stock Assessment endings**) - `inventory_items.unit_cost` / `selling_price`, plus `inventory_assessment_endings` so Ending Inventory survives refresh
 
 Mobile client (Expo) uses the **same** Supabase project. See `docs/MOBILE_EXPO.md`, `docs/MOBILE_NOTIFICATIONS.md`, and `mobile/.env.example` (`EXPO_PUBLIC_SUPABASE_*`).
 
