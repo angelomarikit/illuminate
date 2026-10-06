@@ -3,7 +3,8 @@ import { CalendarDays, X } from 'lucide-react'
 import { CareNotesPanel } from './CareNotesPanel'
 import { MembershipBadge } from './MembershipBadge'
 import { StatusMessage } from './StatusMessage'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, isUuid } from '../lib/utils'
+import { syncSessionSlotAppointment } from '../lib/sessionAppointments'
 import { supabase } from '../lib/supabase'
 import './SessionScheduleModal.css'
 
@@ -24,6 +25,7 @@ export type SessionPackageForModal = {
   consult_by: string | null
   sales_by: string | null
   status: 'active' | 'completed' | 'cancelled'
+  branch_id?: string | null
 }
 
 export type SessionSlotStatus = 'pending' | 'scheduled' | 'finished' | 'cancelled' | 'no_show'
@@ -206,11 +208,42 @@ export function SessionScheduleModal({
       })
       .eq('id', pkg.id)
 
-    setSaving(false)
     if (pkgErr) {
+      setSaving(false)
       setError(pkgErr.message)
       return
     }
+
+    let customerPhone: string | null = null
+    let customerEmail: string | null = null
+    if (pkg.customer_id && isUuid(pkg.customer_id)) {
+      const { data: cust } = await supabase
+        .from('customers')
+        .select('phone, email')
+        .eq('id', pkg.customer_id)
+        .maybeSingle()
+      customerPhone = (cust as { phone?: string } | null)?.phone ?? null
+      customerEmail = (cust as { email?: string } | null)?.email ?? null
+    }
+
+    for (const slot of slots) {
+      await syncSessionSlotAppointment({
+        packageId: pkg.id,
+        sessionNumber: slot.sessionNumber,
+        customerName: pkg.customer_name,
+        serviceName: pkg.service_name,
+        staffName: pkg.administered_by,
+        scheduledDate: slot.scheduledDate || null,
+        scheduledTime: slot.scheduledTime || null,
+        status: slot.status,
+        notes: slot.notes.trim() || null,
+        branchId: pkg.branch_id ?? null,
+        customerPhone,
+        customerEmail,
+      })
+    }
+
+    setSaving(false)
 
     onSaved(
       `Saved ${slots.length} sessions for ${pkg.customer_name} · ${finishedCount} finished · ${left} left.`,

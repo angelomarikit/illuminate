@@ -5,10 +5,23 @@ import { StaffAssignField } from './StaffAssignField'
 import { StatusMessage } from './StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
+import { syncSessionSlotAppointment } from '../lib/sessionAppointments'
 import { formatCurrency, isUuid, receiptNumber } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import type { Customer, ServiceItem, ServiceSeries, ServiceSeriesItem } from '../types'
 import './AvailServiceModal.css'
+
+const SCHEDULE_HOURS = [
+  '09:00',
+  '10:00',
+  '11:00',
+  '12:00',
+  '13:00',
+  '14:00',
+  '15:00',
+  '16:00',
+  '17:00',
+]
 
 type ProfileOption = {
   id: string
@@ -129,6 +142,8 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
   const [sessions, setSessions] = useState('1')
   const [attendant, setAttendant] = useState('')
   const [notes, setNotes] = useState('')
+  const [scheduleDate, setScheduleDate] = useState(() => todayIso())
+  const [scheduleTime, setScheduleTime] = useState('10:00')
 
   useEffect(() => {
     if (!open) return
@@ -148,6 +163,8 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       setSessions('1')
       setAttendant('')
       setNotes('')
+      setScheduleDate(todayIso())
+      setScheduleTime('10:00')
 
       const [svcRes, catsRes, profRes, seriesRes] = await Promise.all([
         supabase
@@ -383,6 +400,14 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       setError('Select or enter an attendant.')
       return
     }
+    if (!scheduleDate) {
+      setError('Choose a schedule date for the Appointment Calendar.')
+      return
+    }
+    if (!scheduleTime) {
+      setError('Choose a schedule time for the Appointment Calendar.')
+      return
+    }
 
     setSaving(true)
     setError('')
@@ -445,13 +470,17 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       sessions_used: 0,
       package_amount: line.packageAmount,
       sold_on: soldOn,
-      next_session_date: null,
+      next_session_date: scheduleDate,
       sale_receipt_no: receipt,
       status: 'active',
       ...attribution,
     }))
 
-    const { error: sessionErr } = await supabase.from('client_session_packages').insert(packageRows)
+    const { data: insertedPackages, error: sessionErr } = await supabase
+      .from('client_session_packages')
+      .insert(packageRows)
+      .select('id, service_name, total_sessions')
+
     if (sessionErr) {
       setSaving(false)
       setError(
@@ -461,6 +490,51 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
           : sessionErr.message,
       )
       return
+    }
+
+    const packages = (insertedPackages ?? []) as {
+      id: string
+      service_name: string
+      total_sessions: number
+    }[]
+
+    for (const pkg of packages) {
+      const slotPayload = {
+        package_id: pkg.id,
+        session_number: 1,
+        scheduled_date: scheduleDate,
+        scheduled_time: `${scheduleTime}:00`,
+        status: 'scheduled',
+        notes: notes.trim() || null,
+        updated_at: new Date().toISOString(),
+      }
+      const { error: slotErr } = await supabase.from('client_session_slots').upsert(slotPayload, {
+        onConflict: 'package_id,session_number',
+      })
+      if (slotErr) {
+        setSaving(false)
+        setError(
+          slotErr.message.includes('client_session_slots') || slotErr.message.includes('schema cache')
+            ? `${slotErr.message} — run supabase/add_client_session_slots.sql in Supabase.`
+            : slotErr.message,
+        )
+        return
+      }
+
+      await syncSessionSlotAppointment({
+        packageId: pkg.id,
+        sessionNumber: 1,
+        customerName: customer.name,
+        serviceName: pkg.service_name,
+        staffName: attendant.trim(),
+        scheduledDate: scheduleDate,
+        scheduledTime: scheduleTime,
+        status: 'scheduled',
+        notes: notes.trim() || null,
+        branchId,
+        customerPhone: customer.phone,
+        customerEmail: customer.email,
+      })
     }
 
     await supabase
@@ -831,6 +905,38 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
           )}
 
           <div className="avail-grid">
+            <div className="field">
+              <label htmlFor="avail-schedule-date">Schedule date *</label>
+              <input
+                id="avail-schedule-date"
+                className="input"
+                type="date"
+                required
+                value={scheduleDate}
+                onChange={(e) => setScheduleDate(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="avail-schedule-time">Schedule time *</label>
+              <select
+                id="avail-schedule-time"
+                className="select"
+                required
+                value={scheduleTime}
+                onChange={(e) => setScheduleTime(e.target.value)}
+              >
+                {SCHEDULE_HOURS.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="avail-hint avail-span-2">
+              First session is listed on the Appointment Calendar at this date and time. Additional
+              sessions can be scheduled later under Client Sessions.
+            </p>
+
             <div className="avail-span-2">
               <StaffAssignField
                 label="Attendant"

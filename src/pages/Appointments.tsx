@@ -30,6 +30,7 @@ import {
   startOfMonth,
   toLocalISODate,
 } from '../lib/dates'
+import { hourBucket, sessionSlotMarker } from '../lib/sessionAppointments'
 import { supabase } from '../lib/supabase'
 import { isUuid } from '../lib/utils'
 import type { Appointment, AppointmentStatus } from '../types'
@@ -240,12 +241,92 @@ export function Appointments() {
     if (isUuid(branchId)) {
       q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
     }
-    const { data, error: err } = await q
-    if (err) setError(err.message)
-    else {
-      setError('')
-      setRows((data as Row[] | null)?.map(mapRow) ?? [])
+    const [{ data, error: err }, slotRes] = await Promise.all([
+      q,
+      supabase
+        .from('client_session_slots')
+        .select(
+          'id, session_number, scheduled_date, scheduled_time, status, notes, package_id, client_session_packages(customer_name, service_name, branch_id, administered_by)',
+        )
+        .not('scheduled_date', 'is', null)
+        .not('scheduled_time', 'is', null)
+        .in('status', ['scheduled', 'finished']),
+    ])
+
+    if (err) {
+      setError(err.message)
+      setLoading(false)
+      return
     }
+
+    const fromAppointments = (data as Row[] | null)?.map(mapRow) ?? []
+    const markers = new Set(
+      fromAppointments
+        .map((a) => a.specialNote || '')
+        .flatMap((note) => {
+          const m = note.match(/\[session_slot:[0-9a-f-]+:\d+\]/gi)
+          return m ?? []
+        })
+        .map((m) => m.toLowerCase()),
+    )
+
+    type SlotPkg =
+      | {
+          customer_name?: string
+          service_name?: string
+          branch_id?: string | null
+          administered_by?: string | null
+        }
+      | {
+          customer_name?: string
+          service_name?: string
+          branch_id?: string | null
+          administered_by?: string | null
+        }[]
+      | null
+
+    const fromSlots: Appointment[] = []
+    if (!slotRes.error) {
+      for (const raw of slotRes.data ?? []) {
+        const row = raw as {
+          id: string
+          session_number: number
+          scheduled_date: string
+          scheduled_time: string
+          status: string
+          notes: string | null
+          package_id: string
+          client_session_packages: SlotPkg
+        }
+        const pkgRaw = row.client_session_packages
+        const pkg = Array.isArray(pkgRaw) ? pkgRaw[0] : pkgRaw
+        if (!pkg) continue
+        if (isUuid(branchId) && pkg.branch_id && pkg.branch_id !== branchId) continue
+
+        const marker = sessionSlotMarker(row.package_id, row.session_number)
+        if (markers.has(marker.toLowerCase())) continue
+
+        const time = String(row.scheduled_time).slice(0, 5)
+        fromSlots.push({
+          id: `slot-${row.id}`,
+          customerName: pkg.customer_name || 'Client',
+          serviceName: `${pkg.service_name || 'Service'} · Session ${row.session_number}`,
+          staffName: pkg.administered_by || '',
+          date: String(row.scheduled_date).slice(0, 10),
+          time,
+          durationMin: 60,
+          status: (row.status === 'finished' ? 'completed' : 'confirmed') as AppointmentStatus,
+          branchId: pkg.branch_id || '',
+          type: 'appointment',
+          specialNote: [row.notes, marker].filter(Boolean).join('\n'),
+          source: 'avail_service',
+          calendarColor: CALENDAR_COLORS[2],
+        })
+      }
+    }
+
+    setError('')
+    setRows([...fromAppointments, ...fromSlots])
     setLoading(false)
   }, [branchId])
 
@@ -325,6 +406,12 @@ export function Appointments() {
   }
 
   function openEditBooking(apt: Appointment) {
+    if (apt.id.startsWith('slot-')) {
+      setMessage(
+        'This booking comes from Client Sessions. Open Sessions to edit the schedule.',
+      )
+      return
+    }
     setError('')
     setMessage('')
     setEditingId(apt.id)
@@ -961,7 +1048,7 @@ export function Appointments() {
                   <div className="calendar-hour">{formatStandardTime(hour)}</div>
                   {boardDays.map((day) => {
                     const slots = boardAppointments.filter(
-                      (a) => a.date === day.key && a.time === hour,
+                      (a) => a.date === day.key && hourBucket(a.time) === hour,
                     )
                     const compact = slots.length >= 3
                     return (
@@ -1002,6 +1089,12 @@ export function Appointments() {
                                 title={`${done ? 'Completed · ' : ''}Edit ${slot.customerName} · ${slot.serviceName}`}
                                 onClick={(e) => {
                                   e.stopPropagation()
+                                  if (slot.id.startsWith('slot-')) {
+                                    setMessage(
+                                      'This booking comes from Client Sessions. Open Sessions to edit the schedule.',
+                                    )
+                                    return
+                                  }
                                   openEditBooking(slot)
                                 }}
                               >
@@ -1012,7 +1105,10 @@ export function Appointments() {
                                 ) : null}
                                 <strong>{slot.customerName}</strong>
                                 <span>{slot.serviceName}</span>
-                                <em>{done ? 'Completed' : slot.status}</em>
+                                <em>
+                                  {formatStandardTime(slot.time)}
+                                  {done ? ' · Completed' : ` · ${slot.status}`}
+                                </em>
                               </button>
                             )
                           })}
@@ -1244,7 +1340,13 @@ export function Appointments() {
                       </td>
                       <td>{apt.serviceName}</td>
                       <td>
-                        <span className="badge">{apt.source === 'web' ? 'website' : apt.type}</span>
+                        <span className="badge">
+                          {apt.source === 'web'
+                            ? 'website'
+                            : apt.source === 'avail_service'
+                              ? 'avail / session'
+                              : apt.type}
+                        </span>
                       </td>
                       <td>
                         <span className={statusBadge(apt.status)}>{apt.status}</span>
