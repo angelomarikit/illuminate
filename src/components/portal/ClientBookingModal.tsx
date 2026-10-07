@@ -2,24 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useLinkedCustomer } from '../../hooks/useLinkedCustomer'
+import { CLINIC_TIME_SLOTS } from '../../lib/sessionAppointments'
 import { supabase } from '../../lib/supabase'
 import './client-booking-modal.css'
 
-const TIME_SLOTS = [
-  '09:00',
-  '10:00',
-  '11:00',
-  '12:00',
-  '13:00',
-  '14:00',
-  '15:00',
-  '16:00',
-  '17:00',
-  '18:00',
-  '19:00',
-  '20:00',
-  '21:00',
-]
+const TIME_SLOTS = CLINIC_TIME_SLOTS
 
 type ServiceOption = { id: string; name: string; duration_min: number }
 

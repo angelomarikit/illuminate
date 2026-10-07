@@ -30,27 +30,16 @@ import {
   startOfMonth,
   toLocalISODate,
 } from '../lib/dates'
-import { hourBucket, sessionSlotMarker } from '../lib/sessionAppointments'
+import { CLINIC_TIME_SLOTS, sessionSlotMarker } from '../lib/sessionAppointments'
 import { supabase } from '../lib/supabase'
 import { isUuid } from '../lib/utils'
 import type { Appointment, AppointmentStatus } from '../types'
 import './appointments.css'
 
-const hours = [
-  '09:00',
-  '10:00',
-  '11:00',
-  '12:00',
-  '13:00',
-  '14:00',
-  '15:00',
-  '16:00',
-  '17:00',
-  '18:00',
-  '19:00',
-  '20:00',
-  '21:00',
-]
+const hours = CLINIC_TIME_SLOTS
+/** Half-hour row height for duration-spanning events (Google Calendar style). */
+const CAL_ROW_PX = 48
+const SLOT_MINUTES = 30
 
 const CALENDAR_COLORS = [
   '#b8954a',
@@ -84,6 +73,24 @@ function formatStandardTime(hhmm: string): string {
   return `${h}:${ms} ${period}`
 }
 
+function timeToMinutes(hhmm: string): number {
+  const [hs, ms = '00'] = String(hhmm).slice(0, 5).split(':')
+  return (Number(hs) || 0) * 60 + (Number(ms) || 0)
+}
+
+function minutesToTime(total: number): string {
+  const clamped = Math.max(0, total)
+  const h = Math.floor(clamped / 60)
+  const m = clamped % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+function formatTimeRange(start: string, durationMin: number): string {
+  const mins = Math.max(SLOT_MINUTES, Number(durationMin) || 60)
+  const end = minutesToTime(timeToMinutes(start) + mins)
+  return `${formatStandardTime(start)} – ${formatStandardTime(end)}`
+}
+
 function contrastingInk(hex: string): string {
   const raw = hex.replace('#', '')
   if (raw.length !== 6) return '#111111'
@@ -101,6 +108,66 @@ function boardDaysFrom(startIso: string, count: number) {
     const label = d.toLocaleDateString('en-PH', { weekday: 'short', day: 'numeric' })
     return { key, label }
   })
+}
+
+type LaidOutEvent = {
+  apt: Appointment
+  top: number
+  height: number
+  col: number
+  colCount: number
+  startMin: number
+  endMin: number
+}
+
+/** Pack overlapping appointments into columns (Google Calendar style). */
+function layoutDayEvents(apts: Appointment[], gridStartMin: number): LaidOutEvent[] {
+  const items: LaidOutEvent[] = apts
+    .map((apt) => {
+      const startMin = timeToMinutes(apt.time)
+      const duration = Math.max(SLOT_MINUTES, Number(apt.durationMin) || 60)
+      const endMin = startMin + duration
+      const top = ((startMin - gridStartMin) / SLOT_MINUTES) * CAL_ROW_PX
+      const height = Math.max(
+        CAL_ROW_PX - 4,
+        (duration / SLOT_MINUTES) * CAL_ROW_PX - 4,
+      )
+      return { apt, top, height, startMin, endMin, col: 0, colCount: 1 }
+    })
+    .sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin)
+
+  const clusters: LaidOutEvent[][] = []
+  let active: LaidOutEvent[] = []
+  let activeEnd = -1
+
+  for (const item of items) {
+    if (active.length && item.startMin >= activeEnd) {
+      clusters.push(active)
+      active = []
+      activeEnd = -1
+    }
+    active.push(item)
+    activeEnd = Math.max(activeEnd, item.endMin)
+  }
+  if (active.length) clusters.push(active)
+
+  for (const cluster of clusters) {
+    const colEnds: number[] = []
+    for (const item of cluster) {
+      let col = colEnds.findIndex((end) => end <= item.startMin)
+      if (col === -1) {
+        col = colEnds.length
+        colEnds.push(item.endMin)
+      } else {
+        colEnds[col] = item.endMin
+      }
+      item.col = col
+    }
+    const colCount = Math.max(1, colEnds.length)
+    for (const item of cluster) item.colCount = colCount
+  }
+
+  return items
 }
 
 type Row = {
@@ -1038,103 +1105,121 @@ export function Appointments() {
             </div>
           ) : (
             <div
-              className={`calendar-grid ${boardMode === 'day' ? 'is-day' : 'is-week'}`}
-              style={{ '--cal-cols': boardDays.length } as CSSProperties}
+              className={`calendar-board ${boardMode === 'day' ? 'is-day' : 'is-week'}`}
+              style={
+                {
+                  '--cal-cols': boardDays.length,
+                  '--cal-row': `${CAL_ROW_PX}px`,
+                } as CSSProperties
+              }
             >
-              <div className="calendar-corner" />
-              {boardDays.map((day) => (
-                <button
-                  type="button"
-                  className={`calendar-day-head is-clickable ${
-                    day.key === focusDate ? 'is-focus' : ''
-                  }`}
-                  key={day.key}
-                  onClick={() => {
-                    setFocusDate(day.key)
-                    setBoardMode('day')
-                  }}
-                >
-                  {day.label}
-                </button>
-              ))}
-              {hours.map((hour) => (
-                <div className="calendar-row" key={hour}>
-                  <div className="calendar-hour">{formatStandardTime(hour)}</div>
-                  {boardDays.map((day) => {
-                    const slots = boardAppointments.filter(
-                      (a) => a.date === day.key && hourBucket(a.time) === hour,
-                    )
-                    const compact = slots.length >= 3
-                    return (
-                      <div
-                        className={`calendar-cell ${slots.length ? 'has-bookings' : ''}`}
-                        key={`${day.key}-${hour}`}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Add booking ${formatShortDate(day.key)} ${formatStandardTime(hour)}`}
-                        onClick={() => openBookingForm('appointment', { date: day.key, time: hour })}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            openBookingForm('appointment', { date: day.key, time: hour })
-                          }
-                        }}
-                      >
-                        {slots.length > 1 ? (
-                          <div className="calendar-cell-meta">
-                            <span className="calendar-cell-count">{slots.length}</span>
-                          </div>
-                        ) : null}
-                        <div className="calendar-cell-stack">
-                          {slots.map((slot) => {
-                            const bg = slot.calendarColor || CALENDAR_COLORS[0]
-                            const done = slot.status === 'completed'
-                            return (
-                              <button
-                                key={slot.id}
-                                type="button"
-                                className={`calendar-event ${compact ? 'is-compact' : ''} ${
-                                  slot.status === 'pending' ? 'is-pending' : ''
-                                } ${done ? 'is-completed' : ''}`}
-                                style={{
-                                  background: bg,
-                                  color: contrastingInk(bg),
-                                }}
-                                title={`${done ? 'Completed · ' : ''}Edit ${slot.customerName} · ${slot.serviceName}`}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (slot.id.startsWith('slot-')) {
-                                    setMessage(
-                                      'This booking comes from Client Sessions. Open Sessions to edit the schedule.',
-                                    )
-                                    return
-                                  }
-                                  openEditBooking(slot)
-                                }}
-                              >
-                                {done ? (
-                                  <span className="calendar-event-check" aria-label="Completed">
-                                    <Check size={10} strokeWidth={2.75} />
-                                  </span>
-                                ) : null}
-                                <strong>{slot.customerName}</strong>
-                                <span>{slot.serviceName}</span>
-                                <em>
-                                  {formatStandardTime(slot.time)}
-                                  {done ? ' · Completed' : ` · ${slot.status}`}
-                                </em>
-                              </button>
-                            )
-                          })}
-                        </div>
-                        {!slots.length ? (
-                          <span className="calendar-cell-hint">Book</span>
-                        ) : null}
-                      </div>
-                    )
-                  })}
+              <div className="calendar-board-head">
+                <div className="calendar-corner" />
+                {boardDays.map((day) => (
+                  <button
+                    type="button"
+                    className={`calendar-day-head is-clickable ${
+                      day.key === focusDate ? 'is-focus' : ''
+                    }`}
+                    key={day.key}
+                    onClick={() => {
+                      setFocusDate(day.key)
+                      setBoardMode('day')
+                    }}
+                  >
+                    {day.label}
+                  </button>
+                ))}
+              </div>
+              <div className="calendar-board-body">
+                <div className="calendar-time-col" aria-hidden>
+                  {hours.map((hour) => (
+                    <div className="calendar-hour" key={hour} style={{ height: CAL_ROW_PX }}>
+                      {formatStandardTime(hour)}
+                    </div>
+                  ))}
                 </div>
-              ))}
+                {boardDays.map((day) => {
+                  const dayApts = boardAppointments.filter((a) => a.date === day.key)
+                  const laidOut = layoutDayEvents(dayApts, timeToMinutes(hours[0]))
+                  return (
+                    <div className="calendar-day-col" key={day.key}>
+                      <div className="calendar-day-slots">
+                        {hours.map((hour) => (
+                          <div
+                            key={hour}
+                            className="calendar-slot"
+                            style={{ height: CAL_ROW_PX }}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Add booking ${formatShortDate(day.key)} ${formatStandardTime(hour)}`}
+                            onClick={() =>
+                              openBookingForm('appointment', { date: day.key, time: hour })
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                openBookingForm('appointment', { date: day.key, time: hour })
+                              }
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div className="calendar-day-events">
+                        {laidOut.map(({ apt, top, height, col, colCount }) => {
+                          const bg = apt.calendarColor || CALENDAR_COLORS[0]
+                          const done = apt.status === 'completed'
+                          const duration = Math.max(SLOT_MINUTES, Number(apt.durationMin) || 60)
+                          const compact = duration <= 30
+                          const widthPct = 100 / colCount
+                          return (
+                            <button
+                              key={apt.id}
+                              type="button"
+                              className={`calendar-event is-spanning ${
+                                compact ? 'is-compact' : ''
+                              } ${apt.status === 'pending' ? 'is-pending' : ''} ${
+                                done ? 'is-completed' : ''
+                              }`}
+                              style={{
+                                top,
+                                height,
+                                left: `calc(${col * widthPct}% + 2px)`,
+                                width: `calc(${widthPct}% - 4px)`,
+                                background: bg,
+                                color: contrastingInk(bg),
+                              }}
+                              title={`${done ? 'Completed · ' : ''}${apt.customerName} · ${apt.serviceName} · ${formatTimeRange(apt.time, duration)} (${duration} min)`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (apt.id.startsWith('slot-')) {
+                                  setMessage(
+                                    'This booking comes from Client Sessions. Open Sessions to edit the schedule.',
+                                  )
+                                  return
+                                }
+                                openEditBooking(apt)
+                              }}
+                            >
+                              {done ? (
+                                <span className="calendar-event-check" aria-label="Completed">
+                                  <Check size={10} strokeWidth={2.75} />
+                                </span>
+                              ) : null}
+                              <strong>{apt.customerName}</strong>
+                              {!compact ? <span>{apt.serviceName}</span> : null}
+                              <em>
+                                {formatTimeRange(apt.time, duration)}
+                                {done ? ' · Done' : ''}
+                              </em>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>

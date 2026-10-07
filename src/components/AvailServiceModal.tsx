@@ -5,27 +5,13 @@ import { StaffAssignField } from './StaffAssignField'
 import { StatusMessage } from './StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
-import { syncSessionSlotAppointment } from '../lib/sessionAppointments'
+import { CLINIC_TIME_SLOTS, syncSessionSlotAppointment } from '../lib/sessionAppointments'
 import { formatCurrency, isUuid, receiptNumber } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import type { Customer, ServiceItem, ServiceSeries, ServiceSeriesItem } from '../types'
 import './AvailServiceModal.css'
 
-const SCHEDULE_HOURS = [
-  '09:00',
-  '10:00',
-  '11:00',
-  '12:00',
-  '13:00',
-  '14:00',
-  '15:00',
-  '16:00',
-  '17:00',
-  '18:00',
-  '19:00',
-  '20:00',
-  '21:00',
-]
+const SCHEDULE_HOURS = CLINIC_TIME_SLOTS
 
 type ProfileOption = {
   id: string

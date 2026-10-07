@@ -29,6 +29,7 @@ import galleryAcneResults from '../assets/gallery/acne-scar-results.png'
 import galleryFacial from '../assets/gallery/facial-care.png'
 import galleryFacialAlt from '../assets/gallery/facial-care-alt.png'
 import galleryMakeup from '../assets/gallery/semi-permanent-makeup.png'
+import { CLINIC_TIME_SLOTS } from '../lib/sessionAppointments'
 import { supabase } from '../lib/supabase'
 import './landing.css'
 
@@ -101,17 +102,7 @@ const SERVICE_GALLERY = [
   },
 ] as const
 
-const TIME_SLOTS = [
-  '09:00',
-  '10:00',
-  '11:00',
-  '12:00',
-  '13:00',
-  '14:00',
-  '15:00',
-  '16:00',
-  '17:00',
-]
+const TIME_SLOTS = CLINIC_TIME_SLOTS
 
 type FeedbackItem = {
   id: string

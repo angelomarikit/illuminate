@@ -1,15 +1,32 @@
 import { supabase } from './supabase'
 import { isUuid } from './utils'
 
+/** Clinic booking slots: 9:00 AM – 9:00 PM in 30-minute steps. */
+export function buildClinicTimeSlots(startHour = 9, endHour = 21): string[] {
+  const out: string[] = []
+  for (let h = startHour; h <= endHour; h++) {
+    const hh = String(h).padStart(2, '0')
+    out.push(`${hh}:00`)
+    if (h < endHour) out.push(`${hh}:30`)
+  }
+  return out
+}
+
+export const CLINIC_TIME_SLOTS = buildClinicTimeSlots()
+
 /** Marker stored in appointments.special_note to link a calendar row to a package session. */
 export function sessionSlotMarker(packageId: string, sessionNumber: number) {
   return `[session_slot:${packageId}:${sessionNumber}]`
 }
 
+/** Floor a clock time to the nearest 30-minute calendar row (e.g. 14:45 → 14:30). */
 export function hourBucket(time: string): string {
-  const hh = String(time || '').slice(0, 2)
-  if (!/^\d{2}$/.test(hh)) return '09:00'
-  return `${hh}:00`
+  const [hs, ms = '00'] = String(time || '').slice(0, 5).split(':')
+  const h = Number(hs)
+  const m = Number(ms)
+  if (!Number.isFinite(h)) return '09:00'
+  const half = Number.isFinite(m) && m >= 30 ? 30 : 0
+  return `${String(h).padStart(2, '0')}:${String(half).padStart(2, '0')}`
 }
 
 function mapSlotStatusToAppointment(
