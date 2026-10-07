@@ -47,7 +47,7 @@ const CALENDAR_COLORS = [
   '#7a9e7e',
   '#c4787a',
   '#6b8cae',
-  '#d4a017',
+  '#e87a2e',
   '#8b6b8b',
   '#5a9a8a',
 ] as const
