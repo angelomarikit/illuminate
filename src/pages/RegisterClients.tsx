@@ -223,7 +223,7 @@ export function RegisterClients() {
     if (step === 0) {
       if (!profile.name.trim()) return 'Name is required.'
       if (!profile.phone.trim()) return 'Contact number is required.'
-      if (!profile.email.trim() || !profile.email.includes('@')) return 'A valid email is required.'
+      if (profile.email.trim() && !profile.email.includes('@')) return 'Enter a valid email, or leave it blank.'
     }
     if (step === 6) {
       if (!signaturePrimary) return 'Please provide the first signature and confirm it.'
@@ -281,7 +281,7 @@ export function RegisterClients() {
       sex: profile.sex.trim() || null,
       address: profile.address.trim() || null,
       phone: profile.phone.trim(),
-      email: profile.email.trim().toLowerCase(),
+      email: profile.email.trim() ? profile.email.trim().toLowerCase() : '',
       occupation: profile.occupation.trim() || null,
       birthday,
       age,
@@ -395,15 +395,13 @@ export function RegisterClients() {
                 />
               </div>
               <div className="field">
-                <label>
-                  Email <span className="req">*</span>
-                </label>
+                <label>Email</label>
                 <input
                   className="input"
                   type="email"
-                  required
                   value={profile.email}
                   onChange={(e) => setProfile((p) => ({ ...p, email: e.target.value }))}
+                  placeholder="Optional"
                 />
               </div>
               <div className="field">
