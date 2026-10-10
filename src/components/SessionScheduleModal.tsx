@@ -167,7 +167,8 @@ export function SessionScheduleModal({
     setError('')
 
     const payload = slots.map((slot) => ({
-      ...(slot.id ? { id: slot.id } : {}),
+      // Always send id — some production tables lack gen_random_uuid() default on id
+      id: slot.id || crypto.randomUUID(),
       package_id: pkg.id,
       session_number: slot.sessionNumber,
       scheduled_date: slot.scheduledDate || null,

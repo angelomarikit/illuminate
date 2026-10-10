@@ -2,6 +2,8 @@
 -- Run in Supabase → SQL Editor (safe to re-run)
 -- Used by Client Sessions schedule modal
 
+create extension if not exists pgcrypto;
+
 create table if not exists public.client_session_slots (
   id uuid primary key default gen_random_uuid(),
   package_id uuid not null references public.client_session_packages (id) on delete cascade,
@@ -15,6 +17,14 @@ create table if not exists public.client_session_slots (
   updated_at timestamptz not null default now(),
   unique (package_id, session_number)
 );
+
+-- Fix existing DBs where id has no default (causes: null value in column "id")
+alter table public.client_session_slots
+  alter column id set default gen_random_uuid();
+
+update public.client_session_slots
+set id = gen_random_uuid()
+where id is null;
 
 create index if not exists client_session_slots_package_idx
   on public.client_session_slots (package_id, session_number);
