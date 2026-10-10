@@ -36,7 +36,8 @@
   white-space: nowrap;
 }
 
-.stock-assessment-page .sa-required .input {
+.stock-assessment-page .sa-required .input,
+.stock-assessment-page .sa-ending .input {
   width: 88px;
   min-width: 72px;
 }

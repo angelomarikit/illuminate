@@ -10,6 +10,7 @@ import {
   Clock3,
   QrCode,
   MessageSquare,
+  MessageSquareText,
   Settings,
   Receipt,
   Gift,
@@ -168,6 +169,12 @@ export const navSections: NavSection[] = [
     title: 'System',
     items: [
       { label: 'Feedback', path: '/feedback', icon: Star, roles: ['Owner', 'Admin'] },
+      {
+        label: 'SMS reminders',
+        path: '/sms-reminders',
+        icon: MessageSquareText,
+        roles: ['Owner', 'Admin'],
+      },
       { label: 'Clinic settings', path: '/settings', icon: Settings, roles: ['Owner', 'Admin'] },
     ],
   },

@@ -120,6 +120,7 @@ const PATH_ROLES: Record<string, AppRole[]> = {
   '/my-work': ['Receptionist'],
   '/my-account': ['Owner', 'Admin', 'Receptionist', 'HR', 'Inventory'],
   '/chat': ['Owner', 'Admin', 'Receptionist'],
+  '/sms-reminders': ['Owner', 'Admin'],
   '/settings': ['Owner', 'Admin'],
   '/portal': ['Client'],
   '/portal/services': ['Client'],

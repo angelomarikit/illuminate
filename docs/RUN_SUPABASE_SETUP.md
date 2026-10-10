@@ -77,6 +77,33 @@ After setup.sql, also run (in order):
 35. `supabase/add_customer_intake.sql` (**Register Clients intake**) - occupation, socials, medical checklist, lifestyle, history notes, dual signatures on `customers`
 36. `supabase/add_service_series.sql` (**Services and Series**) - series plans with multiple category+service lines (`service_series` + `service_series_items`) for POS / Avail Service
 37. `supabase/add_inventory_persistence.sql` (**Inventory catalog prices + Stock Assessment endings**) - `inventory_items.unit_cost` / `selling_price`, plus `inventory_assessment_endings` so Ending Inventory survives refresh
+38. `supabase/add_sms_reminders.sql` (**Itexmo SMS confirmations & reminders**) - `sms_settings` + `sms_logs` for Owner/Admin SMS Reminders page
+
+### Itexmo SMS (after #38)
+
+**CLI login is optional.** Prefer the Dashboard so you stay on the correct Supabase account/project in the browser.
+
+1. **SQL only for tables** — run `supabase/add_sms_reminders.sql` in SQL Editor (this project).
+2. **Deploy Edge Function in Dashboard** (not possible via SQL — Deno code must be uploaded):
+   - Open [project `qeuimffcaafjqdyayhdb`](https://supabase.com/dashboard/project/qeuimffcaafjqdyayhdb/functions) → **Edge Functions** → **Deploy a new function** / create `send-sms`
+   - Paste the contents of `supabase/functions/send-sms/index.ts`
+   - Turn **Verify JWT** **OFF** (auth is checked inside the function; this fixes browser CORS preflight)
+3. **Secrets** (Dashboard → Edge Functions → Secrets, or Project Settings → Edge Functions):
+   - `ITEXMO_EMAIL` — Itexmo login email/username
+   - `ITEXMO_PASSWORD` — Itexmo password (never put in git / `VITE_*`)
+   - `ITEXMO_API_CODE` — `PR-ILLUM594659_XXQTI`
+   - Optional: `ITEXMO_SENDER_ID`, `SMS_CRON_SECRET`
+   - API is `https://api.itexmo.com/api/broadcast` (V5). Classic `php_api` is broken (empty/500).
+   - `ITEXMO_EMAIL` must be the **account email** from Itexmo Profile (Username `Illuminate` fails API auth).
+   - `ITEXMO_PASSWORD` = dashboard password; `ITEXMO_API_CODE` = copy from dashboard.
+   - If you get **Authorization error**: credentials worked, but Itexmo IP whitelist is blocking Supabase. Disable IP whitelisting in the Itexmo dashboard / ask support to allow API calls without whitelist. Do not set `ITEXMO_SENDER_ID` unless Itexmo approved that sender.
+4. In the app: **System → SMS reminders** — templates, lead time, test send, log.
+5. Schedule due reminders every 5–10 minutes (Dashboard → Edge Functions → `send-sms` → Schedules), body:
+   `{"action":"send_due_reminders"}`  
+   Or use **Run due reminders now** on the SMS page for manual testing.
+
+CLI alternative (only if you already use that account):  
+`npx supabase functions deploy send-sms --no-verify-jwt` after `link` to this project ref.
 
 Mobile client (Expo) uses the **same** Supabase project. See `docs/MOBILE_EXPO.md`, `docs/MOBILE_NOTIFICATIONS.md`, and `mobile/.env.example` (`EXPO_PUBLIC_SUPABASE_*`).
 

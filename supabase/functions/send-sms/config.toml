@@ -1,0 +1,3 @@
+# Auth is enforced inside the function (Owner/Admin JWT or service role).
+# Disable gateway JWT so browser OPTIONS preflight gets a 200 + CORS headers.
+verify_jwt = false

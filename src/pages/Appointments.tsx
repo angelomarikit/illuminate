@@ -31,6 +31,7 @@ import {
   toLocalISODate,
 } from '../lib/dates'
 import { CLINIC_TIME_SLOTS, sessionSlotMarker } from '../lib/sessionAppointments'
+import { invokeSendSms, queueConfirmationSms } from '../lib/sms'
 import { supabase } from '../lib/supabase'
 import { isUuid } from '../lib/utils'
 import type { Appointment, AppointmentStatus } from '../types'
@@ -220,6 +221,7 @@ function mapRow(row: Row): Appointment {
 
 const emptyForm = {
   customerName: '',
+  customerPhone: '',
   serviceName: '',
   customService: '',
   staffName: '',
@@ -501,6 +503,7 @@ export function Appointments() {
     const inCatalog = serviceOptions.some((s) => s.name === apt.serviceName)
     setForm({
       customerName: apt.customerName,
+      customerPhone: apt.customerPhone || '',
       serviceName: inCatalog ? apt.serviceName : '',
       customService: inCatalog ? '' : apt.serviceName,
       staffName: apt.staffName || '',
@@ -634,6 +637,7 @@ export function Appointments() {
       setError('Select a service or type a custom service.')
       return
     }
+    const phone = form.customerPhone.trim()
     const payload = {
       customer_name: form.customerName.trim(),
       service_name: serviceLabel,
@@ -643,23 +647,38 @@ export function Appointments() {
       duration_min: Number(form.durationMin) || 60,
       special_note: form.notes.trim() || null,
       calendar_color: form.calendarColor || CALENDAR_COLORS[0],
+      customer_phone: phone || null,
     }
 
-    const { error: err } = editingId
-      ? await supabase.from('appointments').update(payload).eq('id', editingId)
-      : await supabase.from('appointments').insert({
-          ...payload,
-          status: type === 'walk-in' ? 'walk-in' : 'confirmed',
-          type,
-          source: 'clinic',
-          branch_id: isUuid(branchId) ? branchId : null,
-        })
+    const { data: saved, error: err } = editingId
+      ? await supabase
+          .from('appointments')
+          .update(payload)
+          .eq('id', editingId)
+          .select('id, customer_phone')
+          .maybeSingle()
+      : await supabase
+          .from('appointments')
+          .insert({
+            ...payload,
+            status: type === 'walk-in' ? 'walk-in' : 'confirmed',
+            type,
+            source: 'clinic',
+            branch_id: isUuid(branchId) ? branchId : null,
+          })
+          .select('id, customer_phone')
+          .maybeSingle()
 
     setSaving(false)
     if (err) {
       setError(err.message)
       return
     }
+
+    if (!wasEditing && saved?.id && type !== 'walk-in' && phone) {
+      queueConfirmationSms(String(saved.id))
+    }
+
     setForm(emptyForm)
     setFormType('none')
     setEditingId(null)
@@ -671,7 +690,9 @@ export function Appointments() {
           : 'Booking updated.'
         : type === 'walk-in'
           ? 'Walk-in added.'
-          : 'Booking created.',
+          : phone
+            ? 'Booking created. Confirmation SMS queued.'
+            : 'Booking created.',
     )
     await load()
   }
@@ -816,17 +837,42 @@ export function Appointments() {
         .eq('id', apt.id)
       if (err) throw err
 
-      if (notify === 'email' && apt.customerEmail) {
-        window.location.href = buildEmail(apt, decision.action === 'approve')
-      } else if (notify === 'sms' && apt.customerPhone) {
-        window.open(buildSms(apt, decision.action === 'approve'), '_blank')
+      if (decision.action === 'approve' && apt.customerPhone) {
+        if (notify === 'sms') {
+          const smsResult = await invokeSendSms('send_confirmation', { appointmentId: apt.id })
+          if (!smsResult.ok && !smsResult.skipped) {
+            setMessage(
+              `Appointment approved, but SMS failed: ${smsResult.error || 'unknown error'}.`,
+            )
+          } else if (smsResult.skipped) {
+            setMessage(
+              `Appointment approved. SMS skipped (${smsResult.reason || 'disabled'}).`,
+            )
+          } else {
+            setMessage('Appointment approved. Confirmation SMS sent via Itexmo.')
+          }
+        } else {
+          queueConfirmationSms(apt.id)
+          setMessage(
+            notify === 'email' && apt.customerEmail
+              ? 'Appointment approved. Confirmation SMS queued; opening email…'
+              : 'Appointment approved and saved to Clients. Confirmation SMS queued.',
+          )
+        }
+      } else {
+        setMessage(
+          decision.action === 'approve'
+            ? 'Appointment approved and saved to Clients.'
+            : 'Appointment declined.',
+        )
       }
 
-      setMessage(
-        decision.action === 'approve'
-          ? 'Appointment approved and saved to Clients.'
-          : 'Appointment declined.',
-      )
+      if (notify === 'email' && apt.customerEmail) {
+        window.location.href = buildEmail(apt, decision.action === 'approve')
+      } else if (notify === 'sms' && decision.action === 'decline' && apt.customerPhone) {
+        window.open(buildSms(apt, false), '_blank')
+      }
+
       setDecision(null)
       await load()
     } catch (e) {
@@ -1569,6 +1615,20 @@ export function Appointments() {
                       value={form.customerName}
                       onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))}
                     />
+                  </div>
+
+                  <div className="field booking-span-2">
+                    <label>Phone (for SMS)</label>
+                    <input
+                      className="input"
+                      type="tel"
+                      placeholder="09XXXXXXXXX"
+                      value={form.customerPhone}
+                      onChange={(e) => setForm((f) => ({ ...f, customerPhone: e.target.value }))}
+                    />
+                    <p className="booking-field-hint">
+                      Optional. Needed for booking confirmation and reminder texts.
+                    </p>
                   </div>
 
                   <div className="field booking-span-2">

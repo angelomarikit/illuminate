@@ -32,6 +32,7 @@ import { Incentives } from './pages/Incentives'
 import { MyWork } from './pages/MyWork'
 import { Chat } from './pages/Chat'
 import { Settings } from './pages/Settings'
+import { SmsReminders } from './pages/SmsReminders'
 import { MyAccount } from './pages/MyAccount'
 import { FeedbackAdmin } from './pages/FeedbackAdmin'
 import {
@@ -93,6 +94,7 @@ export default function App() {
                     <Route path="my-account" element={<MyAccount />} />
                     <Route path="chat" element={<Chat />} />
                     <Route path="feedback" element={<FeedbackAdmin />} />
+                    <Route path="sms-reminders" element={<SmsReminders />} />
                     <Route path="settings" element={<Settings />} />
 
                     <Route path="portal" element={<ClientHome />} />
