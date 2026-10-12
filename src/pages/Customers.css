@@ -719,20 +719,25 @@
 .crm-intake-overlay {
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 24px;
   z-index: 90;
 }
 
-.crm-intake-modal {
-  width: min(980px, 100%);
-  max-height: min(92vh, 900px);
+/* Must beat global .confirm-modal { width: min(480px) } */
+.confirm-modal.crm-intake-modal {
+  width: min(1280px, calc(100vw - 48px));
+  max-width: none;
+  max-height: min(94vh, 980px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-radius: 24px;
+  border-radius: 28px;
   border: 1px solid #ebe7df;
-  box-shadow: 0 24px 60px rgba(10, 10, 10, 0.16);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.4) inset,
+    0 28px 80px rgba(10, 10, 10, 0.2);
   padding: 0;
+  background: #fff;
 }
 
 .crm-intake-head {
@@ -740,17 +745,50 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 24px 28px 20px;
+  padding: 28px 36px 22px;
   border-bottom: 1px solid #f0ece4;
   background:
-    radial-gradient(90% 120% at 0% 0%, var(--crm-gold-soft, rgba(184, 149, 74, 0.12)), transparent 55%),
-    #fff;
+    radial-gradient(90% 120% at 0% 0%, var(--crm-gold-soft, rgba(184, 149, 74, 0.14)), transparent 55%),
+    linear-gradient(180deg, #fffefb 0%, #fff 100%);
   flex-shrink: 0;
+}
+
+.crm-profile-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 12px 36px 0;
+  background: #fff;
+  border-bottom: 1px solid #f0ece4;
+  flex-shrink: 0;
+}
+
+.crm-profile-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 10px 16px 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #8a857c;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.crm-profile-tab:hover {
+  color: #1a1712;
+}
+
+.crm-profile-tab.is-active {
+  color: #1a1712;
+  border-bottom-color: #b8954a;
 }
 
 .crm-intake-head .confirm-modal-title {
   margin-top: 4px;
-  font-size: 1.45rem;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: clamp(1.55rem, 2.2vw, 2rem);
+  font-weight: 500;
   letter-spacing: -0.03em;
 }
 
@@ -772,11 +810,12 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 22px 28px;
+  padding: 24px 36px 28px;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  background: #f7f5f0;
+  background:
+    linear-gradient(180deg, #f4f1ea 0%, #f7f5f0 40%, #f7f5f0 100%);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -930,7 +969,7 @@
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 16px 28px 20px;
+  padding: 18px 36px 22px;
   border-top: 1px solid #f0ece4;
   background: #fff;
 }
@@ -1033,8 +1072,9 @@
     align-items: stretch;
   }
 
-  .crm-intake-modal {
+  .confirm-modal.crm-intake-modal {
     width: 100%;
+    max-width: none;
     max-height: none;
     height: 100%;
     border-radius: 0;
@@ -1077,7 +1117,7 @@
 }
 
 @media (min-width: 761px) {
-  .crm-intake-modal {
+  .confirm-modal.crm-intake-modal {
     margin: auto;
   }
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { Pencil, Search, Trash2, X } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { AvailServiceModal } from '../components/AvailServiceModal'
+import { ClientRecordsPanel } from '../components/ClientRecordsPanel'
 import { ClientsSubnav } from '../components/ClientsSubnav'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
@@ -189,6 +190,8 @@ export function Customers() {
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [profileModalOpen, setProfileModalOpen] = useState(false)
+  const [profileTab, setProfileTab] = useState<'records' | 'intake'>('records')
+  const [recordsRefreshKey, setRecordsRefreshKey] = useState(0)
   const [availOpen, setAvailOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -673,6 +676,7 @@ export function Customers() {
                     className={`crm-client-row ${selectedId === client.id ? 'is-active' : ''}`}
                     onClick={() => {
                       setSelectedId(client.id)
+                      setProfileTab('records')
                       setProfileModalOpen(true)
                       setConfirmDelete(false)
                     }}
@@ -775,7 +779,7 @@ export function Customers() {
           >
             <div className="crm-intake-head">
               <div className="crm-intake-head-copy">
-                <p className="confirm-modal-kicker">Client intake</p>
+                <p className="confirm-modal-kicker">Client profile</p>
                 <h2 id="client-intake-title" className="confirm-modal-title">
                   {selected.name}
                 </h2>
@@ -806,7 +810,40 @@ export function Customers() {
               </button>
             </div>
 
+            <div className="crm-profile-tabs" role="tablist" aria-label="Client sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={profileTab === 'records'}
+                className={`crm-profile-tab ${profileTab === 'records' ? 'is-active' : ''}`}
+                onClick={() => setProfileTab('records')}
+              >
+                Records
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={profileTab === 'intake'}
+                className={`crm-profile-tab ${profileTab === 'intake' ? 'is-active' : ''}`}
+                onClick={() => setProfileTab('intake')}
+              >
+                Intake
+              </button>
+            </div>
+
             <div className="crm-intake-body">
+              {profileTab === 'records' ? (
+                <ClientRecordsPanel
+                  customerId={selected.id}
+                  customerName={selected.name}
+                  membership={selected.membership}
+                  membershipExpiresAt={selected.membershipExpiresAt}
+                  refreshKey={recordsRefreshKey}
+                />
+              ) : null}
+
+              {profileTab === 'intake' ? (
+              <>
               <section className="crm-intake-card">
                 <h3>Profile</h3>
                 <div className="crm-intake-facts">
@@ -926,6 +963,8 @@ export function Customers() {
                   </div>
                 </section>
               </div>
+              </>
+              ) : null}
             </div>
 
             <div className="crm-intake-foot">
@@ -986,8 +1025,8 @@ export function Customers() {
           onSuccess={(receipt) => {
             setMessage('Service availed for ' + selected.name + ' (' + receipt + ').')
             setAvailOpen(false)
-            setProfileModalOpen(false)
-            setSelectedId(null)
+            setProfileTab('records')
+            setRecordsRefreshKey((k) => k + 1)
             void loadCustomers()
           }}
         />
