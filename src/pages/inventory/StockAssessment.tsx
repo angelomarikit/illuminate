@@ -19,6 +19,7 @@ type ItemRow = {
 
 type IssueLineRow = {
   id: string
+  issue_id?: string
   inventory_item_id: string
   qty: number
   notes: string | null
@@ -30,6 +31,7 @@ type IssueLineRow = {
 
 type IssueRow = {
   id: string
+  branch_id?: string | null
   issued_at: string
   reason: string | null
   notes: string | null
@@ -115,6 +117,68 @@ function sumByItem(rows: QtyRow[] | null | undefined) {
   return map
 }
 
+function matchesBranch(rowBranchId: string | null | undefined, activeBranchId: string) {
+  if (!isUuid(activeBranchId)) return true
+  return rowBranchId === activeBranchId || rowBranchId == null
+}
+
+/** PostgREST `.or(branch…)` + nested embeds often returns empty child arrays; filter in JS instead. */
+async function fetchHeadersInRange(
+  table: 'inventory_issues' | 'inventory_receipts',
+  dateCol: 'issued_at' | 'received_at',
+  from: string,
+  to: string,
+  activeBranchId: string,
+) {
+  const { data, error } = await supabase
+    .from(table)
+    .select(`id, branch_id, ${dateCol}`)
+    .gte(dateCol, from)
+    .lte(dateCol, to)
+  if (error) throw error
+  return ((data as { id: string; branch_id: string | null }[] | null) ?? []).filter((row) =>
+    matchesBranch(row.branch_id, activeBranchId),
+  )
+}
+
+async function fetchLinesChunked(
+  table: 'inventory_issue_lines' | 'inventory_receipt_lines',
+  fk: 'issue_id' | 'receipt_id',
+  ids: string[],
+): Promise<QtyRow[]> {
+  if (!ids.length) return []
+  const out: QtyRow[] = []
+  const chunkSize = 80
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize)
+    const { data, error } = await supabase
+      .from(table)
+      .select(`qty, inventory_item_id`)
+      .in(fk, chunk)
+    if (error) throw error
+    for (const row of (data as QtyRow[] | null) ?? []) {
+      out.push({ qty: Number(row.qty) || 0, inventory_item_id: row.inventory_item_id })
+    }
+  }
+  return out
+}
+
+async function fetchIssueLinesDetailed(issueIds: string[]): Promise<IssueLineRow[]> {
+  if (!issueIds.length) return []
+  const out: IssueLineRow[] = []
+  const chunkSize = 80
+  for (let i = 0; i < issueIds.length; i += chunkSize) {
+    const chunk = issueIds.slice(i, i + chunkSize)
+    const { data, error } = await supabase
+      .from('inventory_issue_lines')
+      .select('id, inventory_item_id, qty, notes, issue_id, inventory_items(name, sku, unit)')
+      .in('issue_id', chunk)
+    if (error) throw error
+    out.push(...((data as IssueLineRow[] | null) ?? []))
+  }
+  return out
+}
+
 function itemFromLine(line: IssueLineRow) {
   const snap = line.inventory_items
   if (!snap) return null
@@ -185,167 +249,145 @@ export function StockAssessment() {
       .is('deleted_at', null)
       .order('name')
 
-    let issueQ = supabase
+    // Headers only — no nested embed, no .or() (both have caused empty Used totals).
+    let issueHeaderQ = supabase
       .from('inventory_issues')
-      .select(
-        'id, issued_at, reason, notes, issued_by, created_at, inventory_issue_lines(id, inventory_item_id, qty, notes, inventory_items(name, sku, unit))',
-      )
+      .select('id, branch_id, issued_at, reason, notes, issued_by, created_at')
       .order('issued_at', { ascending: false })
-      .limit(80)
+      .limit(120)
 
     if (isUuid(branchId)) {
       itemQ = itemQ.eq('branch_id', branchId)
-      issueQ = issueQ.or(`branch_id.eq.${branchId},branch_id.is.null`)
     }
 
     const todayStr = toDateInput(new Date())
-    const branchOr = isUuid(branchId) ? `branch_id.eq.${branchId},branch_id.is.null` : null
-
-    // Headers only first — nested embeds + .or() can silently return empty line arrays.
-    let receiptSinceHeadersQ = supabase
-      .from('inventory_receipts')
-      .select('id')
-      .gte('received_at', rangeStart)
-      .lte('received_at', todayStr)
-
-    let issueSinceHeadersQ = supabase
-      .from('inventory_issues')
-      .select('id')
-      .gte('issued_at', rangeStart)
-      .lte('issued_at', todayStr)
-
-    let receiptPeriodHeadersQ = supabase
-      .from('inventory_receipts')
-      .select('id')
-      .gte('received_at', rangeStart)
-      .lte('received_at', rangeEnd)
-
-    let issuePeriodHeadersQ = supabase
-      .from('inventory_issues')
-      .select('id')
-      .gte('issued_at', rangeStart)
-      .lte('issued_at', rangeEnd)
-
     const bKey = branchKeyFor(branchId)
-    let endingExactQ = supabase
-      .from('inventory_assessment_endings')
-      .select('inventory_item_id, ending_qty, period_end, updated_at')
-      .eq('branch_key', bKey)
-      .eq('period_start', rangeStart)
-      .eq('period_end', rangeEnd)
-
-    // Same week/month start, any end date — recovers rows saved when "This week" used today as period_end
-    let endingFallbackQ = supabase
-      .from('inventory_assessment_endings')
-      .select('inventory_item_id, ending_qty, period_end, updated_at')
-      .eq('branch_key', bKey)
-      .eq('period_start', rangeStart)
-      .order('updated_at', { ascending: false })
-
-    if (branchOr) {
-      receiptSinceHeadersQ = receiptSinceHeadersQ.or(branchOr)
-      issueSinceHeadersQ = issueSinceHeadersQ.or(branchOr)
-      receiptPeriodHeadersQ = receiptPeriodHeadersQ.or(branchOr)
-      issuePeriodHeadersQ = issuePeriodHeadersQ.or(branchOr)
-    }
 
     const [
       { data: itemData, error: itemErr },
-      { data: issueData, error: issueErr },
-      { data: recvSinceHeaders, error: recvSinceErr },
-      { data: issuedSinceHeaders, error: issuedSinceErr },
-      { data: recvPeriodHeaders, error: recvPeriodErr },
-      { data: issuedPeriodHeaders, error: issuedPeriodErr },
+      { data: issueHeaderData, error: issueErr },
       { data: endingExactData, error: endingExactErr },
       { data: endingFallbackData, error: endingFallbackErr },
     ] = await Promise.all([
       itemQ,
-      issueQ,
-      receiptSinceHeadersQ,
-      issueSinceHeadersQ,
-      receiptPeriodHeadersQ,
-      issuePeriodHeadersQ,
-      endingExactQ,
-      endingFallbackQ,
+      issueHeaderQ,
+      supabase
+        .from('inventory_assessment_endings')
+        .select('inventory_item_id, ending_qty, period_end, updated_at')
+        .eq('branch_key', bKey)
+        .eq('period_start', rangeStart)
+        .eq('period_end', rangeEnd),
+      supabase
+        .from('inventory_assessment_endings')
+        .select('inventory_item_id, ending_qty, period_end, updated_at')
+        .eq('branch_key', bKey)
+        .eq('period_start', rangeStart)
+        .order('updated_at', { ascending: false }),
     ])
-
-    async function linesForReceipts(headers: { id: string }[] | null) {
-      const ids = (headers ?? []).map((h) => h.id)
-      if (!ids.length) return [] as QtyRow[]
-      const { data, error } = await supabase
-        .from('inventory_receipt_lines')
-        .select('qty, inventory_item_id')
-        .in('receipt_id', ids)
-      if (error) throw error
-      return (data as QtyRow[] | null) ?? []
-    }
-
-    async function linesForIssues(headers: { id: string }[] | null) {
-      const ids = (headers ?? []).map((h) => h.id)
-      if (!ids.length) return [] as QtyRow[]
-      const { data, error } = await supabase
-        .from('inventory_issue_lines')
-        .select('qty, inventory_item_id')
-        .in('issue_id', ids)
-      if (error) throw error
-      return (data as QtyRow[] | null) ?? []
-    }
 
     let lineErr: Error | null = null
     let recvSinceLines: QtyRow[] = []
     let issuedSinceLines: QtyRow[] = []
     let recvPeriodLines: QtyRow[] = []
     let issuedPeriodLines: QtyRow[] = []
+    let recentIssues: IssueRow[] = []
+
     try {
-      ;[recvSinceLines, issuedSinceLines, recvPeriodLines, issuedPeriodLines] = await Promise.all([
-        linesForReceipts(recvSinceHeaders as { id: string }[] | null),
-        linesForIssues(issuedSinceHeaders as { id: string }[] | null),
-        linesForReceipts(recvPeriodHeaders as { id: string }[] | null),
-        linesForIssues(issuedPeriodHeaders as { id: string }[] | null),
+      const issueHeaders = ((issueHeaderData as IssueRow[] | null) ?? []).filter((row) =>
+        matchesBranch(row.branch_id, branchId),
+      )
+
+      const [
+        recvSinceHeaders,
+        issuedSinceHeaders,
+        recvPeriodHeaders,
+        issuedPeriodHeaders,
+        detailedLines,
+      ] = await Promise.all([
+        fetchHeadersInRange('inventory_receipts', 'received_at', rangeStart, todayStr, branchId),
+        fetchHeadersInRange('inventory_issues', 'issued_at', rangeStart, todayStr, branchId),
+        fetchHeadersInRange('inventory_receipts', 'received_at', rangeStart, rangeEnd, branchId),
+        fetchHeadersInRange('inventory_issues', 'issued_at', rangeStart, rangeEnd, branchId),
+        fetchIssueLinesDetailed(issueHeaders.map((h) => h.id)),
       ])
+
+      ;[recvSinceLines, issuedSinceLines, recvPeriodLines, issuedPeriodLines] = await Promise.all([
+        fetchLinesChunked(
+          'inventory_receipt_lines',
+          'receipt_id',
+          recvSinceHeaders.map((h) => h.id),
+        ),
+        fetchLinesChunked(
+          'inventory_issue_lines',
+          'issue_id',
+          issuedSinceHeaders.map((h) => h.id),
+        ),
+        fetchLinesChunked(
+          'inventory_receipt_lines',
+          'receipt_id',
+          recvPeriodHeaders.map((h) => h.id),
+        ),
+        fetchLinesChunked(
+          'inventory_issue_lines',
+          'issue_id',
+          issuedPeriodHeaders.map((h) => h.id),
+        ),
+      ])
+
+      const linesByIssue = new Map<string, IssueLineRow[]>()
+      for (const line of detailedLines) {
+        const key = line.issue_id || ''
+        if (!key) continue
+        const list = linesByIssue.get(key) ?? []
+        list.push(line)
+        linesByIssue.set(key, list)
+      }
+      recentIssues = issueHeaders.slice(0, 80).map((h) => ({
+        ...h,
+        inventory_issue_lines: linesByIssue.get(h.id) ?? [],
+      }))
     } catch (e) {
       lineErr = e instanceof Error ? e : new Error('Could not load receipt/issue lines')
     }
 
     const endingErr = endingExactErr || endingFallbackErr
-    const firstErr =
-      itemErr ||
-      issueErr ||
-      recvSinceErr ||
-      issuedSinceErr ||
-      recvPeriodErr ||
-      issuedPeriodErr ||
-      endingErr ||
-      lineErr
-
-    if (firstErr) {
-      const msg = firstErr.message
-      setError(
+    const errors: string[] = []
+    for (const err of [itemErr, issueErr, lineErr, endingErr]) {
+      if (!err) continue
+      const msg = err.message
+      if (
         msg.includes('inventory_assessment_endings') ||
-          (msg.includes('schema cache') && msg.toLowerCase().includes('ending'))
-          ? `${msg} — run supabase/add_inventory_persistence.sql in Supabase.`
-          : msg.includes('inventory_issues') ||
-              msg.includes('inventory_issue_lines') ||
-              msg.includes('inventory_receipt') ||
-              msg.includes('schema cache')
-            ? `${msg} — run supabase/add_inventory_issues.sql (and receiving SQL) in Supabase.`
-            : msg,
-      )
+        (msg.includes('schema cache') && msg.toLowerCase().includes('ending'))
+      ) {
+        errors.push(`${msg} — run supabase/add_inventory_persistence.sql in Supabase SQL Editor.`)
+      } else if (
+        msg.includes('inventory_issues') ||
+        msg.includes('inventory_issue_lines') ||
+        msg.includes('inventory_receipt') ||
+        msg.includes('schema cache')
+      ) {
+        errors.push(`${msg} — run supabase/add_inventory_issues.sql in Supabase SQL Editor.`)
+      } else {
+        errors.push(msg)
+      }
     }
+    if (errors.length) setError([...new Set(errors)].join(' · '))
 
     setItems((itemData as ItemRow[] | null) ?? [])
-    setIssues((issueData as IssueRow[] | null) ?? [])
+    setIssues(recentIssues)
     setRecvSinceStart(sumByItem(recvSinceLines))
     setIssuedSinceStart(sumByItem(issuedSinceLines))
     setReceivedByItem(sumByItem(recvPeriodLines))
     setIssuedByItem(sumByItem(issuedPeriodLines))
 
     const endingMap: Record<string, string> = {}
-    for (const row of (endingExactData as EndingRow[] | null) ?? []) {
-      endingMap[row.inventory_item_id] = String(Number(row.ending_qty) || 0)
+    if (!endingExactErr) {
+      for (const row of (endingExactData as EndingRow[] | null) ?? []) {
+        endingMap[row.inventory_item_id] = String(Number(row.ending_qty) || 0)
+      }
     }
     // Fill gaps from same period_start (handles prior saves keyed with period_end = today)
-    if (!endingExactErr && !endingFallbackErr) {
+    if (!endingFallbackErr) {
       for (const row of (endingFallbackData as EndingRow[] | null) ?? []) {
         if (endingMap[row.inventory_item_id] !== undefined) continue
         endingMap[row.inventory_item_id] = String(Number(row.ending_qty) || 0)
@@ -358,6 +400,76 @@ export function StockAssessment() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // Keep the issue form date inside the selected assessment period.
+  useEffect(() => {
+    setIssuedAt((prev) => {
+      if (prev >= rangeStart && prev <= rangeEnd) return prev
+      const today = toDateInput(new Date())
+      if (today >= rangeStart && today <= rangeEnd) return today
+      return rangeEnd
+    })
+  }, [rangeStart, rangeEnd])
+
+  function endingMigrationHint(msg: string, code?: string) {
+    if (
+      msg.includes('inventory_assessment_endings') ||
+      msg.includes('schema cache') ||
+      msg.includes('permission') ||
+      code === '42501' ||
+      code === '42P01'
+    ) {
+      return `${msg} — run supabase/add_inventory_persistence.sql in Supabase SQL Editor (Owner/Admin/Inventory role required).`
+    }
+    return msg
+  }
+
+  async function writeEndingRow(payload: {
+    branch_key: string
+    branch_id: string | null
+    period_start: string
+    period_end: string
+    inventory_item_id: string
+    ending_qty: number
+    updated_by: string | null
+    updated_at: string
+  }) {
+    const { error: upsertErr } = await supabase
+      .from('inventory_assessment_endings')
+      .upsert(payload, { onConflict: 'branch_key,period_start,period_end,inventory_item_id' })
+    if (!upsertErr) return null
+
+    // Fallback when upsert/onConflict is unavailable: update then insert.
+    const { data: existing, error: findErr } = await supabase
+      .from('inventory_assessment_endings')
+      .select('id')
+      .eq('branch_key', payload.branch_key)
+      .eq('period_start', payload.period_start)
+      .eq('period_end', payload.period_end)
+      .eq('inventory_item_id', payload.inventory_item_id)
+      .maybeSingle()
+
+    if (findErr && !findErr.message.includes('inventory_assessment_endings')) {
+      // keep upsert error if table is missing
+    }
+
+    const existingId = (existing as { id?: string } | null)?.id
+    if (existingId) {
+      const { error: updErr } = await supabase
+        .from('inventory_assessment_endings')
+        .update({
+          ending_qty: payload.ending_qty,
+          updated_by: payload.updated_by,
+          updated_at: payload.updated_at,
+          branch_id: payload.branch_id,
+        })
+        .eq('id', existingId)
+      return updErr
+    }
+
+    const { error: insErr } = await supabase.from('inventory_assessment_endings').insert(payload)
+    return insErr || upsertErr
+  }
 
   async function persistEnding(itemId: string, raw: string) {
     const qty = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw) || 0))
@@ -374,20 +486,10 @@ export function StockAssessment() {
       updated_by: user?.id ?? null,
       updated_at: new Date().toISOString(),
     }
-    // Prefer upsert; if table/policy missing, surface a clear migration error.
-    const { error: upsertErr } = await supabase
-      .from('inventory_assessment_endings')
-      .upsert(payload, { onConflict: 'branch_key,period_start,period_end,inventory_item_id' })
+    const writeErr = await writeEndingRow(payload)
     setEndingSavingId(null)
-    if (upsertErr) {
-      setError(
-        upsertErr.message.includes('inventory_assessment_endings') ||
-          upsertErr.message.includes('schema cache') ||
-          upsertErr.message.includes('permission') ||
-          upsertErr.code === '42501'
-          ? `${upsertErr.message} — run supabase/add_inventory_persistence.sql and use Owner/Admin/Inventory.`
-          : upsertErr.message,
-      )
+    if (writeErr) {
+      setError(endingMigrationHint(writeErr.message, writeErr.code))
       return
     }
     setEndingByItem((prev) => ({ ...prev, [itemId]: String(qty) }))
@@ -447,18 +549,28 @@ export function StockAssessment() {
     const { error: upsertErr } = await supabase
       .from('inventory_assessment_endings')
       .upsert(rows, { onConflict: 'branch_key,period_start,period_end,inventory_item_id' })
-    setSaving(false)
     if (upsertErr) {
-      setError(
-        upsertErr.message.includes('inventory_assessment_endings') ||
-          upsertErr.message.includes('schema cache') ||
-          upsertErr.message.includes('permission') ||
-          upsertErr.code === '42501'
-          ? `${upsertErr.message} — run supabase/add_inventory_persistence.sql and use Owner/Admin/Inventory.`
-          : upsertErr.message,
-      )
-      return
+      let failed: { message: string; code?: string } | null = null
+      for (const row of rows) {
+        const err = await writeEndingRow(row)
+        if (err) {
+          failed = err
+          break
+        }
+      }
+      setSaving(false)
+      if (failed) {
+        setError(endingMigrationHint(failed.message, failed.code))
+        return
+      }
+    } else {
+      setSaving(false)
     }
+    const nextMap: Record<string, string> = {}
+    for (const row of rows) {
+      nextMap[row.inventory_item_id] = String(row.ending_qty)
+    }
+    setEndingByItem((prev) => ({ ...prev, ...nextMap }))
     setMessage(`Saved ending inventory for ${rows.length} item(s).`)
   }
 
@@ -768,8 +880,9 @@ export function StockAssessment() {
           <p className="sa-hint">
             Beginning is reconstructed from current stock minus receipts/issues since the start
             date. Received and Issued/Used are totals inside the selected range. Required stock is
-            Beginning + Received − Issued/Used (calculated, not stored). Ending inventory is your
-            physical Supply Room count and is persisted per period; variance is Required − Ending.
+            auto-calculated as Beginning + Received − Issued/Used — it is never Catalog Reorder.
+            Ending inventory is your physical Supply Room count and is persisted per period;
+            variance is Required − Ending.
           </p>
         </div>
       </div>
@@ -805,8 +918,8 @@ export function StockAssessment() {
                     <th>Total available</th>
                     <th>Issued / Used</th>
                     <th>Ending (manual)</th>
-                    <th title="Beginning + Received − Issued/Used (not Catalog Reorder)">
-                      Required (auto)
+                    <th title="Beginning + Received − Issued/Used. Not Catalog Reorder.">
+                      Required on hand
                     </th>
                     <th>Variance</th>
                     <th>Assessment</th>
@@ -825,7 +938,9 @@ export function StockAssessment() {
                       <td>{row.beginning}</td>
                       <td>{row.received}</td>
                       <td>{row.totalAvailable}</td>
-                      <td>{row.issued}</td>
+                      <td>
+                        <strong>{row.issued}</strong>
+                      </td>
                       <td>
                         <div className="sa-ending">
                           <input
@@ -840,7 +955,12 @@ export function StockAssessment() {
                             onBlur={(e) => {
                               void persistEnding(row.id, e.target.value)
                             }}
-                            placeholder="0"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.currentTarget.blur()
+                              }
+                            }}
+                            placeholder="Count"
                             aria-label={`Ending inventory for ${row.name}`}
                             disabled={endingSavingId === row.id}
                           />
@@ -849,9 +969,9 @@ export function StockAssessment() {
                           ) : null}
                         </div>
                       </td>
-                      <td>
+                      <td className="sa-required-cell">
                         <strong>{row.required}</strong>
-                        <div className="sa-muted">Beg+Recv−Used</div>
+                        <div className="sa-muted">Beg + Recv − Used</div>
                       </td>
                       <td>{row.variance > 0 ? `+${row.variance}` : row.variance}</td>
                       <td>
@@ -864,10 +984,9 @@ export function StockAssessment() {
             </div>
           )}
           <p className="sa-hint" style={{ marginTop: 12 }}>
-            Ending: type a count, then click outside the cell (or Save ending inventory). Required is
-            auto = Beginning + Received − Issued/Used — it is <strong>not</strong> Catalog Reorder.
-            Issued/Used only counts logs whose Issued date falls inside the period above
-            ({rangeStart} → {rangeEnd}).
+            Ending: type a count, then press Enter or click outside (or use Save ending inventory).
+            Required on hand is calculated only — it does not read or write Stock Catalog → Reorder.
+            Issued/Used totals only include logs with Issued date inside {rangeStart} → {rangeEnd}.
           </p>
         </div>
       </div>

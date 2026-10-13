@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,6 +20,7 @@ import { useBranch } from '../context/BranchContext'
 import { formatShortDate, inDateRange, toLocalISODate } from '../lib/dates'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, isUuid } from '../lib/utils'
+import './Dashboard.css'
 
 type SaleRow = {
   id: string
@@ -390,6 +396,16 @@ export function Dashboard() {
       )
 
       const dayMap = new Map<string, TrendPoint>()
+      // Fill every day in the selected range so charts aren't stretched across sparse points
+      {
+        const cursor = new Date(`${safeFrom}T12:00:00`)
+        const endDay = new Date(`${safeTo}T12:00:00`)
+        while (cursor <= endDay) {
+          const key = toLocalISODate(cursor)
+          dayMap.set(key, { month: key.slice(5), revenue: 0, expenses: 0 })
+          cursor.setDate(cursor.getDate() + 1)
+        }
+      }
       for (const s of sales) {
         const key = String(s.sold_at).slice(0, 10)
         const cur = dayMap.get(key) ?? { month: key.slice(5), revenue: 0, expenses: 0 }
@@ -419,6 +435,18 @@ export function Dashboard() {
     return `${formatShortDate(from)} – ${formatShortDate(to)}`
   }, [rangeFrom, rangeTo, today])
 
+  const finance = useMemo(() => {
+    const revenue = trend.reduce((sum, t) => sum + Number(t.revenue || 0), 0)
+    const expenses = trend.reduce((sum, t) => sum + Number(t.expenses || 0), 0)
+    const net = revenue - expenses
+    const margin = revenue > 0 ? Math.round((net / revenue) * 100) : 0
+    const mix = [
+      { name: 'Revenue', value: Math.max(0, revenue), color: '#b8954a' },
+      { name: 'Expenses', value: Math.max(0, expenses), color: '#2c2820' },
+    ].filter((row) => row.value > 0)
+    return { revenue, expenses, net, margin, mix }
+  }, [trend])
+
   const subtitle = useMemo(
     () =>
       loading
@@ -436,10 +464,10 @@ export function Dashboard() {
   }
 
   return (
-    <div>
+    <div className="dash-page">
       <PageHeader kicker="Overview" title="Clinic Dashboard" subtitle={subtitle} />
 
-      <div className="panel" style={{ marginBottom: 16 }}>
+      <div className="panel dash-filter" style={{ marginBottom: 16 }}>
         <div className="panel-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}>
           <div className="field" style={{ margin: 0 }}>
             <label>From</label>
@@ -461,7 +489,7 @@ export function Dashboard() {
               onChange={(e) => setRangeTo(e.target.value)}
             />
           </div>
-          <div className="chips" style={{ margin: 0 }}>
+          <div className="chips dash-chips" style={{ margin: 0 }}>
             <button type="button" className="chip" onClick={() => setPreset(1)}>
               Today
             </button>
@@ -475,23 +503,23 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="stat-grid" style={{ marginBottom: 16 }}>
-        <div className="stat-card">
+      <div className="stat-grid dash-stats" style={{ marginBottom: 16 }}>
+        <div className="stat-card dash-stat">
           <div className="stat-label">Sales</div>
           <div className="stat-value">{formatCurrency(rangeSalesTotal)}</div>
           <div className="stat-meta">{rangeLabel}</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card dash-stat">
           <div className="stat-label">Appointments</div>
           <div className="stat-value">{rangeAppts.length}</div>
           <div className="stat-meta">in selected range</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card dash-stat">
           <div className="stat-label">New Clients</div>
           <div className="stat-value">{newClients}</div>
           <div className="stat-meta">registered in range</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card dash-stat">
           <div className="stat-label">Points Redeemed</div>
           <div className="stat-value">{pointsRedeemed}</div>
           <div className="stat-meta">
@@ -500,7 +528,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="grid-2" style={{ marginBottom: 16 }}>
+      <div className="dash-grid-2 dash-align-start" style={{ marginBottom: 16 }}>
         <div className="panel">
           <div className="panel-header">
             <h2 className="panel-title">Top sales services</h2>
@@ -552,16 +580,17 @@ export function Dashboard() {
           <div className="panel-header">
             <h2 className="panel-title">Sales & commission trend</h2>
           </div>
-          <div className="panel-body" style={{ height: 320 }}>
+          <div className="panel-body dash-chart-box">
             {staffTrend.length === 0 ? (
               <div className="empty-state">No POS sales in this range to chart.</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={staffTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={staffTrend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#ececec" vertical={false} />
                   <XAxis dataKey="day" tick={{ fill: '#6b6b6b', fontSize: 12 }} />
                   <YAxis
                     tick={{ fill: '#6b6b6b', fontSize: 12 }}
+                    width={42}
                     tickFormatter={(v) =>
                       v >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v)
                     }
@@ -582,9 +611,9 @@ export function Dashboard() {
                     type="monotone"
                     dataKey="sales"
                     name="POS sales"
-                    stroke="#0a0a0a"
+                    stroke="#2c2820"
                     strokeWidth={2.5}
-                    dot={{ r: 3.5, fill: '#0a0a0a' }}
+                    dot={{ r: 3.5, fill: '#2c2820' }}
                     activeDot={{ r: 5 }}
                   />
                   <Line
@@ -614,134 +643,217 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="grid-2">
+      <div className="panel dash-finance" style={{ marginBottom: 16 }}>
+        <div className="panel-header">
+          <h2 className="panel-title">Revenue vs Expenses</h2>
+          <span className="dash-finance-range">{rangeLabel}</span>
+        </div>
+        <div className="panel-body">
+          {trend.every((t) => t.revenue === 0 && t.expenses === 0) ? (
+            <div className="empty-state">No sales/expenses in this date range.</div>
+          ) : (
+            <>
+              <div className="dash-finance-cards">
+                <div className="dash-finance-card">
+                  <span>Revenue</span>
+                  <strong>{formatCurrency(finance.revenue)}</strong>
+                </div>
+                <div className="dash-finance-card">
+                  <span>Expenses</span>
+                  <strong>{formatCurrency(finance.expenses)}</strong>
+                </div>
+                <div className={`dash-finance-card ${finance.net >= 0 ? 'is-up' : 'is-down'}`}>
+                  <span>Net</span>
+                  <strong>{formatCurrency(finance.net)}</strong>
+                </div>
+                <div className="dash-finance-card">
+                  <span>Margin</span>
+                  <strong>{finance.margin}%</strong>
+                </div>
+              </div>
+
+              <div className="dash-finance-visuals">
+                <div className="dash-finance-chart">
+                  <h3>Daily comparison</h3>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart
+                      data={trend}
+                      margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+                      barCategoryGap="28%"
+                      barGap={4}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#ececec" vertical={false} />
+                      <XAxis dataKey="month" tick={{ fill: '#6b6b6b', fontSize: 12 }} />
+                      <YAxis
+                        tick={{ fill: '#6b6b6b', fontSize: 12 }}
+                        width={42}
+                        tickFormatter={(v) =>
+                          v >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v)
+                        }
+                      />
+                      <Tooltip
+                        formatter={(value, key) => [
+                          formatCurrency(Number(value)),
+                          key === 'expenses' ? 'Expenses' : 'Revenue',
+                        ]}
+                        contentStyle={{
+                          borderRadius: 12,
+                          border: '1px solid #e6e6e6',
+                          boxShadow: 'none',
+                        }}
+                      />
+                      <Legend />
+                      <Bar dataKey="revenue" name="Revenue" fill="#b8954a" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="expenses" name="Expenses" fill="#2c2820" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="dash-finance-side">
+                  <div className="dash-finance-pie">
+                    <h3>Mix</h3>
+                    {finance.mix.length === 0 ? (
+                      <div className="empty-state">No totals yet.</div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={180}>
+                        <PieChart>
+                          <Pie
+                            data={finance.mix}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={48}
+                            outerRadius={72}
+                            paddingAngle={3}
+                          >
+                            {finance.mix.map((entry) => (
+                              <Cell key={entry.name} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            formatter={(value) => formatCurrency(Number(value))}
+                            contentStyle={{
+                              borderRadius: 12,
+                              border: '1px solid #e6e6e6',
+                              boxShadow: 'none',
+                            }}
+                          />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+
+                  <div className="dash-finance-table">
+                    <h3>By day</h3>
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Day</th>
+                            <th>Revenue</th>
+                            <th>Expenses</th>
+                            <th>Net</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trend.map((row) => {
+                            const net = Number(row.revenue || 0) - Number(row.expenses || 0)
+                            return (
+                              <tr key={row.month}>
+                                <td>{row.month}</td>
+                                <td>{formatCurrency(row.revenue)}</td>
+                                <td>{formatCurrency(row.expenses)}</td>
+                                <td className={net >= 0 ? 'dash-net-up' : 'dash-net-down'}>
+                                  {formatCurrency(net)}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="dash-grid-2 dash-align-start">
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">Revenue vs Expenses</h2>
+            <h2 className="panel-title">Schedule in range</h2>
           </div>
-          <div className="panel-body" style={{ height: 300 }}>
-            {trend.every((t) => t.revenue === 0 && t.expenses === 0) ? (
-              <div className="empty-state">No sales/expenses in this date range.</div>
+          <div className="panel-body">
+            {rangeAppts.length === 0 ? (
+              <div className="empty-state">No appointments in this date range.</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ececec" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fill: '#6b6b6b', fontSize: 12 }} />
-                  <YAxis
-                    tick={{ fill: '#6b6b6b', fontSize: 12 }}
-                    tickFormatter={(v) =>
-                      v >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v)
-                    }
-                  />
-                  <Tooltip
-                    formatter={(value, key) => [
-                      formatCurrency(Number(value)),
-                      key === 'expenses' ? 'Expenses' : 'Revenue',
-                    ]}
-                    contentStyle={{
-                      borderRadius: 12,
-                      border: '1px solid #e6e6e6',
-                      boxShadow: 'none',
-                    }}
-                  />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="revenue"
-                    name="Revenue"
-                    stroke="#0a0a0a"
-                    strokeWidth={2.5}
-                    dot={{ r: 3.5, fill: '#0a0a0a' }}
-                    activeDot={{ r: 5 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="expenses"
-                    name="Expenses"
-                    stroke="#9a9a9a"
-                    strokeWidth={2.5}
-                    dot={{ r: 3.5, fill: '#9a9a9a' }}
-                    activeDot={{ r: 5 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Time</th>
+                      <th>Client</th>
+                      <th>Service</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rangeAppts.slice(0, 12).map((apt) => (
+                      <tr key={apt.id}>
+                        <td>{apt.appointment_date}</td>
+                        <td>{String(apt.appointment_time).slice(0, 5)}</td>
+                        <td>{apt.customer_name}</td>
+                        <td>{apt.service_name}</td>
+                        <td>
+                          <span className="badge">{apt.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
 
-        <div className="stack">
-          <div className="panel">
-            <div className="panel-header">
-              <h2 className="panel-title">Schedule in range</h2>
-            </div>
-            <div className="panel-body">
-              {rangeAppts.length === 0 ? (
-                <div className="empty-state">No appointments in this date range.</div>
-              ) : (
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Time</th>
-                        <th>Client</th>
-                        <th>Service</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rangeAppts.slice(0, 12).map((apt) => (
-                        <tr key={apt.id}>
-                          <td>{apt.appointment_date}</td>
-                          <td>{String(apt.appointment_time).slice(0, 5)}</td>
-                          <td>{apt.customer_name}</td>
-                          <td>{apt.service_name}</td>
-                          <td>
-                            <span className="badge">{apt.status}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+        <div className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">Low Stock Alerts</h2>
           </div>
-
-          <div className="panel">
-            <div className="panel-header">
-              <h2 className="panel-title">Low Stock Alerts</h2>
-            </div>
-            <div className="panel-body">
-              {lowStock.length === 0 ? (
-                <div className="empty-state">All stock levels are healthy.</div>
-              ) : (
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Item</th>
-                        <th>SKU</th>
-                        <th>Stock</th>
+          <div className="panel-body">
+            {lowStock.length === 0 ? (
+              <div className="empty-state">All stock levels are healthy.</div>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>SKU</th>
+                      <th>Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lowStock.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.name}</td>
+                        <td>{item.sku}</td>
+                        <td>
+                          <span className="badge badge-danger">
+                            {item.stock} {item.unit}
+                          </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {lowStock.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.name}</td>
-                          <td>{item.sku}</td>
-                          <td>
-                            <span className="badge badge-danger">
-                              {item.stock} {item.unit}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       </div>

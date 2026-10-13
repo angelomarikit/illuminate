@@ -36,10 +36,17 @@
   white-space: nowrap;
 }
 
-.stock-assessment-page .sa-required .input,
 .stock-assessment-page .sa-ending .input {
   width: 88px;
   min-width: 72px;
+}
+
+.stock-assessment-page .sa-required-cell {
+  background: color-mix(in srgb, var(--surface, #fff) 92%, var(--muted, #888) 8%);
+}
+
+.stock-assessment-page .sa-required-cell strong {
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 720px) {

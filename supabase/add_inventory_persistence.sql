@@ -64,3 +64,6 @@ create policy "inventory_access_assessment_endings"
   with check (public.is_inventory_access());
 
 grant select, insert, update, delete on public.inventory_assessment_endings to authenticated;
+
+-- Refresh PostgREST schema cache so the app sees this table immediately
+notify pgrst, 'reload schema';
