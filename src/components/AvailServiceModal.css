@@ -64,7 +64,8 @@
   gap: 4px;
 }
 
-.avail-meta span {
+.avail-meta span,
+.avail-meta label {
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -75,6 +76,21 @@
 .avail-meta strong {
   font-size: 0.98rem;
   word-break: break-word;
+}
+
+.avail-date-field {
+  align-content: start;
+}
+
+.avail-date-field .input {
+  width: 100%;
+  background: #fff;
+}
+
+.avail-date-hint {
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+  color: var(--muted, #6b6b6b);
 }
 
 .avail-series-pick {

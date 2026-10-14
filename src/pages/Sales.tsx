@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Download, ImageIcon, Receipt, X } from 'lucide-react'
+import { Download, ImageIcon, Receipt, Trash2, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { formatCurrency } from '../lib/utils'
@@ -97,6 +97,7 @@ export function Sales() {
   const [message, setMessage] = useState('')
   const [selected, setSelected] = useState<SaleView | null>(null)
   const [query, setQuery] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -181,6 +182,39 @@ export function Sales() {
     setMessage('CSV downloaded.')
   }
 
+  async function deleteSale(sale: SaleView) {
+    const ok = window.confirm(
+      `Delete receipt ${sale.receiptNo}?\n\n${sale.customerName} · ${formatCurrency(sale.total)}\n\nThis removes it from Sales Proof and any linked client session package(s).`,
+    )
+    if (!ok) return
+
+    setDeletingId(sale.id)
+    setError('')
+    setMessage('')
+
+    const { error: pkgErr } = await supabase
+      .from('client_session_packages')
+      .delete()
+      .eq('sale_receipt_no', sale.receiptNo)
+
+    if (pkgErr && !pkgErr.message.includes('client_session_packages')) {
+      setDeletingId(null)
+      setError(pkgErr.message)
+      return
+    }
+
+    const { error: saleErr } = await supabase.from('sales').delete().eq('id', sale.id)
+    setDeletingId(null)
+    if (saleErr) {
+      setError(saleErr.message)
+      return
+    }
+
+    if (selected?.id === sale.id) setSelected(null)
+    setMessage(`Deleted ${sale.receiptNo}.`)
+    await load()
+  }
+
   return (
     <div className="sp-page">
       <PageHeader
@@ -250,62 +284,85 @@ export function Sales() {
               </div>
 
               {filtered.map((sale) => (
-                <button
+                <div
                   key={sale.id}
-                  type="button"
                   role="listitem"
                   className={`sp-row ${selected?.id === sale.id ? 'is-active' : ''}`}
-                  onClick={() => setSelected(sale)}
                 >
-                  <div className="sp-receipt">
-                    <strong>{sale.receiptNo}</strong>
-                    <span>
-                      {formatSaleDate(sale.soldAtIso)} · {formatSaleTime(sale.soldAtIso)}
-                    </span>
-                  </div>
-
-                  <div className="sp-client">
-                    <span className="sp-avatar" aria-hidden>
-                      {initials(sale.customerName)}
-                    </span>
-                    <div className="sp-client-copy">
-                      <strong>{sale.customerName}</strong>
-                      <span>{sale.salesBy || sale.staffName || 'Unassigned'}</span>
-                    </div>
-                  </div>
-
-                  <div className="sp-items">
-                    <strong>{sale.items}</strong>
-                    <span>
-                      {sale.discountAmount > 0
-                        ? `Discount ${formatCurrency(sale.discountAmount)}`
-                        : 'No discount'}
-                    </span>
-                  </div>
-
-                  <div className="sp-total">
-                    <strong>{formatCurrency(sale.total)}</strong>
-                    <span>
-                      {sale.pointsUsed > 0 ? `${sale.pointsUsed} pts used` : 'Full tender'}
-                    </span>
-                  </div>
-
-                  <div className="sp-payment">
-                    <span className={`sp-pay-pill is-${paymentTone(sale.paymentMethod)}`}>
-                      {sale.paymentMethod}
-                    </span>
-                    {sale.paymentProofUrl ? (
-                      <span className="sp-proof-pill">
-                        <ImageIcon size={12} aria-hidden />
-                        Proof
+                  <button
+                    type="button"
+                    className="sp-row-main"
+                    onClick={() => setSelected(sale)}
+                  >
+                    <div className="sp-receipt">
+                      <strong>{sale.receiptNo}</strong>
+                      <span>
+                        {formatSaleDate(sale.soldAtIso)} · {formatSaleTime(sale.soldAtIso)}
                       </span>
-                    ) : (
-                      <span className="sp-proof-none">No proof</span>
-                    )}
-                  </div>
+                    </div>
 
-                  <span className="sp-row-action">View</span>
-                </button>
+                    <div className="sp-client">
+                      <span className="sp-avatar" aria-hidden>
+                        {initials(sale.customerName)}
+                      </span>
+                      <div className="sp-client-copy">
+                        <strong>{sale.customerName}</strong>
+                        <span>{sale.salesBy || sale.staffName || 'Unassigned'}</span>
+                      </div>
+                    </div>
+
+                    <div className="sp-items">
+                      <strong>{sale.items}</strong>
+                      <span>
+                        {sale.discountAmount > 0
+                          ? `Discount ${formatCurrency(sale.discountAmount)}`
+                          : 'No discount'}
+                      </span>
+                    </div>
+
+                    <div className="sp-total">
+                      <strong>{formatCurrency(sale.total)}</strong>
+                      <span>
+                        {sale.pointsUsed > 0 ? `${sale.pointsUsed} pts used` : 'Full tender'}
+                      </span>
+                    </div>
+
+                    <div className="sp-payment">
+                      <span className={`sp-pay-pill is-${paymentTone(sale.paymentMethod)}`}>
+                        {sale.paymentMethod}
+                      </span>
+                      {sale.paymentProofUrl ? (
+                        <span className="sp-proof-pill">
+                          <ImageIcon size={12} aria-hidden />
+                          Proof
+                        </span>
+                      ) : (
+                        <span className="sp-proof-none">No proof</span>
+                      )}
+                    </div>
+                  </button>
+
+                  <div className="sp-row-actions">
+                    <button
+                      type="button"
+                      className="sp-row-action sp-row-view"
+                      onClick={() => setSelected(sale)}
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      className="sp-row-action sp-row-delete"
+                      disabled={deletingId === sale.id}
+                      aria-label={`Delete ${sale.receiptNo}`}
+                      title="Delete receipt"
+                      onClick={() => void deleteSale(sale)}
+                    >
+                      <Trash2 size={13} aria-hidden />
+                      {deletingId === sale.id ? '…' : 'Delete'}
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           )}

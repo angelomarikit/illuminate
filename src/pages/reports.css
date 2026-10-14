@@ -1,0 +1,129 @@
+.reports-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.reports-page > .page-header {
+  margin-bottom: 0;
+}
+
+.reports-filters {
+  margin: 0;
+}
+
+.reports-filters-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.reports-date-card {
+  display: grid;
+  gap: 6px;
+  min-width: 160px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f7e7b0 0%, #f0d57a 100%);
+  border: 1px solid #e4c65a;
+}
+
+.reports-date-card label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5c4a12;
+}
+
+.reports-date-card .input {
+  background: #fffdf5;
+  border-color: #e0c96a;
+}
+
+.reports-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 220px;
+  min-width: min(220px, 100%);
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e5e0d6);
+  background: #fff;
+  color: var(--muted, #6b6b6b);
+}
+
+.reports-search input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+
+.reports-total {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px solid #ebe7df;
+  background: linear-gradient(135deg, #fffef9 0%, #fff 55%, #faf6ee 100%);
+  box-shadow: 0 10px 28px rgba(10, 10, 10, 0.04);
+}
+
+.reports-total svg {
+  color: #b8954a;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.reports-total-label {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #b8954a;
+}
+
+.reports-total-value {
+  margin: 4px 0 0;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: clamp(1.6rem, 2.4vw, 2.1rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: #0a0a0a;
+}
+
+.reports-total-meta {
+  margin: 4px 0 0;
+  font-size: 0.84rem;
+  color: var(--muted, #6b6b6b);
+}
+
+.reports-pager {
+  display: flex;
+  gap: 8px;
+}
+
+.reports-table td,
+.reports-table th {
+  vertical-align: top;
+}
+
+.reports-muted {
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--muted, #6b6b6b);
+}
+
+@media (max-width: 720px) {
+  .reports-date-card {
+    flex: 1 1 100%;
+  }
+}

@@ -104,7 +104,7 @@
 .client-records-table th:nth-child(4) { width: 11%; }
 .client-records-table th:nth-child(5) { width: 10%; }
 .client-records-table th:nth-child(6) { width: 20%; }
-.client-records-table th:nth-child(7) { width: 12%; }
+.client-records-table th:nth-child(7) { width: 16%; }
 
 .client-records-table th {
   text-align: left;
@@ -185,6 +185,14 @@
   overflow: hidden;
 }
 
+.client-records-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 132px;
+}
+
 .client-records-view-btn {
   background: #1f3a5f;
   border-color: #1f3a5f;
@@ -200,6 +208,33 @@
   background: #18304f;
   border-color: #18304f;
   color: #fff;
+}
+
+.client-records-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #d9cfc3;
+  color: #8b3a3a;
+  font-size: 0.78rem;
+  font-weight: 650;
+  padding: 8px 12px;
+  white-space: nowrap;
+  border-radius: 999px;
+}
+
+.client-records-delete-btn:hover:not(:disabled) {
+  background: #fdf2f2;
+  border-color: #c97878;
+  color: #7a2e2e;
+}
+
+.client-records-delete-btn:disabled,
+.client-records-view-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .client-records-pager {

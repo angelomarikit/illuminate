@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, ClipboardList } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ClipboardList, Trash2 } from 'lucide-react'
 import { SessionScheduleModal, type SessionPackageForModal } from './SessionScheduleModal'
 import { StatusMessage } from './StatusMessage'
 import { formatCurrency } from '../lib/utils'
@@ -50,6 +50,7 @@ export type ClientRecord = {
   notes: string
   package: PackageRow | null
   receiptNo: string | null
+  saleId: string | null
 }
 
 type Props = {
@@ -93,6 +94,7 @@ export function ClientRecordsPanel({
   const [page, setPage] = useState(1)
   const [schedulePkg, setSchedulePkg] = useState<SessionPackageForModal | null>(null)
   const [savingNotes, setSavingNotes] = useState(false)
+  const [deletingKey, setDeletingKey] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -165,6 +167,7 @@ export function ClientRecordsPanel({
         notes,
         package: pkg,
         receiptNo: pkg.sale_receipt_no,
+        saleId: linked?.id ?? null,
       }
     })
 
@@ -183,6 +186,7 @@ export function ClientRecordsPanel({
         notes: sale.payment_method ? `Paid via ${sale.payment_method}` : '—',
         package: null,
         receiptNo: sale.receipt_no,
+        saleId: sale.id,
       }))
 
     const merged = [...packageRecords, ...saleOnlyRecords].sort((a, b) =>
@@ -229,6 +233,66 @@ export function ClientRecordsPanel({
     setSavingNotes(false)
     if (err) throw new Error(err.message)
     setMessage('Doctor notes saved.')
+    await load()
+  }
+
+  async function deleteRecord(row: ClientRecord) {
+    const label = row.service.length > 60 ? `${row.service.slice(0, 57)}…` : row.service
+    const ok = window.confirm(
+      `Delete this record?\n\n${label}\n\nThis removes it from the client history` +
+        (row.receiptNo || row.saleId
+          ? ' and deletes the linked Sales Proof / receipt.'
+          : '.') +
+        '\nThis cannot be undone.',
+    )
+    if (!ok) return
+
+    setDeletingKey(row.key)
+    setError('')
+    setMessage('')
+
+    if (row.package?.id) {
+      const { error: pkgErr } = await supabase
+        .from('client_session_packages')
+        .delete()
+        .eq('id', row.package.id)
+      if (pkgErr) {
+        setDeletingKey(null)
+        setError(
+          pkgErr.message.includes('client_session_packages') || pkgErr.message.includes('schema cache')
+            ? `${pkgErr.message} — run supabase/add_client_sessions.sql in Supabase.`
+            : pkgErr.message,
+        )
+        return
+      }
+    }
+
+    let saleErr: { message: string } | null = null
+    if (row.saleId) {
+      const res = await supabase.from('sales').delete().eq('id', row.saleId)
+      saleErr = res.error
+    } else if (row.receiptNo) {
+      const res = await supabase.from('sales').delete().eq('receipt_no', row.receiptNo)
+      saleErr = res.error
+    }
+
+    setDeletingKey(null)
+    if (saleErr) {
+      setError(
+        `${saleErr.message} — package/session was removed, but the sales receipt could not be deleted.`,
+      )
+      await load()
+      return
+    }
+
+    if (schedulePkg && row.package && schedulePkg.id === row.package.id) {
+      setSchedulePkg(null)
+    }
+    setMessage(
+      row.receiptNo || row.saleId
+        ? 'Record deleted from history and Sales Proof.'
+        : 'Record deleted from history.',
+    )
     await load()
   }
 
@@ -322,37 +386,49 @@ export function ClientRecordsPanel({
                       </p>
                     </td>
                     <td>
-                      {row.package ? (
+                      <div className="client-records-actions">
+                        {row.package ? (
+                          <button
+                            type="button"
+                            className="btn client-records-view-btn"
+                            disabled={deletingKey === row.key}
+                            onClick={() =>
+                              setSchedulePkg({
+                                id: row.package!.id,
+                                customer_id: row.package!.customer_id,
+                                customer_name: row.package!.customer_name || customerName,
+                                service_name: row.package!.service_name,
+                                total_sessions: row.package!.total_sessions,
+                                sessions_used: row.package!.sessions_used,
+                                package_amount: row.package!.package_amount,
+                                discount_amount: row.package!.discount_amount,
+                                sold_on: row.package!.sold_on,
+                                next_session_date: row.package!.next_session_date,
+                                sale_receipt_no: row.package!.sale_receipt_no,
+                                doctor_notes: row.package!.doctor_notes,
+                                administered_by: row.package!.administered_by,
+                                consult_by: row.package!.consult_by,
+                                sales_by: row.package!.sales_by,
+                                status: row.package!.status,
+                                branch_id: row.package!.branch_id,
+                              })
+                            }
+                          >
+                            View sessions
+                          </button>
+                        ) : null}
                         <button
                           type="button"
-                          className="btn client-records-view-btn"
-                          onClick={() =>
-                            setSchedulePkg({
-                              id: row.package!.id,
-                              customer_id: row.package!.customer_id,
-                              customer_name: row.package!.customer_name || customerName,
-                              service_name: row.package!.service_name,
-                              total_sessions: row.package!.total_sessions,
-                              sessions_used: row.package!.sessions_used,
-                              package_amount: row.package!.package_amount,
-                              discount_amount: row.package!.discount_amount,
-                              sold_on: row.package!.sold_on,
-                              next_session_date: row.package!.next_session_date,
-                              sale_receipt_no: row.package!.sale_receipt_no,
-                              doctor_notes: row.package!.doctor_notes,
-                              administered_by: row.package!.administered_by,
-                              consult_by: row.package!.consult_by,
-                              sales_by: row.package!.sales_by,
-                              status: row.package!.status,
-                              branch_id: row.package!.branch_id,
-                            })
-                          }
+                          className="btn client-records-delete-btn"
+                          disabled={deletingKey === row.key}
+                          aria-label={`Delete ${row.service}`}
+                          title="Delete record and linked sale"
+                          onClick={() => void deleteRecord(row)}
                         >
-                          View sessions
+                          <Trash2 size={14} aria-hidden />
+                          {deletingKey === row.key ? 'Deleting…' : 'Delete'}
                         </button>
-                      ) : (
-                        <span className="client-records-muted">—</span>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 ))}

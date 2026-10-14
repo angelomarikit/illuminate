@@ -60,8 +60,10 @@ type Props = {
   onSuccess?: (receiptNo: string) => void
 }
 
-function todayLabel() {
-  return new Date().toLocaleDateString('en-PH', {
+function dateLabel(iso: string) {
+  const d = new Date(`${iso}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('en-PH', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -70,7 +72,11 @@ function todayLabel() {
 }
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10)
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 function mapSeries(row: SeriesDbRow): ServiceSeries {
@@ -129,6 +135,7 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
   const [sessions, setSessions] = useState('1')
   const [attendant, setAttendant] = useState('')
   const [notes, setNotes] = useState('')
+  const [availDate, setAvailDate] = useState(todayIso)
 
   useEffect(() => {
     if (!open) return
@@ -148,6 +155,7 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       setSessions('1')
       setAttendant('')
       setNotes('')
+      setAvailDate(todayIso())
 
       const [svcRes, catsRes, profRes, seriesRes] = await Promise.all([
         supabase
@@ -388,7 +396,11 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
     setError('')
 
     const receipt = receiptNumber()
-    const soldOn = todayIso()
+    const soldOn = availDate || todayIso()
+    if (!soldOn || Number.isNaN(new Date(`${soldOn}T12:00:00`).getTime())) {
+      setError('Choose a valid session date.')
+      return
+    }
     const salesBy = user?.name?.trim() || attendant.trim()
     const attribution = {
       discount_amount: 0,
@@ -418,6 +430,7 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       staff_name: user?.name ?? 'Staff',
       branch_id: isUuid(branchId) ? branchId : null,
       payment_proof_url: null,
+      sold_at: new Date(`${soldOn}T12:00:00`).toISOString(),
       ...attribution,
     })
 
@@ -466,11 +479,15 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
 
     // No calendar booking from Avail — schedule visits manually under Appointments / Sessions.
 
+    const existingLast = (customer.lastVisit || '').slice(0, 10)
+    const lastVisit =
+      !existingLast || soldOn >= existingLast ? soldOn : existingLast
+
     await supabase
       .from('customers')
       .update({
         visits: (customer.visits ?? 0) + 1,
-        last_visit: soldOn,
+        last_visit: lastVisit,
       })
       .eq('id', customer.id)
 
@@ -536,9 +553,18 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
               <span>Client</span>
               <strong>{customer.name}</strong>
             </div>
-            <div>
-              <span>Date today</span>
-              <strong>{todayLabel()}</strong>
+            <div className="avail-date-field">
+              <label htmlFor="avail-session-date">Session date</label>
+              <input
+                id="avail-session-date"
+                className="input"
+                type="date"
+                value={availDate}
+                disabled={saving}
+                onChange={(e) => setAvailDate(e.target.value)}
+                required
+              />
+              <strong className="avail-date-hint">{dateLabel(availDate)}</strong>
             </div>
           </div>
 

@@ -13,6 +13,7 @@ import {
   MessageSquareText,
   Settings,
   Receipt,
+  FileBarChart2,
   Gift,
   HeartPulse,
   LifeBuoy,
@@ -54,6 +55,7 @@ export const navSections: NavSection[] = [
       { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Owner', 'Admin'] },
       { label: 'POS / Sales', path: '/pos', icon: ShoppingBag, roles: CLINIC },
       { label: 'Sales Proof', path: '/sales', icon: Receipt, roles: CLINIC },
+      { label: 'Reports', path: '/reports', icon: FileBarChart2, roles: CLINIC },
       {
         label: 'Appointments',
         path: '/appointments',

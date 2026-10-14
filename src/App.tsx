@@ -11,6 +11,7 @@ import { PrivacyPolicy } from './pages/PrivacyPolicy'
 import { Dashboard } from './pages/Dashboard'
 import { POS } from './pages/POS'
 import { Sales } from './pages/Sales'
+import { Reports } from './pages/Reports'
 import { Sessions } from './pages/Sessions'
 import { Appointments } from './pages/Appointments'
 import { Customers } from './pages/Customers'
@@ -71,6 +72,7 @@ export default function App() {
                     <Route path="dashboard" element={<Dashboard />} />
                     <Route path="pos" element={<POS />} />
                     <Route path="sales" element={<Sales />} />
+                    <Route path="reports" element={<Reports />} />
                     <Route path="sessions" element={<Sessions />} />
                     <Route path="appointments" element={<Appointments />} />
                     <Route path="clients" element={<Customers />} />
