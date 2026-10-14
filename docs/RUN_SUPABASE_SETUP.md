@@ -78,6 +78,7 @@ After setup.sql, also run (in order):
 36. `supabase/add_service_series.sql` (**Services and Series**) - series plans with multiple category+service lines (`service_series` + `service_series_items`) for POS / Avail Service
 37. `supabase/add_inventory_persistence.sql` (**Inventory catalog prices + Stock Assessment endings**) - `inventory_items.unit_cost` / `selling_price`, plus `inventory_assessment_endings` so Ending Inventory survives refresh
 38. `supabase/add_sms_reminders.sql` (**Itexmo SMS confirmations & reminders**) - `sms_settings` + `sms_logs` for Owner/Admin SMS Reminders page
+39. `supabase/add_session_installments.sql` (**Package installment payments**) - `client_session_slots.payment_amount` / `attendant` / `sale_id` for client profile Installments UI wired to Sales Proof
 
 ### Itexmo SMS (after #38)
 

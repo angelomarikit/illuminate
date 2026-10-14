@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, ClipboardList, Trash2 } from 'lucide-react'
+import { InstallmentPaymentModal } from './InstallmentPaymentModal'
 import { SessionScheduleModal, type SessionPackageForModal } from './SessionScheduleModal'
 import { StatusMessage } from './StatusMessage'
 import { formatCurrency } from '../lib/utils'
@@ -93,8 +94,31 @@ export function ClientRecordsPanel({
   const [message, setMessage] = useState('')
   const [page, setPage] = useState(1)
   const [schedulePkg, setSchedulePkg] = useState<SessionPackageForModal | null>(null)
+  const [installmentPkg, setInstallmentPkg] = useState<SessionPackageForModal | null>(null)
   const [savingNotes, setSavingNotes] = useState(false)
   const [deletingKey, setDeletingKey] = useState<string | null>(null)
+
+  function toModalPkg(pkg: PackageRow): SessionPackageForModal {
+    return {
+      id: pkg.id,
+      customer_id: pkg.customer_id,
+      customer_name: pkg.customer_name || customerName,
+      service_name: pkg.service_name,
+      total_sessions: pkg.total_sessions,
+      sessions_used: pkg.sessions_used,
+      package_amount: pkg.package_amount,
+      discount_amount: pkg.discount_amount,
+      sold_on: pkg.sold_on,
+      next_session_date: pkg.next_session_date,
+      sale_receipt_no: pkg.sale_receipt_no,
+      doctor_notes: pkg.doctor_notes,
+      administered_by: pkg.administered_by,
+      consult_by: pkg.consult_by,
+      sales_by: pkg.sales_by,
+      status: pkg.status,
+      branch_id: pkg.branch_id,
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -145,10 +169,39 @@ export function ClientRecordsPanel({
       packages.map((p) => p.sale_receipt_no).filter((r): r is string => Boolean(r)),
     )
 
+    // Installment payments recorded on session slots (wired to sales via sale_id)
+    const installmentPaidByPkg = new Map<string, number>()
+    const installmentSaleIds = new Set<string>()
+    const packageIds = packages.map((p) => p.id)
+    for (let i = 0; i < packageIds.length; i += 80) {
+      const chunk = packageIds.slice(i, i + 80)
+      if (!chunk.length) continue
+      const { data: slotPay } = await supabase
+        .from('client_session_slots')
+        .select('package_id, payment_amount, sale_id')
+        .in('package_id', chunk)
+      for (const row of (slotPay as
+        | { package_id: string; payment_amount: number | string | null; sale_id: string | null }[]
+        | null) ?? []) {
+        const amt = Number(row.payment_amount ?? 0) || 0
+        installmentPaidByPkg.set(
+          row.package_id,
+          (installmentPaidByPkg.get(row.package_id) || 0) + amt,
+        )
+        if (row.sale_id) installmentSaleIds.add(row.sale_id)
+      }
+    }
+
     const packageRecords: ClientRecord[] = packages.map((pkg) => {
       const linked = pkg.sale_receipt_no ? saleByReceipt.get(pkg.sale_receipt_no) : undefined
       const totalPrice = pkg.package_amount
-      const paymentsMade = linked ? linked.total : pkg.package_amount
+      const installmentPaid = installmentPaidByPkg.get(pkg.id) || 0
+      const originalPaid = linked ? linked.total : 0
+      // Prefer the larger of original receipt vs installment session totals (plan).
+      const paymentsMade =
+        installmentPaid > 0 || originalPaid > 0
+          ? Math.max(originalPaid, installmentPaid)
+          : pkg.package_amount
       const sessionsLeft = Math.max(0, pkg.total_sessions - pkg.sessions_used)
       const notes =
         [pkg.doctor_notes, pkg.notes, linked?.items && linked.items !== pkg.service_name ? linked.items : null]
@@ -171,9 +224,14 @@ export function ClientRecordsPanel({
       }
     })
 
-    // Product / one-off sales not already represented by a session package
+    // Product / one-off sales not already represented by a session package or installment
     const saleOnlyRecords: ClientRecord[] = saleRows
-      .filter((sale) => !receiptsUsedByPackage.has(sale.receipt_no))
+      .filter(
+        (sale) =>
+          !receiptsUsedByPackage.has(sale.receipt_no) &&
+          !installmentSaleIds.has(sale.id) &&
+          !/installment/i.test(sale.items || ''),
+      )
       .map((sale) => ({
         key: `sale-${sale.id}`,
         kind: 'sale' as const,
@@ -252,6 +310,22 @@ export function ClientRecordsPanel({
     setMessage('')
 
     if (row.package?.id) {
+      const { data: slotSales } = await supabase
+        .from('client_session_slots')
+        .select('sale_id')
+        .eq('package_id', row.package.id)
+        .not('sale_id', 'is', null)
+      const installmentIds = [
+        ...new Set(
+          ((slotSales as { sale_id: string | null }[] | null) ?? [])
+            .map((s) => s.sale_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ]
+      if (installmentIds.length) {
+        await supabase.from('sales').delete().in('id', installmentIds)
+      }
+
       const { error: pkgErr } = await supabase
         .from('client_session_packages')
         .delete()
@@ -274,6 +348,10 @@ export function ClientRecordsPanel({
     } else if (row.receiptNo) {
       const res = await supabase.from('sales').delete().eq('receipt_no', row.receiptNo)
       saleErr = res.error
+    }
+
+    if (installmentPkg && row.package && installmentPkg.id === row.package.id) {
+      setInstallmentPkg(null)
     }
 
     setDeletingKey(null)
@@ -388,34 +466,24 @@ export function ClientRecordsPanel({
                     <td>
                       <div className="client-records-actions">
                         {row.package ? (
-                          <button
-                            type="button"
-                            className="btn client-records-view-btn"
-                            disabled={deletingKey === row.key}
-                            onClick={() =>
-                              setSchedulePkg({
-                                id: row.package!.id,
-                                customer_id: row.package!.customer_id,
-                                customer_name: row.package!.customer_name || customerName,
-                                service_name: row.package!.service_name,
-                                total_sessions: row.package!.total_sessions,
-                                sessions_used: row.package!.sessions_used,
-                                package_amount: row.package!.package_amount,
-                                discount_amount: row.package!.discount_amount,
-                                sold_on: row.package!.sold_on,
-                                next_session_date: row.package!.next_session_date,
-                                sale_receipt_no: row.package!.sale_receipt_no,
-                                doctor_notes: row.package!.doctor_notes,
-                                administered_by: row.package!.administered_by,
-                                consult_by: row.package!.consult_by,
-                                sales_by: row.package!.sales_by,
-                                status: row.package!.status,
-                                branch_id: row.package!.branch_id,
-                              })
-                            }
-                          >
-                            View sessions
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="btn client-records-view-btn"
+                              disabled={deletingKey === row.key}
+                              onClick={() => setSchedulePkg(toModalPkg(row.package!))}
+                            >
+                              View sessions
+                            </button>
+                            <button
+                              type="button"
+                              className="btn client-records-installment-btn"
+                              disabled={deletingKey === row.key}
+                              onClick={() => setInstallmentPkg(toModalPkg(row.package!))}
+                            >
+                              Installments
+                            </button>
+                          </>
                         ) : null}
                         <button
                           type="button"
@@ -477,6 +545,18 @@ export function ClientRecordsPanel({
           }}
           savingNotes={savingNotes}
           onSaveDoctorNotes={saveDoctorNotes}
+        />
+      ) : null}
+
+      {installmentPkg ? (
+        <InstallmentPaymentModal
+          pkg={installmentPkg}
+          open={Boolean(installmentPkg)}
+          onClose={() => setInstallmentPkg(null)}
+          onSaved={(msg) => {
+            setMessage(msg)
+            void load()
+          }}
         />
       ) : null}
     </div>
