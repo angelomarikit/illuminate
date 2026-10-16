@@ -122,6 +122,27 @@
   color: var(--muted, #6b6b6b);
 }
 
+.reports-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #e0b4b4;
+  color: #8b3a3a;
+  white-space: nowrap;
+}
+
+.reports-delete-btn:hover:not(:disabled) {
+  background: #fdf2f2;
+  border-color: #c97878;
+  color: #7a2e2e;
+}
+
+.reports-delete-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 @media (max-width: 720px) {
   .reports-date-card {
     flex: 1 1 100%;

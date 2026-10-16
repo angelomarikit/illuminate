@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Download, FileBarChart2, Search } from 'lucide-react'
+import { Download, FileBarChart2, Search, Trash2 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useBranch } from '../context/BranchContext'
@@ -34,6 +34,8 @@ type PackageEmbed = {
 
 export type ReportRow = {
   id: string
+  /** Raw sales.id or client_session_slots.id for delete */
+  recordId: string
   source: 'sale' | 'session'
   client: string
   service: string
@@ -88,6 +90,7 @@ export function Reports() {
   const [message, setMessage] = useState('')
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -170,6 +173,7 @@ export function Reports() {
       const rawPay = Number(s.total) || 0
       return {
         id: `sale-${s.id}`,
+        recordId: s.id,
         source: 'sale' as const,
         client: s.customer_name?.trim() || 'Walk-in',
         service: s.items || '—',
@@ -233,6 +237,7 @@ export function Reports() {
         if (!matchesBranch(pkg?.branch_id, branchId)) continue
         slotRows.push({
           id: `slot-${slot.id}`,
+          recordId: slot.id,
           source: 'session',
           client: pkg?.customer_name?.trim() || 'Client',
           service: pkg?.service_name?.trim()
@@ -278,6 +283,101 @@ export function Reports() {
     }
     setAppliedFrom(fromDate)
     setAppliedTo(toDate)
+  }
+
+  async function deleteReportRow(row: ReportRow) {
+    const kind = row.source === 'sale' ? 'sale receipt' : 'package visit'
+    const ok = window.confirm(
+      `Delete this ${kind}?\n\n${row.client}\n${row.service}\n${row.sessionDate}` +
+        (row.payment > 0 ? `\nPayment: ${row.payment}` : '') +
+        '\n\nThis cannot be undone.',
+    )
+    if (!ok) return
+
+    setDeletingId(row.id)
+    setError('')
+    setMessage('')
+
+    if (row.source === 'sale') {
+      // Clear installment slot links before deleting the sale
+      await supabase
+        .from('client_session_slots')
+        .update({ sale_id: null, payment_amount: 0 })
+        .eq('sale_id', row.recordId)
+
+      const { error: delErr } = await supabase.from('sales').delete().eq('id', row.recordId)
+      setDeletingId(null)
+      if (delErr) {
+        setError(delErr.message)
+        return
+      }
+      setMessage(`Deleted sale${row.receiptNo ? ` ${row.receiptNo}` : ''}.`)
+    } else {
+      const { data: slot, error: findErr } = await supabase
+        .from('client_session_slots')
+        .select('id, package_id, sale_id, status')
+        .eq('id', row.recordId)
+        .maybeSingle()
+
+      if (findErr || !slot) {
+        setDeletingId(null)
+        setError(findErr?.message || 'Session visit not found.')
+        return
+      }
+
+      const slotRow = slot as {
+        id: string
+        package_id: string
+        sale_id: string | null
+        status: string
+      }
+
+      if (slotRow.sale_id) {
+        await supabase.from('sales').delete().eq('id', slotRow.sale_id)
+      }
+
+      // Reset visit so it no longer appears as a finished package visit in Reports
+      const { error: updErr } = await supabase
+        .from('client_session_slots')
+        .update({
+          status: 'pending',
+          scheduled_date: null,
+          scheduled_time: null,
+          payment_amount: 0,
+          attendant: null,
+          sale_id: null,
+          notes: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', slotRow.id)
+
+      if (updErr) {
+        setDeletingId(null)
+        setError(updErr.message)
+        return
+      }
+
+      const { data: siblings } = await supabase
+        .from('client_session_slots')
+        .select('status')
+        .eq('package_id', slotRow.package_id)
+      const finished = ((siblings as { status: string }[] | null) ?? []).filter(
+        (s) => s.status === 'finished',
+      ).length
+      await supabase
+        .from('client_session_packages')
+        .update({
+          sessions_used: finished,
+          status: 'active',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', slotRow.package_id)
+
+      setDeletingId(null)
+      setMessage('Deleted package visit from reports.')
+    }
+
+    await load()
   }
 
   const filtered = useMemo(() => {
@@ -441,6 +541,7 @@ export function Reports() {
                     <th>Payment</th>
                     <th>Attendant</th>
                     <th>Remarks</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -467,6 +568,19 @@ export function Reports() {
                       </td>
                       <td>{row.attendant}</td>
                       <td>{row.remarks || '—'}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn reports-delete-btn btn-sm"
+                          disabled={deletingId === row.id}
+                          aria-label={`Delete ${row.client} ${row.service}`}
+                          title="Delete from reports"
+                          onClick={() => void deleteReportRow(row)}
+                        >
+                          <Trash2 size={14} aria-hidden />
+                          {deletingId === row.id ? '…' : 'Delete'}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
