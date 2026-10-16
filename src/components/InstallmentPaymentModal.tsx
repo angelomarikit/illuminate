@@ -214,12 +214,18 @@ export function InstallmentPaymentModal({ pkg, open, onClose, onSaved }: Props) 
     }
 
     if (pkg.sale_receipt_no) {
+      // If installments already recorded, keep original receipt at ₱0 so Reports
+      // does not double-count package list price + installment payments.
+      const hasInstallments = slots.some((s) => Math.max(0, Number(s.paymentAmount) || 0) > 0)
       await supabase
         .from('sales')
         .update({
-          total: amount,
+          total: hasInstallments ? 0 : amount,
           sold_at: new Date(`${date}T12:00:00`).toISOString(),
           doctor_notes: notes.trim() || null,
+          ...(hasInstallments
+            ? { payment_method: 'Installment plan' }
+            : {}),
         })
         .eq('receipt_no', pkg.sale_receipt_no)
     }
@@ -293,6 +299,19 @@ export function InstallmentPaymentModal({ pkg, open, onClose, onSaved }: Props) 
             .single()
           if (insSaleErr || !sale) throw insSaleErr || new Error('Could not create installment sale')
           saleId = sale.id as string
+        }
+
+        // Zero the original package sale so Reports / Sales Proof do not count
+        // full list price + installment payments.
+        if (pkg.sale_receipt_no) {
+          await supabase
+            .from('sales')
+            .update({
+              total: 0,
+              payment_method: 'Installment plan',
+              doctor_notes: notes.trim() || null,
+            })
+            .eq('receipt_no', pkg.sale_receipt_no)
         }
       } else if (saleId) {
         await supabase.from('sales').delete().eq('id', saleId)

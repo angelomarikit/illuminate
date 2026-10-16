@@ -126,31 +126,71 @@ export function Reports() {
       return
     }
 
-    const saleRows: ReportRow[] = ((salesData as SaleRow[] | null) ?? [])
-      .filter((s) => matchesBranch(s.branch_id, branchId))
-      .map((s) => {
-        const day = new Date(s.sold_at)
-        const dayStr = Number.isNaN(day.getTime())
-          ? s.sold_at.slice(0, 10)
-          : toDateInput(day)
-        return {
-          id: `sale-${s.id}`,
-          source: 'sale' as const,
-          client: s.customer_name?.trim() || 'Walk-in',
-          service: s.items || '—',
-          sessionDate: formatSessionDate(dayStr),
-          sessionDateSort: dayStr,
-          payment: Number(s.total) || 0,
-          paymentLabel: s.payment_method || 'Cash',
-          attendant:
-            s.administered_by?.trim() ||
-            s.sales_by?.trim() ||
-            s.staff_name?.trim() ||
-            '—',
-          remarks: s.doctor_notes?.trim() || '',
-          receiptNo: s.receipt_no,
+    const salesInRange = ((salesData as SaleRow[] | null) ?? []).filter((s) =>
+      matchesBranch(s.branch_id, branchId),
+    )
+
+    // Original package receipts must not count when installment payments exist for that package
+    // (otherwise Reports = full package price + installment = double count).
+    const installmentPlanReceipts = new Set<string>()
+    const receiptNos = [
+      ...new Set(salesInRange.map((s) => s.receipt_no).filter(Boolean)),
+    ]
+    for (let i = 0; i < receiptNos.length; i += 80) {
+      const chunk = receiptNos.slice(i, i + 80)
+      const { data: pkgs } = await supabase
+        .from('client_session_packages')
+        .select('id, sale_receipt_no')
+        .in('sale_receipt_no', chunk)
+      const pkgRows =
+        (pkgs as { id: string; sale_receipt_no: string | null }[] | null) ?? []
+      if (!pkgRows.length) continue
+      const pkgIds = pkgRows.map((p) => p.id)
+      const { data: paySlots } = await supabase
+        .from('client_session_slots')
+        .select('package_id, payment_amount')
+        .in('package_id', pkgIds)
+        .gt('payment_amount', 0)
+      const pkgsWithInstallments = new Set(
+        ((paySlots as { package_id: string }[] | null) ?? []).map((s) => s.package_id),
+      )
+      for (const pkg of pkgRows) {
+        if (pkg.sale_receipt_no && pkgsWithInstallments.has(pkg.id)) {
+          installmentPlanReceipts.add(pkg.sale_receipt_no)
         }
-      })
+      }
+    }
+
+    const saleRows: ReportRow[] = salesInRange.map((s) => {
+      const day = new Date(s.sold_at)
+      const dayStr = Number.isNaN(day.getTime()) ? s.sold_at.slice(0, 10) : toDateInput(day)
+      const isInstallmentLine = /installment/i.test(s.items || '')
+      const isPackageBookedOnPlan =
+        !isInstallmentLine && installmentPlanReceipts.has(s.receipt_no)
+      const rawPay = Number(s.total) || 0
+      return {
+        id: `sale-${s.id}`,
+        source: 'sale' as const,
+        client: s.customer_name?.trim() || 'Walk-in',
+        service: s.items || '—',
+        sessionDate: formatSessionDate(dayStr),
+        sessionDateSort: dayStr,
+        payment: isPackageBookedOnPlan ? 0 : rawPay,
+        paymentLabel: isPackageBookedOnPlan
+          ? 'Package booked · paid via installments'
+          : isInstallmentLine
+            ? `${s.payment_method || 'Cash'} · installment`
+            : s.payment_method || 'Cash',
+        attendant:
+          s.administered_by?.trim() || s.sales_by?.trim() || s.staff_name?.trim() || '—',
+        remarks: isPackageBookedOnPlan
+          ? [s.doctor_notes?.trim(), `List price ${rawPay.toLocaleString('en-PH')}`]
+              .filter(Boolean)
+              .join(' · ')
+          : s.doctor_notes?.trim() || '',
+        receiptNo: s.receipt_no,
+      }
+    })
 
     // Finished package visits (₱0 payment) — two-step load avoids empty nested embeds.
     const slotRows: ReportRow[] = []

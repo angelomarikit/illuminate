@@ -197,11 +197,14 @@ export function ClientRecordsPanel({
       const totalPrice = pkg.package_amount
       const installmentPaid = installmentPaidByPkg.get(pkg.id) || 0
       const originalPaid = linked ? linked.total : 0
-      // Prefer the larger of original receipt vs installment session totals (plan).
+      // When installments are used, paid = sum of installment payments only
+      // (original package receipt is list-price booking, not cash collected twice).
       const paymentsMade =
-        installmentPaid > 0 || originalPaid > 0
-          ? Math.max(originalPaid, installmentPaid)
-          : pkg.package_amount
+        installmentPaid > 0
+          ? installmentPaid
+          : originalPaid > 0
+            ? originalPaid
+            : pkg.package_amount
       const sessionsLeft = Math.max(0, pkg.total_sessions - pkg.sessions_used)
       const notes =
         [pkg.doctor_notes, pkg.notes, linked?.items && linked.items !== pkg.service_name ? linked.items : null]
