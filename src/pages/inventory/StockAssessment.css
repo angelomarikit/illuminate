@@ -27,6 +27,29 @@
   font-size: 0.8rem;
 }
 
+.stock-assessment-page .sa-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+  margin-bottom: 14px;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e5e0d6);
+  background: #fff;
+  color: var(--muted, #6b6b6b);
+}
+
+.stock-assessment-page .sa-search input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+
 .stock-assessment-page .sa-table-wrap {
   overflow-x: auto;
 }
@@ -41,16 +64,26 @@
   min-width: 72px;
 }
 
-.stock-assessment-page .sa-required-cell {
+.stock-assessment-page .sa-expected-cell {
   background: color-mix(in srgb, var(--surface, #fff) 92%, var(--muted, #888) 8%);
 }
 
-.stock-assessment-page .sa-required-cell strong {
+.stock-assessment-page .sa-expected-cell strong {
   font-variant-numeric: tabular-nums;
+}
+
+.stock-assessment-page .sa-badge-pending {
+  background: #f3f1ec;
+  color: #6b6b6b;
+  border: 1px solid #e5e0d6;
 }
 
 @media (max-width: 720px) {
   .stock-assessment-page .sa-range-fields {
     grid-template-columns: 1fr;
+  }
+
+  .stock-assessment-page .sa-search {
+    max-width: none;
   }
 }

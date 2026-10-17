@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ClipboardList, Pencil, Trash2 } from 'lucide-react'
+import { ClipboardList, Pencil, Search, Trash2 } from 'lucide-react'
 import { InventorySubnav } from '../../components/InventorySubnav'
 import { PageHeader } from '../../components/PageHeader'
 import { StatusMessage } from '../../components/StatusMessage'
@@ -42,7 +42,9 @@ type IssueRow = {
 
 type LineForm = { itemId: string; qty: string; notes: string }
 
-type RangePreset = 'week' | 'month' | 'custom'
+type RangePreset = 'today' | 'week' | 'month' | 'custom'
+
+type AssessmentKind = 'BALANCED' | 'LACKING' | 'EXCESS'
 
 type SheetRow = {
   id: string
@@ -51,12 +53,13 @@ type SheetRow = {
   unit: string
   beginning: number
   received: number
-  totalAvailable: number
   issued: number
+  /** Expected on hand = Beginning + In − Out */
+  expected: number
   ending: number
-  required: number
-  variance: number
-  assessment: 'BALANCED' | 'LACKING' | 'EXCESS'
+  counted: boolean
+  variance: number | null
+  assessment: AssessmentKind | null
 }
 
 type QtyRow = { qty: number; inventory_item_id: string }
@@ -185,14 +188,15 @@ function itemFromLine(line: IssueLineRow) {
   return Array.isArray(snap) ? snap[0] ?? null : snap
 }
 
-/** Variance = Required Stock − Ending Inventory. Positive ⇒ LACKING, negative ⇒ EXCESS. */
-function assessVariance(variance: number): SheetRow['assessment'] {
+/** Variance = Expected − Count. Positive ⇒ LACKING, negative ⇒ EXCESS. */
+function assessVariance(variance: number): AssessmentKind {
   if (variance === 0) return 'BALANCED'
   if (variance > 0) return 'LACKING'
   return 'EXCESS'
 }
 
-function assessmentBadge(kind: SheetRow['assessment']) {
+function assessmentBadge(kind: AssessmentKind | null) {
+  if (!kind) return 'badge sa-badge-pending'
   if (kind === 'BALANCED') return 'badge badge-success'
   if (kind === 'LACKING') return 'badge badge-danger'
   return 'badge badge-warning'
@@ -202,9 +206,9 @@ export function StockAssessment() {
   const { user } = useAuth()
   const { branchId } = useBranch()
 
-  const [preset, setPreset] = useState<RangePreset>('week')
-  const [rangeStart, setRangeStart] = useState(() => toDateInput(startOfWeek(new Date())))
-  const [rangeEnd, setRangeEnd] = useState(() => toDateInput(endOfWeek(new Date())))
+  const [preset, setPreset] = useState<RangePreset>('today')
+  const [rangeStart, setRangeStart] = useState(() => toDateInput(new Date()))
+  const [rangeEnd, setRangeEnd] = useState(() => toDateInput(new Date()))
 
   const [items, setItems] = useState<ItemRow[]>([])
   const [issues, setIssues] = useState<IssueRow[]>([])
@@ -212,6 +216,8 @@ export function StockAssessment() {
   const [issuedByItem, setIssuedByItem] = useState<Record<string, number>>({})
   const [recvSinceStart, setRecvSinceStart] = useState<Record<string, number>>({})
   const [issuedSinceStart, setIssuedSinceStart] = useState<Record<string, number>>({})
+  /** Prior period ending counts used as Beginning when available. */
+  const [priorBeginningByItem, setPriorBeginningByItem] = useState<Record<string, number>>({})
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -220,6 +226,7 @@ export function StockAssessment() {
   const [endingSavingId, setEndingSavingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const [issuedAt, setIssuedAt] = useState(() => toDateInput(new Date()))
   const [reason, setReason] = useState('')
@@ -230,7 +237,11 @@ export function StockAssessment() {
   function applyPreset(next: RangePreset) {
     setPreset(next)
     const now = new Date()
-    if (next === 'week') {
+    if (next === 'today') {
+      const t = toDateInput(now)
+      setRangeStart(t)
+      setRangeEnd(t)
+    } else if (next === 'week') {
       setRangeStart(toDateInput(startOfWeek(now)))
       setRangeEnd(toDateInput(endOfWeek(now)))
     } else if (next === 'month') {
@@ -268,6 +279,7 @@ export function StockAssessment() {
       { data: issueHeaderData, error: issueErr },
       { data: endingExactData, error: endingExactErr },
       { data: endingFallbackData, error: endingFallbackErr },
+      { data: priorEndingData, error: priorEndingErr },
     ] = await Promise.all([
       itemQ,
       issueHeaderQ,
@@ -282,6 +294,14 @@ export function StockAssessment() {
         .select('inventory_item_id, ending_qty, period_end, updated_at')
         .eq('branch_key', bKey)
         .eq('period_start', rangeStart)
+        .order('updated_at', { ascending: false }),
+      // Latest ending whose period ended before this range → carry-forward Beginning
+      supabase
+        .from('inventory_assessment_endings')
+        .select('inventory_item_id, ending_qty, period_end, updated_at')
+        .eq('branch_key', bKey)
+        .lt('period_end', rangeStart)
+        .order('period_end', { ascending: false })
         .order('updated_at', { ascending: false }),
     ])
 
@@ -350,7 +370,7 @@ export function StockAssessment() {
       lineErr = e instanceof Error ? e : new Error('Could not load receipt/issue lines')
     }
 
-    const endingErr = endingExactErr || endingFallbackErr
+    const endingErr = endingExactErr || endingFallbackErr || priorEndingErr
     const errors: string[] = []
     for (const err of [itemErr, issueErr, lineErr, endingErr]) {
       if (!err) continue
@@ -394,6 +414,15 @@ export function StockAssessment() {
       }
     }
     setEndingByItem(endingMap)
+
+    const priorMap: Record<string, number> = {}
+    if (!priorEndingErr) {
+      for (const row of (priorEndingData as EndingRow[] | null) ?? []) {
+        if (priorMap[row.inventory_item_id] !== undefined) continue
+        priorMap[row.inventory_item_id] = Math.max(0, Number(row.ending_qty) || 0)
+      }
+    }
+    setPriorBeginningByItem(priorMap)
     setLoading(false)
   }, [branchId, rangeStart, rangeEnd])
 
@@ -472,10 +501,34 @@ export function StockAssessment() {
   }
 
   async function persistEnding(itemId: string, raw: string) {
-    const qty = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw) || 0))
     const bKey = branchKeyFor(branchId)
     setEndingSavingId(itemId)
     setError('')
+
+    // Blank count = not counted yet — remove any saved ending for this period.
+    if (raw === '' || raw.trim() === '') {
+      const { error: delErr } = await supabase
+        .from('inventory_assessment_endings')
+        .delete()
+        .eq('branch_key', bKey)
+        .eq('period_start', rangeStart)
+        .eq('period_end', rangeEnd)
+        .eq('inventory_item_id', itemId)
+      setEndingSavingId(null)
+      if (delErr && !delErr.message.includes('inventory_assessment_endings')) {
+        setError(endingMigrationHint(delErr.message, delErr.code))
+        return
+      }
+      setEndingByItem((prev) => {
+        const next = { ...prev }
+        delete next[itemId]
+        return next
+      })
+      setMessage('Count cleared · not counted')
+      return
+    }
+
+    const qty = Math.max(0, Math.floor(Number(raw) || 0))
     const payload = {
       branch_key: bKey,
       branch_id: isUuid(branchId) ? branchId : null,
@@ -493,22 +546,22 @@ export function StockAssessment() {
       return
     }
     setEndingByItem((prev) => ({ ...prev, [itemId]: String(qty) }))
-    setMessage(`Ending saved · ${qty}`)
+    setMessage(`Count saved · ${qty}`)
   }
 
   const sheetRows = useMemo<SheetRow[]>(() => {
     return items.map((item) => {
-      const beginning =
+      const reconstructed =
         Number(item.stock) - (recvSinceStart[item.id] || 0) + (issuedSinceStart[item.id] || 0)
+      const prior = priorBeginningByItem[item.id]
+      const beginning = prior !== undefined ? prior : reconstructed
       const received = receivedByItem[item.id] || 0
       const issued = issuedByItem[item.id] || 0
-      const totalAvailable = beginning + received
-      // Required Stock = Beginning + Received − Issued/Used (not Catalog Reorder).
-      const required = totalAvailable - issued
+      const expected = beginning + received - issued
       const endingRaw = endingByItem[item.id]
-      const ending =
-        endingRaw === undefined || endingRaw === '' ? 0 : Math.max(0, Number(endingRaw) || 0)
-      const variance = required - ending
+      const counted = endingRaw !== undefined && endingRaw !== ''
+      const ending = counted ? Math.max(0, Number(endingRaw) || 0) : 0
+      const variance = counted ? expected - ending : null
       return {
         id: item.id,
         name: item.name,
@@ -516,25 +569,51 @@ export function StockAssessment() {
         unit: item.unit,
         beginning,
         received,
-        totalAvailable,
         issued,
+        expected,
         ending,
-        required,
+        counted,
         variance,
-        assessment: assessVariance(variance),
+        assessment: counted && variance !== null ? assessVariance(variance) : null,
       }
     })
-  }, [items, recvSinceStart, issuedSinceStart, receivedByItem, issuedByItem, endingByItem])
+  }, [
+    items,
+    recvSinceStart,
+    issuedSinceStart,
+    priorBeginningByItem,
+    receivedByItem,
+    issuedByItem,
+    endingByItem,
+  ])
+
+  const filteredSheetRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return sheetRows
+    return sheetRows.filter(
+      (row) =>
+        row.name.toLowerCase().includes(q) ||
+        row.sku.toLowerCase().includes(q) ||
+        (row.unit || '').toLowerCase().includes(q),
+    )
+  }, [sheetRows, searchQuery])
 
   async function saveAllEndings() {
-    if (!sheetRows.length) return
+    const countedRows = sheetRows.filter((row) => {
+      const raw = endingByItem[row.id]
+      return raw !== undefined && raw !== ''
+    })
+    if (!countedRows.length) {
+      setError('Enter at least one Count before saving.')
+      return
+    }
     setSaving(true)
     setError('')
     setMessage('')
     const bKey = branchKeyFor(branchId)
-    const rows = sheetRows.map((row) => {
+    const rows = countedRows.map((row) => {
       const raw = endingByItem[row.id]
-      const qty = raw === undefined || raw === '' ? 0 : Math.max(0, Math.floor(Number(raw) || 0))
+      const qty = Math.max(0, Math.floor(Number(raw) || 0))
       return {
         branch_key: bKey,
         branch_id: isUuid(branchId) ? branchId : null,
@@ -571,7 +650,7 @@ export function StockAssessment() {
       nextMap[row.inventory_item_id] = String(row.ending_qty)
     }
     setEndingByItem((prev) => ({ ...prev, ...nextMap }))
-    setMessage(`Saved ending inventory for ${rows.length} item(s).`)
+    setMessage(`Saved count for ${rows.length} item(s).`)
   }
 
   function updateLine(index: number, patch: Partial<LineForm>) {
@@ -813,7 +892,7 @@ export function StockAssessment() {
       <PageHeader
         kicker="Inventory"
         title="Stock assessment"
-        subtitle="Period sheet: beginning, received, issued/used, auto required stock, manual ending inventory, and BALANCED / LACKING / EXCESS."
+        subtitle="Daily count sheet: opening, in, out, expected on hand, physical count, then BALANCED / LACKING / EXCESS."
       />
       <InventorySubnav />
 
@@ -826,6 +905,13 @@ export function StockAssessment() {
         </div>
         <div className="panel-body sa-period">
           <div className="sa-presets">
+            <button
+              className={`btn btn-sm ${preset === 'today' ? 'btn-primary' : 'btn-ghost'}`}
+              type="button"
+              onClick={() => applyPreset('today')}
+            >
+              Today
+            </button>
             <button
               className={`btn btn-sm ${preset === 'week' ? 'btn-primary' : 'btn-ghost'}`}
               type="button"
@@ -878,11 +964,9 @@ export function StockAssessment() {
             </div>
           </div>
           <p className="sa-hint">
-            Beginning is reconstructed from current stock minus receipts/issues since the start
-            date. Received and Issued/Used are totals inside the selected range. Required stock is
-            auto-calculated as Beginning + Received − Issued/Used — it is never Catalog Reorder.
-            Ending inventory is your physical Supply Room count and is persisted per period;
-            variance is Required − Ending.
+            In = receiving · Out = issued/used · Expected = Beginning + In − Out · Count = physical
+            ending. Status compares Expected vs Count only after you enter a count. Beginning carries
+            forward from the last saved count when available.
           </p>
         </div>
       </div>
@@ -891,7 +975,7 @@ export function StockAssessment() {
         <div className="panel-header" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
           <h2 className="panel-title" style={{ flex: 1, margin: 0 }}>
             <ClipboardList size={16} style={{ marginRight: 8, verticalAlign: -2 }} />
-            Assessment sheet
+            Count sheet
           </h2>
           <button
             className="btn btn-primary btn-sm"
@@ -899,34 +983,42 @@ export function StockAssessment() {
             disabled={saving || loading || !sheetRows.length}
             onClick={() => void saveAllEndings()}
           >
-            {saving ? 'Saving…' : 'Save ending inventory'}
+            {saving ? 'Saving…' : 'Save counts'}
           </button>
         </div>
         <div className="panel-body">
+          <label className="sa-search">
+            <Search size={15} aria-hidden />
+            <input
+              type="search"
+              placeholder="Search item or SKU…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </label>
+
           {loading ? (
             <div className="empty-state">Loading assessment…</div>
           ) : sheetRows.length === 0 ? (
             <div className="empty-state">No inventory items for this branch.</div>
+          ) : filteredSheetRows.length === 0 ? (
+            <div className="empty-state">No items match your search.</div>
           ) : (
             <div className="table-wrap sa-table-wrap">
               <table className="data-table sa-table">
                 <thead>
                   <tr>
-                    <th>Product / Item</th>
+                    <th>Item</th>
                     <th>Beginning</th>
-                    <th>Stock received</th>
-                    <th>Total available</th>
-                    <th>Issued / Used</th>
-                    <th>Ending (manual)</th>
-                    <th title="Beginning + Received − Issued/Used. Not Catalog Reorder.">
-                      Required on hand
-                    </th>
-                    <th>Variance</th>
-                    <th>Assessment</th>
+                    <th>In</th>
+                    <th>Out</th>
+                    <th title="Beginning + In − Out">Expected</th>
+                    <th>Count</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sheetRows.map((row) => (
+                  {filteredSheetRows.map((row) => (
                     <tr key={row.id}>
                       <td>
                         <strong>{row.name}</strong>
@@ -937,9 +1029,11 @@ export function StockAssessment() {
                       </td>
                       <td>{row.beginning}</td>
                       <td>{row.received}</td>
-                      <td>{row.totalAvailable}</td>
                       <td>
                         <strong>{row.issued}</strong>
+                      </td>
+                      <td className="sa-expected-cell">
+                        <strong>{row.expected}</strong>
                       </td>
                       <td>
                         <div className="sa-ending">
@@ -960,8 +1054,8 @@ export function StockAssessment() {
                                 e.currentTarget.blur()
                               }
                             }}
-                            placeholder="Count"
-                            aria-label={`Ending inventory for ${row.name}`}
+                            placeholder="—"
+                            aria-label={`Physical count for ${row.name}`}
                             disabled={endingSavingId === row.id}
                           />
                           {endingSavingId === row.id ? (
@@ -969,13 +1063,21 @@ export function StockAssessment() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="sa-required-cell">
-                        <strong>{row.required}</strong>
-                        <div className="sa-muted">Beg + Recv − Used</div>
-                      </td>
-                      <td>{row.variance > 0 ? `+${row.variance}` : row.variance}</td>
                       <td>
-                        <span className={assessmentBadge(row.assessment)}>{row.assessment}</span>
+                        {row.assessment ? (
+                          <span
+                            className={assessmentBadge(row.assessment)}
+                            title={
+                              row.variance !== null
+                                ? `Expected ${row.expected} − Count ${row.ending} = ${row.variance}`
+                                : undefined
+                            }
+                          >
+                            {row.assessment}
+                          </span>
+                        ) : (
+                          <span className={assessmentBadge(null)}>Not counted</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -984,9 +1086,9 @@ export function StockAssessment() {
             </div>
           )}
           <p className="sa-hint" style={{ marginTop: 12 }}>
-            Ending: type a count, then press Enter or click outside (or use Save ending inventory).
-            Required on hand is calculated only — it does not read or write Stock Catalog → Reorder.
-            Issued/Used totals only include logs with Issued date inside {rangeStart} → {rangeEnd}.
+            Enter Count, then press Enter or click outside (or Save counts). Status stays “Not
+            counted” until a count is entered — including 0. Out only includes issues dated{' '}
+            {rangeStart} → {rangeEnd}.
           </p>
         </div>
       </div>
