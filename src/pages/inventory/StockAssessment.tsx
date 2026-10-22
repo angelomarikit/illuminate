@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ClipboardList, Pencil, Search, Trash2 } from 'lucide-react'
 import { InventorySubnav } from '../../components/InventorySubnav'
 import { PageHeader } from '../../components/PageHeader'
@@ -112,58 +112,170 @@ function endOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth() + 1, 0)
 }
 
-function sumByItem(rows: QtyRow[] | null | undefined) {
-  const map: Record<string, number> = {}
-  for (const row of rows ?? []) {
-    map[row.inventory_item_id] = (map[row.inventory_item_id] || 0) + Number(row.qty || 0)
-  }
-  return map
-}
-
 function matchesBranch(rowBranchId: string | null | undefined, activeBranchId: string) {
+  // All-branches (non-uuid): include every row. Specific branch: exact match only —
+  // including null-branch rows caused the same receive to count twice when it was
+  // also saved under the active branch (In 40 instead of 20).
   if (!isUuid(activeBranchId)) return true
-  return rowBranchId === activeBranchId || rowBranchId == null
+  return rowBranchId === activeBranchId
 }
 
-/** PostgREST `.or(branch…)` + nested embeds often returns empty child arrays; filter in JS instead. */
+/** Normalize DB date / timestamptz to YYYY-MM-DD for calendar-day compares. */
+function dateKey(value: string | null | undefined) {
+  if (!value) return ''
+  const raw = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return ''
+  return toDateInput(d)
+}
+
+function isDateInRange(value: string | null | undefined, from: string, to: string) {
+  const d = dateKey(value)
+  if (!d || !from || !to) return false
+  return d >= from && d <= to
+}
+
+type MovementHeader = { id: string; branch_id: string | null; moveDate: string }
+
+/**
+ * Load issue/receipt headers for a calendar range.
+ * Filters again in JS by YYYY-MM-DD so timestamptz / locale casts cannot pull adjacent days
+ * (e.g. Oct 19 receiving appearing on Oct 20).
+ */
 async function fetchHeadersInRange(
   table: 'inventory_issues' | 'inventory_receipts',
   dateCol: 'issued_at' | 'received_at',
   from: string,
   to: string,
   activeBranchId: string,
-) {
-  const { data, error } = await supabase
-    .from(table)
-    .select(`id, branch_id, ${dateCol}`)
-    .gte(dateCol, from)
-    .lte(dateCol, to)
+): Promise<MovementHeader[]> {
+  let q = supabase.from(table).select(`id, branch_id, ${dateCol}`)
+  // Single-day: prefer eq to avoid boundary cast issues
+  if (from === to) {
+    q = q.eq(dateCol, from)
+  } else {
+    q = q.gte(dateCol, from).lte(dateCol, to)
+  }
+  const { data, error } = await q
   if (error) throw error
-  return ((data as { id: string; branch_id: string | null }[] | null) ?? []).filter((row) =>
-    matchesBranch(row.branch_id, activeBranchId),
-  )
+
+  return ((data as Record<string, unknown>[] | null) ?? [])
+    .map((row) => ({
+      id: String(row.id),
+      branch_id: (row.branch_id as string | null) ?? null,
+      moveDate: dateKey(row[dateCol] as string),
+    }))
+    .filter(
+      (row) =>
+        matchesBranch(row.branch_id, activeBranchId) &&
+        isDateInRange(row.moveDate, from, to),
+    )
 }
+
+type DatedQtyRow = QtyRow & { moveDate: string; lineId: string; parentId: string }
 
 async function fetchLinesChunked(
   table: 'inventory_issue_lines' | 'inventory_receipt_lines',
   fk: 'issue_id' | 'receipt_id',
-  ids: string[],
-): Promise<QtyRow[]> {
-  if (!ids.length) return []
-  const out: QtyRow[] = []
+  headers: MovementHeader[],
+): Promise<DatedQtyRow[]> {
+  if (!headers.length) return []
+  const dateById = new Map(headers.map((h) => [h.id, h.moveDate]))
+  const out: DatedQtyRow[] = []
   const chunkSize = 80
+  // Unique parent ids — duplicate headers would otherwise double-count lines
+  const ids = [...new Set(headers.map((h) => h.id))]
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize)
     const { data, error } = await supabase
       .from(table)
-      .select(`qty, inventory_item_id`)
+      .select(`id, qty, inventory_item_id, ${fk}`)
       .in(fk, chunk)
     if (error) throw error
-    for (const row of (data as QtyRow[] | null) ?? []) {
-      out.push({ qty: Number(row.qty) || 0, inventory_item_id: row.inventory_item_id })
+    for (const row of (data as (QtyRow & { id?: string; [k: string]: unknown })[] | null) ?? []) {
+      const parentId = String(row[fk] ?? '')
+      out.push({
+        lineId: String(row.id ?? `${parentId}:${row.inventory_item_id}:${row.qty}`),
+        parentId,
+        qty: Number(row.qty) || 0,
+        inventory_item_id: row.inventory_item_id,
+        moveDate: dateById.get(parentId) ?? '',
+      })
     }
   }
   return out
+}
+
+/** Sum qty by item, optionally skipping days already inside a prior saved ending. */
+function sumByItemInPeriod(
+  rows: DatedQtyRow[] | null | undefined,
+  from: string,
+  to: string,
+  priorEndByItem?: Record<string, string>,
+) {
+  const map: Record<string, number> = {}
+  const seenLine = new Set<string>()
+  for (const row of rows ?? []) {
+    if (!isDateInRange(row.moveDate, from, to)) continue
+    const priorEnd = priorEndByItem?.[row.inventory_item_id]
+    // Beginning already includes activity through priorEnd — do not count again as In/Out
+    if (priorEnd && row.moveDate <= priorEnd) continue
+    if (seenLine.has(row.lineId)) continue
+    seenLine.add(row.lineId)
+    map[row.inventory_item_id] = (map[row.inventory_item_id] || 0) + Number(row.qty || 0)
+  }
+  return map
+}
+
+/**
+ * Stocktake posts overwrite catalog `stock`, which breaks
+ * Beginning ≈ stock − receipts + issues. Undo those jumps inside the
+ * reconstruction window (counted − system at post time).
+ */
+async function fetchStocktakeDeltaByItem(
+  from: string,
+  to: string,
+  activeBranchId: string,
+): Promise<Record<string, number>> {
+  const { data: headers, error: hErr } = await supabase
+    .from('inventory_stocktakes')
+    .select('id, branch_id, counted_on, status')
+    .eq('status', 'completed')
+    .gte('counted_on', from)
+    .lte('counted_on', to)
+  if (hErr) throw hErr
+
+  const ids = ((headers as { id: string; branch_id: string | null; counted_on: string }[] | null) ?? [])
+    .filter(
+      (h) =>
+        matchesBranch(h.branch_id, activeBranchId) && isDateInRange(h.counted_on, from, to),
+    )
+    .map((h) => h.id)
+  if (!ids.length) return {}
+
+  const deltas: Record<string, number> = {}
+  const chunkSize = 80
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize)
+    const { data, error } = await supabase
+      .from('inventory_stocktake_lines')
+      .select('inventory_item_id, system_qty, counted_qty, line_action')
+      .in('stocktake_id', chunk)
+    if (error) throw error
+    for (const row of (data as {
+      inventory_item_id: string
+      system_qty: number
+      counted_qty: number | null
+      line_action?: string | null
+    }[] | null) ?? []) {
+      if (row.line_action && row.line_action !== 'counted') continue
+      if (row.counted_qty == null) continue
+      const delta = Number(row.counted_qty) - Number(row.system_qty || 0)
+      deltas[row.inventory_item_id] = (deltas[row.inventory_item_id] || 0) + delta
+    }
+  }
+  return deltas
 }
 
 async function fetchIssueLinesDetailed(issueIds: string[]): Promise<IssueLineRow[]> {
@@ -218,6 +330,9 @@ export function StockAssessment() {
   const [issuedSinceStart, setIssuedSinceStart] = useState<Record<string, number>>({})
   /** Prior period ending counts used as Beginning when available. */
   const [priorBeginningByItem, setPriorBeginningByItem] = useState<Record<string, number>>({})
+  /** Net stocktake adjustments (counted − system) from rangeStart through today. */
+  const [stocktakeDeltaByItem, setStocktakeDeltaByItem] = useState<Record<string, number>>({})
+  const loadSeqRef = useRef(0)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -251,8 +366,15 @@ export function StockAssessment() {
   }
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     setError('')
+    // Clear movement totals immediately so a prior wider range cannot linger on screen
+    setReceivedByItem({})
+    setIssuedByItem({})
+    setRecvSinceStart({})
+    setIssuedSinceStart({})
+    setStocktakeDeltaByItem({})
 
     let itemQ = supabase
       .from('inventory_items')
@@ -273,6 +395,9 @@ export function StockAssessment() {
 
     const todayStr = toDateInput(new Date())
     const bKey = branchKeyFor(branchId)
+    // Snapshot range for this request — ignore stale responses after period changes
+    const from = rangeStart
+    const to = rangeEnd
 
     const [
       { data: itemData, error: itemErr },
@@ -287,29 +412,43 @@ export function StockAssessment() {
         .from('inventory_assessment_endings')
         .select('inventory_item_id, ending_qty, period_end, updated_at')
         .eq('branch_key', bKey)
-        .eq('period_start', rangeStart)
-        .eq('period_end', rangeEnd),
+        .eq('period_start', from)
+        .eq('period_end', to),
       supabase
         .from('inventory_assessment_endings')
         .select('inventory_item_id, ending_qty, period_end, updated_at')
         .eq('branch_key', bKey)
-        .eq('period_start', rangeStart)
+        .eq('period_start', from)
         .order('updated_at', { ascending: false }),
       // Latest ending whose period ended before this range → carry-forward Beginning
       supabase
         .from('inventory_assessment_endings')
         .select('inventory_item_id, ending_qty, period_end, updated_at')
         .eq('branch_key', bKey)
-        .lt('period_end', rangeStart)
+        .lt('period_end', from)
         .order('period_end', { ascending: false })
         .order('updated_at', { ascending: false }),
     ])
 
+    if (seq !== loadSeqRef.current) return
+
+    const priorMap: Record<string, number> = {}
+    const priorEndMap: Record<string, string> = {}
+    if (!priorEndingErr) {
+      for (const row of (priorEndingData as EndingRow[] | null) ?? []) {
+        if (priorMap[row.inventory_item_id] !== undefined) continue
+        priorMap[row.inventory_item_id] = Math.max(0, Number(row.ending_qty) || 0)
+        const pe = dateKey(row.period_end)
+        if (pe) priorEndMap[row.inventory_item_id] = pe
+      }
+    }
+
     let lineErr: Error | null = null
-    let recvSinceLines: QtyRow[] = []
-    let issuedSinceLines: QtyRow[] = []
-    let recvPeriodLines: QtyRow[] = []
-    let issuedPeriodLines: QtyRow[] = []
+    let recvSinceLines: DatedQtyRow[] = []
+    let issuedSinceLines: DatedQtyRow[] = []
+    let recvPeriodLines: DatedQtyRow[] = []
+    let issuedPeriodLines: DatedQtyRow[] = []
+    let stocktakeDeltas: Record<string, number> = {}
     let recentIssues: IssueRow[] = []
 
     try {
@@ -323,35 +462,25 @@ export function StockAssessment() {
         recvPeriodHeaders,
         issuedPeriodHeaders,
         detailedLines,
+        stDeltas,
       ] = await Promise.all([
-        fetchHeadersInRange('inventory_receipts', 'received_at', rangeStart, todayStr, branchId),
-        fetchHeadersInRange('inventory_issues', 'issued_at', rangeStart, todayStr, branchId),
-        fetchHeadersInRange('inventory_receipts', 'received_at', rangeStart, rangeEnd, branchId),
-        fetchHeadersInRange('inventory_issues', 'issued_at', rangeStart, rangeEnd, branchId),
+        fetchHeadersInRange('inventory_receipts', 'received_at', from, todayStr, branchId),
+        fetchHeadersInRange('inventory_issues', 'issued_at', from, todayStr, branchId),
+        fetchHeadersInRange('inventory_receipts', 'received_at', from, to, branchId),
+        fetchHeadersInRange('inventory_issues', 'issued_at', from, to, branchId),
         fetchIssueLinesDetailed(issueHeaders.map((h) => h.id)),
+        // Undo stocktake stock overwrites so Beginning is not pulled negative
+        fetchStocktakeDeltaByItem(from, todayStr, branchId).catch(() => ({})),
       ])
 
+      if (seq !== loadSeqRef.current) return
+      stocktakeDeltas = stDeltas
+
       ;[recvSinceLines, issuedSinceLines, recvPeriodLines, issuedPeriodLines] = await Promise.all([
-        fetchLinesChunked(
-          'inventory_receipt_lines',
-          'receipt_id',
-          recvSinceHeaders.map((h) => h.id),
-        ),
-        fetchLinesChunked(
-          'inventory_issue_lines',
-          'issue_id',
-          issuedSinceHeaders.map((h) => h.id),
-        ),
-        fetchLinesChunked(
-          'inventory_receipt_lines',
-          'receipt_id',
-          recvPeriodHeaders.map((h) => h.id),
-        ),
-        fetchLinesChunked(
-          'inventory_issue_lines',
-          'issue_id',
-          issuedPeriodHeaders.map((h) => h.id),
-        ),
+        fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvSinceHeaders),
+        fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedSinceHeaders),
+        fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvPeriodHeaders),
+        fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedPeriodHeaders),
       ])
 
       const linesByIssue = new Map<string, IssueLineRow[]>()
@@ -369,6 +498,8 @@ export function StockAssessment() {
     } catch (e) {
       lineErr = e instanceof Error ? e : new Error('Could not load receipt/issue lines')
     }
+
+    if (seq !== loadSeqRef.current) return
 
     const endingErr = endingExactErr || endingFallbackErr || priorEndingErr
     const errors: string[] = []
@@ -395,10 +526,12 @@ export function StockAssessment() {
 
     setItems((itemData as ItemRow[] | null) ?? [])
     setIssues(recentIssues)
-    setRecvSinceStart(sumByItem(recvSinceLines))
-    setIssuedSinceStart(sumByItem(issuedSinceLines))
-    setReceivedByItem(sumByItem(recvPeriodLines))
-    setIssuedByItem(sumByItem(issuedPeriodLines))
+    // Reconstruction window: activity from range start through today (strict calendar days)
+    setRecvSinceStart(sumByItemInPeriod(recvSinceLines, from, todayStr))
+    setIssuedSinceStart(sumByItemInPeriod(issuedSinceLines, from, todayStr))
+    // Period In/Out: only days inside the selected range, and never days already in Beginning
+    setReceivedByItem(sumByItemInPeriod(recvPeriodLines, from, to, priorEndMap))
+    setIssuedByItem(sumByItemInPeriod(issuedPeriodLines, from, to, priorEndMap))
 
     const endingMap: Record<string, string> = {}
     if (!endingExactErr) {
@@ -414,15 +547,8 @@ export function StockAssessment() {
       }
     }
     setEndingByItem(endingMap)
-
-    const priorMap: Record<string, number> = {}
-    if (!priorEndingErr) {
-      for (const row of (priorEndingData as EndingRow[] | null) ?? []) {
-        if (priorMap[row.inventory_item_id] !== undefined) continue
-        priorMap[row.inventory_item_id] = Math.max(0, Number(row.ending_qty) || 0)
-      }
-    }
     setPriorBeginningByItem(priorMap)
+    setStocktakeDeltaByItem(stocktakeDeltas)
     setLoading(false)
   }, [branchId, rangeStart, rangeEnd])
 
@@ -551,8 +677,13 @@ export function StockAssessment() {
 
   const sheetRows = useMemo<SheetRow[]>(() => {
     return items.map((item) => {
+      // Catalog stock is often overwritten by Stocktake; remove that jump so Beginning
+      // reflects ledger qty at period start (e.g. 30) instead of nonsense like -10.
       const reconstructed =
-        Number(item.stock) - (recvSinceStart[item.id] || 0) + (issuedSinceStart[item.id] || 0)
+        Number(item.stock) -
+        (recvSinceStart[item.id] || 0) +
+        (issuedSinceStart[item.id] || 0) -
+        (stocktakeDeltaByItem[item.id] || 0)
       const prior = priorBeginningByItem[item.id]
       const beginning = prior !== undefined ? prior : reconstructed
       const received = receivedByItem[item.id] || 0
@@ -581,6 +712,7 @@ export function StockAssessment() {
     items,
     recvSinceStart,
     issuedSinceStart,
+    stocktakeDeltaByItem,
     priorBeginningByItem,
     receivedByItem,
     issuedByItem,
@@ -964,9 +1096,10 @@ export function StockAssessment() {
             </div>
           </div>
           <p className="sa-hint">
-            In = receiving · Out = issued/used · Expected = Beginning + In − Out · Count = physical
-            ending. Status compares Expected vs Count only after you enter a count. Beginning carries
-            forward from the last saved count when available.
+            In = receiving in this range only · Out = issued/used in this range · Expected =
+            Beginning + In − Out · Count = physical ending. Status compares Expected vs Count after
+            you enter a count. Beginning = last saved count before this range, or ledger opening
+            (stocktake adjustments are not double-counted).
           </p>
         </div>
       </div>

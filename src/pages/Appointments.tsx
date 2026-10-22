@@ -16,6 +16,7 @@ import {
   Mail,
   MessageCircle,
   Phone,
+  Search,
   X,
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
@@ -90,6 +91,26 @@ function formatTimeRange(start: string, durationMin: number): string {
   const mins = Math.max(SLOT_MINUTES, Number(durationMin) || 60)
   const end = minutesToTime(timeToMinutes(start) + mins)
   return `${formatStandardTime(start)} – ${formatStandardTime(end)}`
+}
+
+function matchesApptSearch(apt: Appointment, query: string) {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const hay = [
+    apt.customerName,
+    apt.serviceName,
+    apt.staffName,
+    apt.customerPhone,
+    apt.customerEmail,
+    apt.specialNote,
+    apt.customerAddress,
+    apt.date,
+    formatStandardTime(apt.time),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return hay.includes(q)
 }
 
 function contrastingInk(hex: string): string {
@@ -288,6 +309,7 @@ export function Appointments() {
   const [monthCursor, setMonthCursor] = useState(() => startOfMonth(new Date()))
   const [rangeFrom, setRangeFrom] = useState('')
   const [rangeTo, setRangeTo] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [listTab, setListTab] = useState<'active' | 'completed' | 'cancelled'>('active')
   const [completedFrom, setCompletedFrom] = useState('')
   const [completedTo, setCompletedTo] = useState('')
@@ -567,38 +589,71 @@ export function Appointments() {
             if (filter === 'all') return isActiveStatus(a.status)
             return a.type === filter && isActiveStatus(a.status)
           })
-    return base.filter((a) => inDateRange(a.date, rangeFrom, rangeTo))
-  }, [rows, filter, pending, rangeFrom, rangeTo])
+    return base
+      .filter((a) => inDateRange(a.date, rangeFrom, rangeTo))
+      .filter((a) => matchesApptSearch(a, searchQuery))
+  }, [rows, filter, pending, rangeFrom, rangeTo, searchQuery])
 
   const completedBookings = useMemo(() => {
     return rows
       .filter((a) => a.status === 'completed' && inDateRange(a.date, completedFrom, completedTo))
+      .filter((a) => matchesApptSearch(a, searchQuery))
       .slice()
       .sort((a, b) => {
         const byDate = b.date.localeCompare(a.date)
         if (byDate !== 0) return byDate
         return b.time.localeCompare(a.time)
       })
-  }, [rows, completedFrom, completedTo])
+  }, [rows, completedFrom, completedTo, searchQuery])
 
   const cancelledBookings = useMemo(() => {
     return rows
       .filter((a) => a.status === 'cancelled' && inDateRange(a.date, cancelledFrom, cancelledTo))
+      .filter((a) => matchesApptSearch(a, searchQuery))
       .slice()
       .sort((a, b) => {
         const byDate = b.date.localeCompare(a.date)
         if (byDate !== 0) return byDate
         return b.time.localeCompare(a.time)
       })
-  }, [rows, cancelledFrom, cancelledTo])
+  }, [rows, cancelledFrom, cancelledTo, searchQuery])
 
   const boardAppointments = useMemo(
     () =>
       rows.filter(
-        (a) => a.status !== 'declined' && a.status !== 'cancelled' && inDateRange(a.date, rangeFrom, rangeTo),
+        (a) =>
+          a.status !== 'declined' &&
+          a.status !== 'cancelled' &&
+          inDateRange(a.date, rangeFrom, rangeTo) &&
+          matchesApptSearch(a, searchQuery),
       ),
-    [rows, rangeFrom, rangeTo],
+    [rows, rangeFrom, rangeTo, searchQuery],
   )
+
+  function jumpToSearchMatch() {
+    const q = searchQuery.trim()
+    if (!q) return
+    const match = rows
+      .filter((a) => a.status !== 'declined' && matchesApptSearch(a, q))
+      .slice()
+      .sort((a, b) => {
+        const byDate = a.date.localeCompare(b.date)
+        if (byDate !== 0) return byDate
+        return a.time.localeCompare(b.time)
+      })[0]
+    if (!match) {
+      setMessage('')
+      setError(`No bookings match “${q}”.`)
+      return
+    }
+    setError('')
+    setFocusDate(match.date)
+    setMonthCursor(startOfMonth(parseLocalISODate(match.date)))
+    // Clear a range that would hide the match
+    if (rangeFrom && match.date < rangeFrom) setRangeFrom('')
+    if (rangeTo && match.date > rangeTo) setRangeTo('')
+    setMessage(`Showing ${match.customerName} · ${match.date} ${formatStandardTime(match.time)}`)
+  }
 
   const countByDay = useMemo(() => {
     const map = new Map<string, number>()
@@ -1016,6 +1071,49 @@ export function Appointments() {
           ))}
         </div>
         <div className="appt-range">
+          <div className="field appt-search-field" style={{ margin: 0 }}>
+            <label htmlFor="appt-search">Search</label>
+            <div className="appt-search">
+              <Search size={15} aria-hidden />
+              <input
+                id="appt-search"
+                type="search"
+                placeholder="Client, service, phone, staff…"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  if (error.startsWith('No bookings match')) setError('')
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    jumpToSearchMatch()
+                  }
+                }}
+              />
+              {searchQuery.trim() ? (
+                <button
+                  className="appt-search-clear"
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setSearchQuery('')
+                    if (error.startsWith('No bookings match')) setError('')
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <button
+            className="btn btn-primary btn-sm appt-search-btn"
+            type="button"
+            onClick={jumpToSearchMatch}
+            disabled={!searchQuery.trim()}
+          >
+            Search
+          </button>
           <div className="field" style={{ margin: 0 }}>
             <label>From</label>
             <input
@@ -1455,7 +1553,11 @@ export function Appointments() {
               </div>
             )
           ) : filtered.length === 0 ? (
-            <div className="empty-state">No bookings in this view yet.</div>
+            <div className="empty-state">
+              {searchQuery.trim()
+                ? `No bookings match “${searchQuery.trim()}”.`
+                : 'No bookings in this view yet.'}
+            </div>
           ) : (
             <div className="table-wrap">
               <table className="data-table">
