@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { CalendarDays, RefreshCw } from 'lucide-react'
+import { CalendarDays, RefreshCw, Search, X } from 'lucide-react'
 import { ClientsSubnav } from '../components/ClientsSubnav'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
@@ -65,10 +65,12 @@ export function Sessions() {
   >({})
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'active' | 'all' | 'completed'>('active')
+  const [searchQuery, setSearchQuery] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const state = location.state as { availed?: string; receipt?: string } | null
@@ -142,10 +144,53 @@ export function Sessions() {
   }, [load])
 
   const filtered = useMemo(() => {
-    if (filter === 'all') return rows
-    if (filter === 'completed') return rows.filter((r) => r.status === 'completed')
-    return rows.filter((r) => r.status === 'active')
-  }, [rows, filter])
+    const byStatus =
+      filter === 'all'
+        ? rows
+        : filter === 'completed'
+          ? rows.filter((r) => r.status === 'completed')
+          : rows.filter((r) => r.status === 'active')
+
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return byStatus
+
+    return byStatus.filter((r) => {
+      const hay = [
+        r.customer_name,
+        r.service_name,
+        r.sale_receipt_no,
+        r.sales_by,
+        r.administered_by,
+        r.consult_by,
+        r.notes,
+        r.doctor_notes,
+        r.status,
+        r.next_session_date,
+        r.sold_on,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return hay.includes(q)
+    })
+  }, [rows, filter, searchQuery])
+
+  function runSearch() {
+    searchInputRef.current?.focus()
+    const q = searchQuery.trim()
+    if (!q) return
+    if (filtered.length === 0) {
+      setMessage('')
+      setError(`No packages match “${q}”.`)
+      return
+    }
+    setError('')
+    setMessage(
+      filtered.length === 1
+        ? `Found 1 package · ${filtered[0].customer_name}`
+        : `Found ${filtered.length} packages matching “${q}”.`,
+    )
+  }
 
   const selected = useMemo(
     () => rows.find((r) => r.id === selectedId) ?? null,
@@ -228,6 +273,51 @@ export function Sessions() {
           </div>
         </div>
 
+        <div className="cs-search-bar">
+          <label className="cs-search" htmlFor="cs-search">
+            <Search size={16} aria-hidden />
+            <input
+              ref={searchInputRef}
+              id="cs-search"
+              type="search"
+              placeholder="Search client, service, receipt, or staff…"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
+                if (error.startsWith('No packages match')) setError('')
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  runSearch()
+                }
+              }}
+            />
+            {searchQuery.trim() ? (
+              <button
+                className="cs-search-clear"
+                type="button"
+                aria-label="Clear search"
+                onClick={() => {
+                  setSearchQuery('')
+                  if (error.startsWith('No packages match')) setError('')
+                  searchInputRef.current?.focus()
+                }}
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+          </label>
+          <button
+            className="btn btn-primary cs-search-btn"
+            type="button"
+            onClick={runSearch}
+            disabled={!searchQuery.trim()}
+          >
+            Search
+          </button>
+        </div>
+
         <div className="cs-board-body">
           {loading ? (
             <div className="cs-empty">Loading sessions…</div>
@@ -235,8 +325,9 @@ export function Sessions() {
             <div className="cs-empty">
               <CalendarDays size={22} aria-hidden />
               <p>
-                No {filter === 'all' ? '' : `${filter} `}session packages yet. Create them from POS
-                or Avail service.
+                {searchQuery.trim()
+                  ? `No packages match “${searchQuery.trim()}”.`
+                  : `No ${filter === 'all' ? '' : `${filter} `}session packages yet. Create them from POS or Avail service.`}
               </p>
             </div>
           ) : (

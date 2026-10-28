@@ -13,6 +13,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Mail,
   MessageCircle,
   Phone,
@@ -21,7 +22,10 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
+import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
+import { isElevatedRole, roleLabel } from '../lib/roles'
+import { completeAppointmentWithSupplies } from '../lib/treatmentSupplies'
 import {
   addDays,
   buildMonthCells,
@@ -35,7 +39,12 @@ import { CLINIC_TIME_SLOTS, sessionSlotMarker } from '../lib/sessionAppointments
 import { invokeSendSms, queueConfirmationSms } from '../lib/sms'
 import { supabase } from '../lib/supabase'
 import { isUuid } from '../lib/utils'
-import type { Appointment, AppointmentStatus } from '../types'
+import type {
+  Appointment,
+  AppointmentActivityAction,
+  AppointmentActivityLog,
+  AppointmentStatus,
+} from '../types'
 import './appointments.css'
 
 const hours = CLINIC_TIME_SLOTS
@@ -213,6 +222,13 @@ type Row = {
   source: string | null
   calendar_color?: string | null
   cancellation_reason?: string | null
+  booked_by_id?: string | null
+  booked_by_name?: string | null
+  booked_by_role?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  last_modified_by_name?: string | null
+  last_modified_by_role?: string | null
 }
 
 function mapRow(row: Row): Appointment {
@@ -237,6 +253,86 @@ function mapRow(row: Row): Appointment {
     source: row.source ?? 'clinic',
     calendarColor: row.calendar_color || CALENDAR_COLORS[0],
     cancellationReason: row.cancellation_reason ?? '',
+    bookedById: row.booked_by_id ?? null,
+    bookedByName: row.booked_by_name ?? '',
+    bookedByRole: row.booked_by_role ?? '',
+    createdAt: row.created_at ?? '',
+    updatedAt: row.updated_at ?? '',
+    lastModifiedByName: row.last_modified_by_name ?? '',
+    lastModifiedByRole: row.last_modified_by_role ?? '',
+  }
+}
+
+function formatStampDate(iso: string | undefined) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
+  return d.toLocaleDateString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function formatStampTime(iso: string | undefined) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleTimeString('en-PH', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+function activityActionLabel(action: AppointmentActivityAction | string) {
+  switch (action) {
+    case 'created':
+      return 'Created'
+    case 'updated':
+      return 'Updated'
+    case 'rescheduled':
+      return 'Rescheduled'
+    case 'cancelled':
+      return 'Cancelled'
+    case 'status_changed':
+      return 'Status change'
+    case 'approved':
+      return 'Approved'
+    case 'declined':
+      return 'Declined'
+    case 'completed':
+      return 'Completed'
+    default:
+      return action
+  }
+}
+
+function formatActorRole(role: string | undefined) {
+  if (!role || role === '—') return '—'
+  if (role === 'Public' || role.toLowerCase().includes('public')) return 'Public'
+  return roleLabel(role)
+}
+
+function mapActivityRow(row: {
+  id: string
+  appointment_id: string
+  action: string
+  actor_name: string | null
+  actor_role: string | null
+  summary: string
+  details: Record<string, unknown> | null
+  created_at: string
+}): AppointmentActivityLog {
+  return {
+    id: row.id,
+    appointmentId: row.appointment_id,
+    action: row.action as AppointmentActivityAction,
+    actorName: row.actor_name || '—',
+    actorRole: row.actor_role || '—',
+    summary: row.summary,
+    details: row.details ?? {},
+    createdAt: row.created_at,
   }
 }
 
@@ -290,7 +386,9 @@ function buildSms(apt: Appointment, approved: boolean) {
 }
 
 export function Appointments() {
+  const { user } = useAuth()
   const { branchId } = useBranch()
+  const canViewAudit = isElevatedRole(user?.role)
   const [filter, setFilter] = useState<'all' | 'appointment' | 'walk-in' | 'pending'>('all')
   const [rows, setRows] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
@@ -317,6 +415,11 @@ export function Appointments() {
   const [cancelledTo, setCancelledTo] = useState('')
   const [historyApt, setHistoryApt] = useState<Appointment | null>(null)
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null)
+  const [activityLogs, setActivityLogs] = useState<AppointmentActivityLog[]>([])
+  const [activityLoading, setActivityLoading] = useState(false)
+  const [auditLogs, setAuditLogs] = useState<AppointmentActivityLog[]>([])
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [showAuditPanel, setShowAuditPanel] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelSaving, setCancelSaving] = useState(false)
   const [rescheduleMode, setRescheduleMode] = useState(false)
@@ -435,9 +538,74 @@ export function Appointments() {
     setLoading(false)
   }, [branchId])
 
+  const loadActivityForAppointment = useCallback(async (appointmentId: string) => {
+    if (!appointmentId || appointmentId.startsWith('slot-')) {
+      setActivityLogs([])
+      return
+    }
+    setActivityLoading(true)
+    const { data, error: err } = await supabase
+      .from('appointment_activity_log')
+      .select('id, appointment_id, action, actor_name, actor_role, summary, details, created_at')
+      .eq('appointment_id', appointmentId)
+      .order('created_at', { ascending: false })
+      .limit(80)
+    setActivityLoading(false)
+    if (err) {
+      // Migration not applied yet — keep UI usable
+      if (
+        err.message.includes('appointment_activity_log') ||
+        err.message.includes('schema cache')
+      ) {
+        setActivityLogs([])
+        return
+      }
+      setError(err.message)
+      return
+    }
+    setActivityLogs(
+      ((data as Parameters<typeof mapActivityRow>[0][] | null) ?? []).map(mapActivityRow),
+    )
+  }, [])
+
+  const loadAuditFeed = useCallback(async () => {
+    if (!canViewAudit) {
+      setAuditLogs([])
+      return
+    }
+    setAuditLoading(true)
+    const { data, error: err } = await supabase
+      .from('appointment_activity_log')
+      .select('id, appointment_id, action, actor_name, actor_role, summary, details, created_at')
+      .order('created_at', { ascending: false })
+      .limit(60)
+    setAuditLoading(false)
+    if (err) {
+      if (
+        err.message.includes('appointment_activity_log') ||
+        err.message.includes('schema cache')
+      ) {
+        setAuditLogs([])
+        setError(
+          `${err.message} — run supabase/add_appointment_booking_tracker.sql in Supabase SQL Editor.`,
+        )
+        return
+      }
+      setError(err.message)
+      return
+    }
+    setAuditLogs(
+      ((data as Parameters<typeof mapActivityRow>[0][] | null) ?? []).map(mapActivityRow),
+    )
+  }, [canViewAudit])
+
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (showAuditPanel && canViewAudit) void loadAuditFeed()
+  }, [showAuditPanel, canViewAudit, loadAuditFeed])
 
   useEffect(() => {
     let cancelled = false
@@ -477,7 +645,10 @@ export function Appointments() {
       if (e.key !== 'Escape') return
       if (cancelTarget && !cancelSaving) closeCancelModal()
       else if (decision && !decisionSaving) setDecision(null)
-      else if (historyApt) setHistoryApt(null)
+      else if (historyApt) {
+        setHistoryApt(null)
+        setActivityLogs([])
+      }
       else if (formType !== 'none' && !saving) {
         setFormType('none')
         setEditingId(null)
@@ -522,6 +693,7 @@ export function Appointments() {
     setEditingId(apt.id)
     setRescheduleMode(false)
     setFormType(apt.type === 'walk-in' ? 'walk-in' : 'appointment')
+    void loadActivityForAppointment(apt.id)
     const inCatalog = serviceOptions.some((s) => s.name === apt.serviceName)
     setForm({
       customerName: apt.customerName,
@@ -543,6 +715,40 @@ export function Appointments() {
     setEditingId(null)
     setForm(emptyForm)
     setRescheduleMode(false)
+    setActivityLogs([])
+  }
+
+  function openHistory(apt: Appointment) {
+    setHistoryApt(apt)
+    void loadActivityForAppointment(apt.id)
+  }
+
+  function renderActivityTimeline(logs: AppointmentActivityLog[], emptyLabel: string) {
+    if (activityLoading && logs === activityLogs) {
+      return <div className="appt-tracker-empty">Loading activity…</div>
+    }
+    if (!logs.length) {
+      return <div className="appt-tracker-empty">{emptyLabel}</div>
+    }
+    return (
+      <ul className="appt-tracker-timeline">
+        {logs.map((log) => (
+          <li key={log.id}>
+            <div className="appt-tracker-timeline-head">
+              <span className="appt-tracker-action">{activityActionLabel(log.action)}</span>
+              <span className="appt-tracker-when">
+                {formatStampDate(log.createdAt)} · {formatStampTime(log.createdAt)}
+              </span>
+            </div>
+            <p className="appt-tracker-summary">{log.summary}</p>
+            <p className="appt-tracker-actor">
+              {log.actorName}
+              {log.actorRole ? ` · ${formatActorRole(log.actorRole)}` : ''}
+            </p>
+          </li>
+        ))}
+      </ul>
+    )
   }
 
   function startReschedule() {
@@ -720,6 +926,9 @@ export function Appointments() {
             type,
             source: 'clinic',
             branch_id: isUuid(branchId) ? branchId : null,
+            booked_by_id: user?.id ?? null,
+            booked_by_name: user?.name ?? null,
+            booked_by_role: user?.role ?? null,
           })
           .select('id, customer_phone')
           .maybeSingle()
@@ -753,6 +962,21 @@ export function Appointments() {
   }
 
   async function updateStatus(id: string, status: AppointmentStatus) {
+    if (id.startsWith('slot-')) {
+      setError('Open Client Sessions to update package visit status.')
+      return
+    }
+    if (status === 'completed') {
+      setError('')
+      const result = await completeAppointmentWithSupplies(id)
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      setMessage(result.message)
+      await load()
+      return
+    }
     const { error: err } = await supabase.from('appointments').update({ status }).eq('id', id)
     if (err) setError(err.message)
     else {
@@ -763,22 +987,24 @@ export function Appointments() {
 
   async function markBookingCompleted() {
     if (!editingId || saving) return
+    if (editingId.startsWith('slot-')) {
+      setError('Open Client Sessions to complete package visits.')
+      return
+    }
     setSaving(true)
     setError('')
-    const { error: err } = await supabase
-      .from('appointments')
-      .update({ status: 'completed' })
-      .eq('id', editingId)
+    const result = await completeAppointmentWithSupplies(editingId)
     setSaving(false)
-    if (err) {
-      setError(err.message)
+    if (!result.ok) {
+      setError(result.error)
       return
     }
     setFormType('none')
     setEditingId(null)
     setForm(emptyForm)
     setRescheduleMode(false)
-    setMessage('Booking marked completed.')
+    setActivityLogs([])
+    setMessage(result.message)
     await load()
   }
 
@@ -954,6 +1180,16 @@ export function Appointments() {
         subtitle="Approve website booking requests, manage the week board, and handle walk-ins."
         actions={
           <>
+            {canViewAudit ? (
+              <button
+                className={`btn btn-ghost ${showAuditPanel ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => setShowAuditPanel((v) => !v)}
+              >
+                <ClipboardList size={15} />
+                Booking tracker
+              </button>
+            ) : null}
             <button
               className="btn btn-ghost"
               type="button"
@@ -974,6 +1210,71 @@ export function Appointments() {
 
       {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
       {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
+
+      {canViewAudit && showAuditPanel ? (
+        <div className="panel appt-audit-panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">
+            <h2 className="panel-title">Booking tracker · audit log</h2>
+            <button
+              className="btn btn-ghost btn-sm"
+              type="button"
+              disabled={auditLoading}
+              onClick={() => void loadAuditFeed()}
+            >
+              {auditLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+          <div className="panel-body">
+            <p className="appt-audit-intro">
+              Who created or changed each booking (Owner / Admin). Creation details stay locked even
+              after edits.
+            </p>
+            {auditLoading && !auditLogs.length ? (
+              <div className="empty-state">Loading audit log…</div>
+            ) : auditLogs.length === 0 ? (
+              <div className="empty-state">
+                No audit entries yet. New bookings and changes appear here after you run{' '}
+                <code>add_appointment_booking_tracker.sql</code>.
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Action</th>
+                      <th>By</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>
+                          {formatStampDate(log.createdAt)}
+                          <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
+                            {formatStampTime(log.createdAt)}
+                          </div>
+                        </td>
+                        <td>
+                          <span className="badge">{activityActionLabel(log.action)}</span>
+                        </td>
+                        <td>
+                          <strong>{log.actorName}</strong>
+                          <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
+                            {formatActorRole(log.actorRole)}
+                          </div>
+                        </td>
+                        <td style={{ maxWidth: 360 }}>{log.summary}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {pending.length ? (
         <div className="panel" style={{ marginBottom: 16 }}>
@@ -1051,6 +1352,49 @@ export function Appointments() {
         </div>
       ) : null}
 
+      <div className="appt-search-bar">
+        <label className="appt-search" htmlFor="appt-search">
+          <Search size={16} aria-hidden />
+          <input
+            id="appt-search"
+            type="search"
+            placeholder="Search client, service, phone, or staff…"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              if (error.startsWith('No bookings match')) setError('')
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                jumpToSearchMatch()
+              }
+            }}
+          />
+          {searchQuery.trim() ? (
+            <button
+              className="appt-search-clear"
+              type="button"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearchQuery('')
+                if (error.startsWith('No bookings match')) setError('')
+              }}
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </label>
+        <button
+          className="btn btn-primary appt-search-btn"
+          type="button"
+          onClick={jumpToSearchMatch}
+          disabled={!searchQuery.trim()}
+        >
+          Search
+        </button>
+      </div>
+
       <div className="appt-toolbar">
         <div className="chips" style={{ marginBottom: 0 }}>
           {(['all', 'pending', 'appointment', 'walk-in'] as const).map((item) => (
@@ -1071,49 +1415,6 @@ export function Appointments() {
           ))}
         </div>
         <div className="appt-range">
-          <div className="field appt-search-field" style={{ margin: 0 }}>
-            <label htmlFor="appt-search">Search</label>
-            <div className="appt-search">
-              <Search size={15} aria-hidden />
-              <input
-                id="appt-search"
-                type="search"
-                placeholder="Client, service, phone, staff…"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value)
-                  if (error.startsWith('No bookings match')) setError('')
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    jumpToSearchMatch()
-                  }
-                }}
-              />
-              {searchQuery.trim() ? (
-                <button
-                  className="appt-search-clear"
-                  type="button"
-                  aria-label="Clear search"
-                  onClick={() => {
-                    setSearchQuery('')
-                    if (error.startsWith('No bookings match')) setError('')
-                  }}
-                >
-                  <X size={14} />
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <button
-            className="btn btn-primary btn-sm appt-search-btn"
-            type="button"
-            onClick={jumpToSearchMatch}
-            disabled={!searchQuery.trim()}
-          >
-            Search
-          </button>
           <div className="field" style={{ margin: 0 }}>
             <label>From</label>
             <input
@@ -1473,7 +1774,7 @@ export function Appointments() {
                       <tr
                         key={apt.id}
                         className="completed-row"
-                        onClick={() => setHistoryApt(apt)}
+                        onClick={() => openHistory(apt)}
                       >
                         <td>{apt.date}</td>
                         <td>{formatStandardTime(apt.time)}</td>
@@ -1488,7 +1789,7 @@ export function Appointments() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setHistoryApt(apt)
+                              openHistory(apt)
                             }}
                           >
                             View
@@ -1521,7 +1822,7 @@ export function Appointments() {
                       <tr
                         key={apt.id}
                         className="completed-row"
-                        onClick={() => setHistoryApt(apt)}
+                        onClick={() => openHistory(apt)}
                       >
                         <td>{apt.date}</td>
                         <td>{formatStandardTime(apt.time)}</td>
@@ -1540,7 +1841,7 @@ export function Appointments() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setHistoryApt(apt)
+                              openHistory(apt)
                             }}
                           >
                             View
@@ -1882,6 +2183,50 @@ export function Appointments() {
                     />
                   </div>
                 </div>
+
+                {isEditing && editingAppointment ? (
+                  <div className="appt-tracker-card">
+                    <div className="appt-tracker-card-head">
+                      <ClipboardList size={15} aria-hidden />
+                      <strong>Booking tracker</strong>
+                    </div>
+                    <div className="appt-tracker-meta">
+                      <div>
+                        <span className="history-label">Booked by</span>
+                        <strong>
+                          {editingAppointment.bookedByName || '—'}
+                          {editingAppointment.bookedByRole
+                            ? ` · ${formatActorRole(editingAppointment.bookedByRole)}`
+                            : ''}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="history-label">Creation date</span>
+                        <strong>{formatStampDate(editingAppointment.createdAt)}</strong>
+                      </div>
+                      <div>
+                        <span className="history-label">Creation time</span>
+                        <strong>{formatStampTime(editingAppointment.createdAt)}</strong>
+                      </div>
+                      <div>
+                        <span className="history-label">Appointment</span>
+                        <strong>
+                          {editingAppointment.customerName} · {formatShortDate(editingAppointment.date)}{' '}
+                          {formatStandardTime(editingAppointment.time)} · {editingAppointment.serviceName}
+                        </strong>
+                      </div>
+                    </div>
+                    {canViewAudit ? (
+                      <div className="appt-tracker-history">
+                        <p className="history-label">Activity history</p>
+                        {renderActivityTimeline(
+                          activityLogs,
+                          'No activity logged yet. Run add_appointment_booking_tracker.sql if this stays empty for new edits.',
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               <div className="booking-modal-actions">
@@ -1954,7 +2299,7 @@ export function Appointments() {
         <div
           className="confirm-modal-overlay booking-modal-overlay"
           role="presentation"
-          onClick={() => setHistoryApt(null)}
+          onClick={() => { setHistoryApt(null); setActivityLogs([]) }}
         >
           <div
             className="booking-modal history-modal"
@@ -1978,7 +2323,7 @@ export function Appointments() {
                   className="btn-icon"
                   type="button"
                   aria-label="Close"
-                  onClick={() => setHistoryApt(null)}
+                  onClick={() => { setHistoryApt(null); setActivityLogs([]) }}
                 >
                   <X size={16} />
                 </button>
@@ -2050,7 +2395,28 @@ export function Appointments() {
                     <strong className="history-notes">{historyApt.medicalHistory}</strong>
                   </div>
                 ) : null}
+                <div>
+                  <span className="history-label">Booked by</span>
+                  <strong>
+                    {historyApt.bookedByName || '—'}
+                    {historyApt.bookedByRole
+                      ? ` · ${formatActorRole(historyApt.bookedByRole)}`
+                      : ''}
+                  </strong>
+                </div>
+                <div>
+                  <span className="history-label">Created</span>
+                  <strong>
+                    {formatStampDate(historyApt.createdAt)} · {formatStampTime(historyApt.createdAt)}
+                  </strong>
+                </div>
               </div>
+              {canViewAudit ? (
+                <div className="appt-tracker-history" style={{ marginTop: 14 }}>
+                  <p className="history-label">Activity history</p>
+                  {renderActivityTimeline(activityLogs, 'No activity logged for this booking yet.')}
+                </div>
+              ) : null}
             </div>
 
             <div className="booking-modal-actions">
@@ -2070,7 +2436,14 @@ export function Appointments() {
                 <span />
               )}
               <div className="booking-modal-actions-end">
-                <button className="btn btn-primary" type="button" onClick={() => setHistoryApt(null)}>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => {
+                    setHistoryApt(null)
+                    setActivityLogs([])
+                  }}
+                >
                   Close
                 </button>
               </div>

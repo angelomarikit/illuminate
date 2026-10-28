@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Download, ImageIcon, Receipt, Trash2, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
-import { formatCurrency } from '../lib/utils'
+import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
+import { canDeleteClinicData } from '../lib/roles'
+import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import { downloadCsv, isUuid } from '../lib/utils'
 import type { SaleRecord } from '../types'
@@ -90,7 +92,9 @@ function initials(name: string) {
 }
 
 export function Sales() {
+  const { user } = useAuth()
   const { branchId } = useBranch()
+  const canDelete = canDeleteClinicData(user?.role)
   const [rows, setRows] = useState<SaleView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -183,6 +187,10 @@ export function Sales() {
   }
 
   async function deleteSale(sale: SaleView) {
+    if (!canDelete) {
+      setError('Only Admin or Owner can delete sales receipts.')
+      return
+    }
     const ok = window.confirm(
       `Delete receipt ${sale.receiptNo}?\n\n${sale.customerName} · ${formatCurrency(sale.total)}\n\nThis removes it from Sales Proof and any linked client session package(s).`,
     )
@@ -350,17 +358,19 @@ export function Sales() {
                     >
                       View
                     </button>
-                    <button
-                      type="button"
-                      className="sp-row-action sp-row-delete"
-                      disabled={deletingId === sale.id}
-                      aria-label={`Delete ${sale.receiptNo}`}
-                      title="Delete receipt"
-                      onClick={() => void deleteSale(sale)}
-                    >
-                      <Trash2 size={13} aria-hidden />
-                      {deletingId === sale.id ? '…' : 'Delete'}
-                    </button>
+                    {canDelete ? (
+                      <button
+                        type="button"
+                        className="sp-row-action sp-row-delete"
+                        disabled={deletingId === sale.id}
+                        aria-label={`Delete ${sale.receiptNo}`}
+                        title="Delete receipt (Admin only)"
+                        onClick={() => void deleteSale(sale)}
+                      >
+                        <Trash2 size={13} aria-hidden />
+                        {deletingId === sale.id ? '…' : 'Delete'}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ))}

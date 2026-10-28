@@ -9,7 +9,7 @@ import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
-import { isClinicRole } from '../lib/roles'
+import { canDeleteClinicData, isClinicRole } from '../lib/roles'
 import { normalizeMembership } from '../lib/membership'
 import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
@@ -178,6 +178,7 @@ export function Customers() {
   const { user } = useAuth()
   const location = useLocation()
   const canManageConsent = isClinicRole(user?.role)
+  const canDelete = canDeleteClinicData(user?.role)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [rows, setRows] = useState<Customer[]>([])
@@ -415,7 +416,11 @@ export function Customers() {
   }
 
   async function onDeleteClient() {
-    if (!selected || !canManageConsent) return
+    if (!selected || !canDelete) {
+      setError('Only Admin or Owner can delete clients.')
+      setConfirmDelete(false)
+      return
+    }
     setDeleting(true)
     setError('')
     setMessage('')
@@ -991,18 +996,20 @@ export function Customers() {
                     <Pencil size={15} />
                     Edit
                   </button>
-                  <button
-                    className="btn crm-btn-delete"
-                    type="button"
-                    onClick={() => {
-                      setConfirmDelete(true)
-                      setError('')
-                      setMessage('')
-                    }}
-                  >
-                    <Trash2 size={15} />
-                    Delete
-                  </button>
+                  {canDelete ? (
+                    <button
+                      className="btn crm-btn-delete"
+                      type="button"
+                      onClick={() => {
+                        setConfirmDelete(true)
+                        setError('')
+                        setMessage('')
+                      }}
+                    >
+                      <Trash2 size={15} />
+                      Delete
+                    </button>
+                  ) : null}
                   <button
                     className="btn crm-btn-avail"
                     type="button"
@@ -1032,7 +1039,7 @@ export function Customers() {
         />
       ) : null}
 
-      {confirmDelete && selected ? (
+      {confirmDelete && selected && canDelete ? (
         <div
           className="confirm-modal-overlay"
           role="presentation"

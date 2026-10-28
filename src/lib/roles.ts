@@ -55,6 +55,11 @@ export function isElevatedRole(role: string | null | undefined): boolean {
   return ELEVATED_ROLES.includes(normalizeRole(role))
 }
 
+/** Permanent delete of clinic records (clients, sales, packages, appointments). Owner + Admin only. */
+export function canDeleteClinicData(role: string | null | undefined): boolean {
+  return isElevatedRole(role)
+}
+
 export function isClinicRole(role: string | null | undefined): boolean {
   return CLINIC_ROLES.includes(normalizeRole(role))
 }

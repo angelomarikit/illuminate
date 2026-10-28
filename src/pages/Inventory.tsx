@@ -30,6 +30,20 @@ type ServiceLink = {
   qty_per_service: number
   services?: { name: string } | { name: string }[] | null
 }
+type UsageRow = {
+  id: string
+  service_name: string
+  customer_name: string
+  completed_at: string
+  completed_by_name: string | null
+  inventory_treatment_usage_lines?:
+    | {
+        item_name: string
+        qty_deducted: number
+        item_unit: string | null
+      }[]
+    | null
+}
 
 const emptyItem = {
   name: '',
@@ -83,6 +97,7 @@ export function Inventory() {
   const [rows, setRows] = useState<InventoryItem[]>([])
   const [services, setServices] = useState<ServiceOpt[]>([])
   const [links, setLinks] = useState<ServiceLink[]>([])
+  const [usageRows, setUsageRows] = useState<UsageRow[]>([])
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<'none' | 'add' | 'adjust' | 'link'>('none')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -101,13 +116,20 @@ export function Inventory() {
     setLoading(true)
     let q = supabase.from('inventory_items').select('*').is('deleted_at', null).order('name')
     if (isUuid(branchId)) q = q.eq('branch_id', branchId)
-    const [{ data, error: err }, { data: svc }, { data: linkData, error: linkErr }] =
+    const [{ data, error: err }, { data: svc }, { data: linkData, error: linkErr }, usageRes] =
       await Promise.all([
         q,
         supabase.from('services').select('id, name, category').eq('active', true).order('name'),
         supabase
           .from('service_inventory')
           .select('id, service_id, inventory_item_id, qty_per_service, services(name)'),
+        supabase
+          .from('inventory_treatment_usage')
+          .select(
+            'id, service_name, customer_name, completed_at, completed_by_name, inventory_treatment_usage_lines(item_name, qty_deducted, item_unit)',
+          )
+          .order('completed_at', { ascending: false })
+          .limit(25),
       ])
     if (err) {
       setError(persistenceHint(err.message))
@@ -122,6 +144,11 @@ export function Inventory() {
     }
     setServices((svc as ServiceOpt[] | null) ?? [])
     setLinks((linkData as ServiceLink[] | null) ?? [])
+    if (!usageRes.error) {
+      setUsageRows((usageRes.data as UsageRow[] | null) ?? [])
+    } else {
+      setUsageRows([])
+    }
     setLoading(false)
   }, [branchId])
 
@@ -252,23 +279,31 @@ export function Inventory() {
     }
     setSaving(true)
     setError('')
-    const { error: err } = await supabase.from('service_inventory').insert({
-      service_id: linkServiceId,
-      inventory_item_id: linkItemId,
-      qty_per_service: Math.max(0.01, Number(linkQty) || 1),
-    })
+    const qty = Math.max(0.01, Number(linkQty) || 1)
+    const { error: err } = await supabase.from('service_inventory').upsert(
+      {
+        service_id: linkServiceId,
+        inventory_item_id: linkItemId,
+        qty_per_service: qty,
+      },
+      { onConflict: 'service_id,inventory_item_id' },
+    )
     setSaving(false)
     if (err) {
       setError(
-        err.message.includes('service_inventory')
-          ? `${err.message} — run supabase/add_inventory_role.sql.`
-          : err.message,
+        err.message.includes('service_inventory') || err.message.includes('schema cache')
+          ? `${err.message} — run supabase/add_inventory_role.sql (and add_treatment_supply_deduction.sql).`
+          : err.message.includes('row-level security') || err.message.includes('policy')
+            ? `${err.message} — link supplies as Owner, Admin, or Inventory Specialist.`
+            : err.message,
       )
       return
     }
+    const svcLabel = services.find((s) => s.id === linkServiceId)?.name || 'service'
+    const itemLabel = rows.find((i) => i.id === linkItemId)?.name || 'item'
     setLinkQty('1')
     setMode('none')
-    setMessage('Item linked to service.')
+    setMessage(`Linked ${qty} × ${itemLabel} → ${svcLabel}. Deducted automatically when that treatment is Completed.`)
     await load()
   }
 
@@ -572,6 +607,11 @@ export function Inventory() {
             <h2 className="panel-title">Link item to clinic service</h2>
           </div>
           <div className="panel-body">
+            <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '0.88rem' }}>
+              Set how much of each supply a treatment uses. When that appointment is marked{' '}
+              <strong>Completed</strong>, stock is deducted automatically (once per booking).
+              Re-linking the same item updates the quantity.
+            </p>
             <form
               onSubmit={(e) => void onLink(e)}
               style={{
@@ -761,6 +801,71 @@ export function Inventory() {
           )}
         </div>
       </div>
+
+      <div className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header">
+          <h2 className="panel-title">Treatment supply deductions</h2>
+        </div>
+        <div className="panel-body">
+          {usageRows.length === 0 ? (
+            <div className="empty-state">
+              No automatic deductions yet. Link supplies above, then mark a matching appointment as
+              Completed. Run <code>add_treatment_supply_deduction.sql</code> if this stays empty.
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Client</th>
+                    <th>Treatment</th>
+                    <th>Supplies used</th>
+                    <th>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usageRows.map((row) => {
+                    const lines = row.inventory_treatment_usage_lines ?? []
+                    return (
+                      <tr key={row.id}>
+                        <td>
+                          {new Date(row.completed_at).toLocaleString('en-PH', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </td>
+                        <td>
+                          <strong>{row.customer_name}</strong>
+                        </td>
+                        <td>{row.service_name}</td>
+                        <td>
+                          {lines.length === 0
+                            ? '—'
+                            : lines
+                                .map(
+                                  (l) =>
+                                    `${l.qty_deducted} ${l.item_unit || ''} ${l.item_name}`.replace(
+                                      /\s+/g,
+                                      ' ',
+                                    ),
+                                )
+                                .join(' · ')}
+                        </td>
+                        <td>{row.completed_by_name || '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
       {editingId ? (
         <div
           className="confirm-modal-overlay"

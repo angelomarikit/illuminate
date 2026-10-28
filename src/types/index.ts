@@ -151,6 +151,36 @@ export type Appointment = {
   calendarColor?: string
   /** Why the appointment was cancelled */
   cancellationReason?: string
+  /** Booking tracker — who created the row (preserved on edit) */
+  bookedById?: string | null
+  bookedByName?: string
+  bookedByRole?: string
+  /** Backend creation timestamp (ISO) */
+  createdAt?: string
+  updatedAt?: string
+  lastModifiedByName?: string
+  lastModifiedByRole?: string
+}
+
+export type AppointmentActivityAction =
+  | 'created'
+  | 'updated'
+  | 'rescheduled'
+  | 'cancelled'
+  | 'status_changed'
+  | 'approved'
+  | 'declined'
+  | 'completed'
+
+export type AppointmentActivityLog = {
+  id: string
+  appointmentId: string
+  action: AppointmentActivityAction
+  actorName: string
+  actorRole: string
+  summary: string
+  details: Record<string, unknown>
+  createdAt: string
 }
 
 export type SaleRecord = {

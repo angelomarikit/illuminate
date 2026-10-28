@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Download, FileBarChart2, Search, Trash2 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
+import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
+import { canDeleteClinicData } from '../lib/roles'
 import { supabase } from '../lib/supabase'
 import { downloadCsv, formatCurrency, isUuid } from '../lib/utils'
 import './reports.css'
@@ -78,7 +80,9 @@ function matchesBranch(rowBranchId: string | null | undefined, activeBranchId: s
 }
 
 export function Reports() {
+  const { user } = useAuth()
   const { branchId } = useBranch()
+  const canDelete = canDeleteClinicData(user?.role)
   const [fromDate, setFromDate] = useState(startOfMonthInput)
   const [toDate, setToDate] = useState(() => toDateInput(new Date()))
   const [appliedFrom, setAppliedFrom] = useState(startOfMonthInput)
@@ -286,6 +290,10 @@ export function Reports() {
   }
 
   async function deleteReportRow(row: ReportRow) {
+    if (!canDelete) {
+      setError('Only Admin or Owner can delete report records.')
+      return
+    }
     const kind = row.source === 'sale' ? 'sale receipt' : 'package visit'
     const ok = window.confirm(
       `Delete this ${kind}?\n\n${row.client}\n${row.service}\n${row.sessionDate}` +
@@ -569,17 +577,21 @@ export function Reports() {
                       <td>{row.attendant}</td>
                       <td>{row.remarks || '—'}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn reports-delete-btn btn-sm"
-                          disabled={deletingId === row.id}
-                          aria-label={`Delete ${row.client} ${row.service}`}
-                          title="Delete from reports"
-                          onClick={() => void deleteReportRow(row)}
-                        >
-                          <Trash2 size={14} aria-hidden />
-                          {deletingId === row.id ? '…' : 'Delete'}
-                        </button>
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            className="btn reports-delete-btn btn-sm"
+                            disabled={deletingId === row.id}
+                            aria-label={`Delete ${row.client} ${row.service}`}
+                            title="Delete from reports (Admin only)"
+                            onClick={() => void deleteReportRow(row)}
+                          >
+                            <Trash2 size={14} aria-hidden />
+                            {deletingId === row.id ? '…' : 'Delete'}
+                          </button>
+                        ) : (
+                          <span className="reports-muted">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -3,6 +3,8 @@ import { ChevronLeft, ChevronRight, ClipboardList, Trash2 } from 'lucide-react'
 import { InstallmentPaymentModal } from './InstallmentPaymentModal'
 import { SessionScheduleModal, type SessionPackageForModal } from './SessionScheduleModal'
 import { StatusMessage } from './StatusMessage'
+import { useAuth } from '../context/AuthContext'
+import { canDeleteClinicData } from '../lib/roles'
 import { formatCurrency } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import './ClientRecordsPanel.css'
@@ -88,6 +90,8 @@ export function ClientRecordsPanel({
   membershipExpiresAt,
   refreshKey = 0,
 }: Props) {
+  const { user } = useAuth()
+  const canDelete = canDeleteClinicData(user?.role)
   const [records, setRecords] = useState<ClientRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -298,6 +302,10 @@ export function ClientRecordsPanel({
   }
 
   async function deleteRecord(row: ClientRecord) {
+    if (!canDelete) {
+      setError('Only Admin or Owner can delete records.')
+      return
+    }
     const label = row.service.length > 60 ? `${row.service.slice(0, 57)}…` : row.service
     const ok = window.confirm(
       `Delete this record?\n\n${label}\n\nThis removes it from the client history` +
@@ -488,17 +496,19 @@ export function ClientRecordsPanel({
                             </button>
                           </>
                         ) : null}
-                        <button
-                          type="button"
-                          className="btn client-records-delete-btn"
-                          disabled={deletingKey === row.key}
-                          aria-label={`Delete ${row.service}`}
-                          title="Delete record and linked sale"
-                          onClick={() => void deleteRecord(row)}
-                        >
-                          <Trash2 size={14} aria-hidden />
-                          {deletingKey === row.key ? 'Deleting…' : 'Delete'}
-                        </button>
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            className="btn client-records-delete-btn"
+                            disabled={deletingKey === row.key}
+                            aria-label={`Delete ${row.service}`}
+                            title="Delete record and linked sale (Admin only)"
+                            onClick={() => void deleteRecord(row)}
+                          >
+                            <Trash2 size={14} aria-hidden />
+                            {deletingKey === row.key ? 'Deleting…' : 'Delete'}
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
