@@ -5,6 +5,7 @@ import { MembershipBadge } from './MembershipBadge'
 import { StatusMessage } from './StatusMessage'
 import { formatCurrency, isUuid } from '../lib/utils'
 import { syncSessionSlotAppointment } from '../lib/sessionAppointments'
+import { completeAppointmentWithSupplies } from '../lib/treatmentSupplies'
 import { supabase } from '../lib/supabase'
 import './SessionScheduleModal.css'
 
@@ -12,6 +13,7 @@ export type SessionPackageForModal = {
   id: string
   customer_id: string | null
   customer_name: string
+  service_id?: string | null
   service_name: string
   total_sessions: number
   sessions_used: number
@@ -227,28 +229,58 @@ export function SessionScheduleModal({
       customerEmail = (cust as { email?: string } | null)?.email ?? null
     }
 
-    for (const slot of slots) {
-      await syncSessionSlotAppointment({
-        packageId: pkg.id,
-        sessionNumber: slot.sessionNumber,
-        customerName: pkg.customer_name,
-        serviceName: pkg.service_name,
-        staffName: pkg.administered_by,
-        scheduledDate: slot.scheduledDate || null,
-        scheduledTime: slot.scheduledTime || null,
-        status: slot.status,
-        notes: slot.notes.trim() || null,
-        branchId: pkg.branch_id ?? null,
-        customerPhone,
-        customerEmail,
-      })
+    const deductNotes: string[] = []
+    try {
+      for (const slot of slots) {
+        const appointmentId = await syncSessionSlotAppointment({
+          packageId: pkg.id,
+          sessionNumber: slot.sessionNumber,
+          customerName: pkg.customer_name,
+          serviceName: pkg.service_name,
+          staffName: pkg.administered_by,
+          scheduledDate: slot.scheduledDate || null,
+          scheduledTime: slot.scheduledTime || null,
+          status: slot.status,
+          notes: slot.notes.trim() || null,
+          branchId: pkg.branch_id ?? null,
+          customerPhone,
+          customerEmail,
+        })
+
+        if (slot.status === 'finished' && appointmentId) {
+          const result = await completeAppointmentWithSupplies(
+            appointmentId,
+            pkg.service_id && isUuid(pkg.service_id) ? pkg.service_id : null,
+          )
+          if (!result.ok) {
+            setSaving(false)
+            setError(
+              `Session ${slot.sessionNumber} saved, but inventory deduction failed:\n${result.error}`,
+            )
+            return
+          }
+          if (result.deducted) {
+            deductNotes.push(`Session ${slot.sessionNumber}: supplies deducted`)
+          } else if (result.message && !result.message.includes('already deducted')) {
+            // Surface “no supplies linked” once so staff know to link in Inventory
+            if (result.message.toLowerCase().includes('no supplies linked') ||
+              result.message.toLowerCase().includes('no catalog service')) {
+              deductNotes.push(result.message)
+            }
+          }
+        }
+      }
+    } catch (syncErr) {
+      setSaving(false)
+      setError(syncErr instanceof Error ? syncErr.message : 'Could not sync session to calendar.')
+      return
     }
 
     setSaving(false)
 
-    onSaved(
-      `Saved ${slots.length} sessions for ${pkg.customer_name} · ${finishedCount} finished · ${left} left.`,
-    )
+    const base = `Saved ${slots.length} sessions for ${pkg.customer_name} · ${finishedCount} finished · ${left} left.`
+    const uniqueNotes = [...new Set(deductNotes)]
+    onSaved(uniqueNotes.length ? `${base}\n${uniqueNotes.join('\n')}` : base)
     onClose()
   }
 
@@ -324,7 +356,8 @@ export function SessionScheduleModal({
 
           <p className="ssm-hint">
             Set a date for each visit and mark status as Pending, Scheduled, or Finished. Saving
-            updates remaining sessions on the package.
+            updates remaining sessions on the package. Finished visits also deduct linked inventory
+            supplies (once per session).
           </p>
 
           {loading ? (

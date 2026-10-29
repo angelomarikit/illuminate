@@ -59,8 +59,10 @@ After setup.sql, also run (in order):
 17. `supabase/add_appointment_calendar_color.sql` (calendar color tags on appointments)
 18. `supabase/add_appointment_cancellation_reason.sql` (cancel reason for cancelled appointments)
 18b. `supabase/add_appointment_booking_tracker.sql` (**booking audit tracker**) — `booked_by_*` snapshots + `appointment_activity_log` for create/edit/reschedule/cancel accountability
+18b-fix. `supabase/fix_appointment_activity_log_fk.sql` — if Save booking fails with `appointment_activity_log_appointment_id_fkey`, run this (moves activity-log writes to AFTER INSERT)
 18c. `supabase/add_admin_only_deletes.sql` (**Admin/Owner-only deletes**) — RLS blocks non-admin DELETE on sales/customers/packages/appointments/slots + `deletion_audit_log`
 18d. `supabase/add_treatment_supply_deduction.sql` (**treatment supply BOM + auto-deduct**) — `complete_appointment_with_supplies` RPC + `inventory_treatment_usage` logs when appointment → Completed
+18d-fix. `supabase/fix_treatment_supply_session_match.sql` — if linking/deduction fails for package sessions (e.g. Celebrity Drip Finished), run this (service match + unique BOM + Finished path)
 19. `supabase/add_notifications.sql` (role-scoped notification acknowledgments / unread state)
 20. `supabase/add_service_categories.sql` (Owner/Admin custom service categories)
 21. `supabase/add_receptionist_and_client_booking.sql` (rename Staff → Receptionist; landing booking registers Client account + portal RLS for notes/wallet/appointments)

@@ -119,6 +119,7 @@ declare
   stock_before numeric(12,2);
   stock_after numeric(12,2);
   already uuid;
+  match_name text;
 begin
   if p_appointment_id is null then
     return jsonb_build_object('ok', false, 'error', 'Missing appointment id.');
@@ -163,12 +164,32 @@ begin
   actor_name := coalesce(nullif(trim(actor_name), ''), 'Staff');
   actor_role := coalesce(nullif(trim(actor_role), ''), public.current_app_role());
 
-  -- Match catalog service by exact name (trim/case-insensitive)
+  -- Match catalog service: exact name, then strip " · Session N", then prefix
   select * into svc
   from public.services s
   where lower(trim(s.name)) = lower(trim(apt.service_name))
   order by s.active desc nulls last
   limit 1;
+
+  if svc.id is null then
+    match_name := trim(regexp_replace(coalesce(apt.service_name, ''), '\s*[·•]\s*Session\s*\d+.*$', '', 'i'));
+    if match_name <> '' and lower(match_name) is distinct from lower(trim(apt.service_name)) then
+      select * into svc
+      from public.services s
+      where lower(trim(s.name)) = lower(match_name)
+      order by s.active desc nulls last
+      limit 1;
+    end if;
+  end if;
+
+  if svc.id is null then
+    select * into svc
+    from public.services s
+    where length(trim(s.name)) >= 3
+      and lower(trim(apt.service_name)) like lower(trim(s.name)) || '%'
+    order by length(s.name) desc, s.active desc nulls last
+    limit 1;
+  end if;
 
   -- No linked BOM → just complete
   if svc.id is null then

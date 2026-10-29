@@ -120,9 +120,8 @@ export function Inventory() {
       await Promise.all([
         q,
         supabase.from('services').select('id, name, category').eq('active', true).order('name'),
-        supabase
-          .from('service_inventory')
-          .select('id, service_id, inventory_item_id, qty_per_service, services(name)'),
+        // Avoid nested embed — relationship/schema-cache errors were breaking the whole link UI
+        supabase.from('service_inventory').select('id, service_id, inventory_item_id, qty_per_service'),
         supabase
           .from('inventory_treatment_usage')
           .select(
@@ -139,11 +138,20 @@ export function Inventory() {
     }
     if (linkErr && !linkErr.message.includes('schema cache')) {
       if (linkErr.message.includes('service_inventory')) {
-        setError(`${linkErr.message} — run supabase/add_inventory_role.sql in Supabase.`)
+        setError(
+          `${linkErr.message} — run supabase/add_inventory_role.sql and supabase/fix_treatment_supply_session_match.sql in Supabase.`,
+        )
       }
     }
-    setServices((svc as ServiceOpt[] | null) ?? [])
-    setLinks((linkData as ServiceLink[] | null) ?? [])
+    const svcList = (svc as ServiceOpt[] | null) ?? []
+    setServices(svcList)
+    const nameById = new Map(svcList.map((s) => [s.id, s.name]))
+    setLinks(
+      ((linkData as Omit<ServiceLink, 'services'>[] | null) ?? []).map((link) => ({
+        ...link,
+        services: { name: nameById.get(link.service_id) || '—' },
+      })),
+    )
     if (!usageRes.error) {
       setUsageRows((usageRes.data as UsageRow[] | null) ?? [])
     } else {
@@ -280,22 +288,44 @@ export function Inventory() {
     setSaving(true)
     setError('')
     const qty = Math.max(0.01, Number(linkQty) || 1)
-    const { error: err } = await supabase.from('service_inventory').upsert(
-      {
-        service_id: linkServiceId,
-        inventory_item_id: linkItemId,
-        qty_per_service: qty,
-      },
-      { onConflict: 'service_id,inventory_item_id' },
-    )
+    const payload = {
+      service_id: linkServiceId,
+      inventory_item_id: linkItemId,
+      qty_per_service: qty,
+    }
+
+    let errMsg = ''
+    const { error: upsertErr } = await supabase.from('service_inventory').upsert(payload, {
+      onConflict: 'service_id,inventory_item_id',
+    })
+    if (upsertErr) {
+      // Fallback when unique constraint / onConflict is missing on prod
+      const { data: existing } = await supabase
+        .from('service_inventory')
+        .select('id')
+        .eq('service_id', linkServiceId)
+        .eq('inventory_item_id', linkItemId)
+        .maybeSingle()
+      if (existing?.id) {
+        const { error: updErr } = await supabase
+          .from('service_inventory')
+          .update({ qty_per_service: qty })
+          .eq('id', existing.id)
+        if (updErr) errMsg = updErr.message
+      } else {
+        const { error: insErr } = await supabase.from('service_inventory').insert(payload)
+        errMsg = insErr?.message || ''
+      }
+    }
+
     setSaving(false)
-    if (err) {
+    if (errMsg) {
       setError(
-        err.message.includes('service_inventory') || err.message.includes('schema cache')
-          ? `${err.message} — run supabase/add_inventory_role.sql (and add_treatment_supply_deduction.sql).`
-          : err.message.includes('row-level security') || err.message.includes('policy')
-            ? `${err.message} — link supplies as Owner, Admin, or Inventory Specialist.`
-            : err.message,
+        errMsg.includes('service_inventory') || errMsg.includes('schema cache')
+          ? `${errMsg} — run supabase/add_inventory_role.sql and supabase/fix_treatment_supply_session_match.sql.`
+          : errMsg.includes('row-level security') || errMsg.includes('policy')
+            ? `${errMsg} — link supplies as Owner, Admin, or Inventory Specialist.`
+            : errMsg,
       )
       return
     }
@@ -303,7 +333,9 @@ export function Inventory() {
     const itemLabel = rows.find((i) => i.id === linkItemId)?.name || 'item'
     setLinkQty('1')
     setMode('none')
-    setMessage(`Linked ${qty} × ${itemLabel} → ${svcLabel}. Deducted automatically when that treatment is Completed.`)
+    setMessage(
+      `Linked ${qty} × ${itemLabel} → ${svcLabel}. Deducted when that treatment is Completed or a package session is marked Finished.`,
+    )
     await load()
   }
 
@@ -608,9 +640,10 @@ export function Inventory() {
           </div>
           <div className="panel-body">
             <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '0.88rem' }}>
-              Set how much of each supply a treatment uses. When that appointment is marked{' '}
-              <strong>Completed</strong>, stock is deducted automatically (once per booking).
-              Re-linking the same item updates the quantity.
+              Set how much of each supply a treatment uses. Stock deducts automatically when an
+              appointment is <strong>Completed</strong> or a Client Sessions visit is marked{' '}
+              <strong>Finished</strong> (once per visit). Re-linking the same item updates the
+              quantity.
             </p>
             <form
               onSubmit={(e) => void onLink(e)}
@@ -809,8 +842,10 @@ export function Inventory() {
         <div className="panel-body">
           {usageRows.length === 0 ? (
             <div className="empty-state">
-              No automatic deductions yet. Link supplies above, then mark a matching appointment as
-              Completed. Run <code>add_treatment_supply_deduction.sql</code> if this stays empty.
+              No automatic deductions yet. Link supplies above, then mark the treatment Completed
+              (calendar) or Finished (client sessions). Run{' '}
+              <code>add_treatment_supply_deduction.sql</code> and{' '}
+              <code>fix_treatment_supply_session_match.sql</code> if this stays empty.
             </div>
           ) : (
             <div className="table-wrap">

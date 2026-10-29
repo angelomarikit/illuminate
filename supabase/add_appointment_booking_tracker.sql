@@ -126,8 +126,10 @@ $$;
 revoke all on function public.appointment_actor_snapshot() from public;
 grant execute on function public.appointment_actor_snapshot() to authenticated, anon;
 
--- 4) Trigger: stamp creator, preserve original, append activity log
-create or replace function public.appointments_booking_tracker_tg()
+-- 4) Triggers: stamp on BEFORE; write activity log on AFTER
+-- (BEFORE INSERT cannot insert into appointment_activity_log — FK would fail
+--  because the appointment row does not exist yet.)
+create or replace function public.appointments_booking_tracker_before_tg()
 returns trigger
 language plpgsql
 security definer
@@ -137,10 +139,6 @@ declare
   a_id uuid;
   a_name text;
   a_role text;
-  action_key text;
-  summary_text text;
-  details_json jsonb := '{}'::jsonb;
-  changed jsonb := '{}'::jsonb;
 begin
   select s.actor_id, s.actor_name, s.actor_role
     into a_id, a_name, a_role
@@ -163,7 +161,47 @@ begin
     new.last_modified_by_id := coalesce(new.last_modified_by_id, new.booked_by_id);
     new.last_modified_by_name := coalesce(new.last_modified_by_name, new.booked_by_name);
     new.last_modified_by_role := coalesce(new.last_modified_by_role, new.booked_by_role);
+    return new;
+  end if;
 
+  if TG_OP = 'UPDATE' then
+    -- Preserve original creation attribution + timestamp
+    new.booked_by_id := old.booked_by_id;
+    new.booked_by_name := old.booked_by_name;
+    new.booked_by_role := old.booked_by_role;
+    new.created_at := old.created_at;
+
+    new.updated_at := now();
+    new.last_modified_by_id := a_id;
+    new.last_modified_by_name := a_name;
+    new.last_modified_by_role := a_role;
+    return new;
+  end if;
+
+  return new;
+end;
+$$;
+
+create or replace function public.appointments_booking_tracker_after_tg()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  a_id uuid;
+  a_name text;
+  a_role text;
+  action_key text;
+  summary_text text;
+  details_json jsonb := '{}'::jsonb;
+  changed jsonb := '{}'::jsonb;
+begin
+  select s.actor_id, s.actor_name, s.actor_role
+    into a_id, a_name, a_role
+  from public.appointment_actor_snapshot() s;
+
+  if TG_OP = 'INSERT' then
     insert into public.appointment_activity_log (
       appointment_id, action, actor_id, actor_name, actor_role, summary, details
     ) values (
@@ -189,22 +227,10 @@ begin
         'type', new.type
       )
     );
-
     return new;
   end if;
 
   if TG_OP = 'UPDATE' then
-    -- Preserve original creation attribution + timestamp
-    new.booked_by_id := old.booked_by_id;
-    new.booked_by_name := old.booked_by_name;
-    new.booked_by_role := old.booked_by_role;
-    new.created_at := old.created_at;
-
-    new.updated_at := now();
-    new.last_modified_by_id := a_id;
-    new.last_modified_by_name := a_name;
-    new.last_modified_by_role := a_role;
-
     if old.appointment_date is distinct from new.appointment_date
        or old.appointment_time is distinct from new.appointment_time then
       changed := changed || jsonb_build_object(
@@ -307,10 +333,18 @@ end;
 $$;
 
 drop trigger if exists trg_appointments_booking_tracker on public.appointments;
-create trigger trg_appointments_booking_tracker
+drop trigger if exists trg_appointments_booking_tracker_before on public.appointments;
+drop trigger if exists trg_appointments_booking_tracker_after on public.appointments;
+
+create trigger trg_appointments_booking_tracker_before
   before insert or update on public.appointments
   for each row
-  execute function public.appointments_booking_tracker_tg();
+  execute function public.appointments_booking_tracker_before_tg();
+
+create trigger trg_appointments_booking_tracker_after
+  after insert or update on public.appointments
+  for each row
+  execute function public.appointments_booking_tracker_after_tg();
 
 -- 5) Backfill booked_by for existing rows that have no snapshot
 update public.appointments

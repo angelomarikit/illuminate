@@ -35,10 +35,14 @@ function formatShortfalls(shortfalls: SupplyShortfall[] | undefined) {
 /** Complete appointment and deduct linked BOM supplies (idempotent). */
 export async function completeAppointmentWithSupplies(
   appointmentId: string,
-): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
-  const { data, error } = await supabase.rpc('complete_appointment_with_supplies', {
+  serviceId?: string | null,
+): Promise<{ ok: true; message: string; deducted?: boolean } | { ok: false; error: string }> {
+  const args: { p_appointment_id: string; p_service_id?: string } = {
     p_appointment_id: appointmentId,
-  })
+  }
+  if (serviceId) args.p_service_id = serviceId
+
+  const { data, error } = await supabase.rpc('complete_appointment_with_supplies', args)
 
   if (error) {
     if (
@@ -54,8 +58,9 @@ export async function completeAppointmentWithSupplies(
       if (updErr) return { ok: false, error: updErr.message }
       return {
         ok: true,
+        deducted: false,
         message:
-          'Treatment completed. Run supabase/add_treatment_supply_deduction.sql to enable automatic supply deduction.',
+          'Treatment completed. Run supabase/add_treatment_supply_deduction.sql and fix_treatment_supply_session_match.sql to enable automatic supply deduction.',
       }
     }
     return { ok: false, error: error.message }
@@ -72,6 +77,7 @@ export async function completeAppointmentWithSupplies(
 
   return {
     ok: true,
+    deducted: Boolean(result.deducted),
     message: result.message || 'Treatment completed.',
   }
 }

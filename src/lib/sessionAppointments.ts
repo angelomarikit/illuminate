@@ -55,11 +55,17 @@ export type SyncSessionAppointmentInput = {
 
 /**
  * Upsert / cancel the Appointment Calendar row for one package session slot.
+ * Returns appointment id when a calendar row exists (needed for supply deduction).
  */
-export async function syncSessionSlotAppointment(input: SyncSessionAppointmentInput) {
+export async function syncSessionSlotAppointment(
+  input: SyncSessionAppointmentInput,
+): Promise<string | null> {
   const marker = sessionSlotMarker(input.packageId, input.sessionNumber)
-  const time = input.scheduledTime ? String(input.scheduledTime).slice(0, 5) : ''
+  const rawTime = input.scheduledTime ? String(input.scheduledTime).slice(0, 5) : ''
   const date = input.scheduledDate ? String(input.scheduledDate).slice(0, 10) : ''
+  const isFinished = input.status === 'finished'
+  // Finished sessions still need a calendar row for inventory deduction even without a clock time.
+  const time = rawTime || (isFinished && date ? '12:00' : '')
   const shouldList =
     Boolean(date) &&
     Boolean(time) &&
@@ -85,13 +91,18 @@ export async function syncSessionSlotAppointment(input: SyncSessionAppointmentIn
         })
         .eq('id', existing.id)
     }
-    return
+    return null
   }
 
-  const noteParts = [input.notes?.trim() || '', marker].filter(Boolean)
+  const noteParts = [
+    input.notes?.trim() || '',
+    `Session ${input.sessionNumber}`,
+    marker,
+  ].filter(Boolean)
+  // Keep base catalog service name (no "· Session N") so supply BOM matching works.
   const payload = {
     customer_name: input.customerName,
-    service_name: `${input.serviceName} · Session ${input.sessionNumber}`,
+    service_name: input.serviceName,
     staff_name: input.staffName?.trim() || null,
     appointment_date: date,
     appointment_time: time,
@@ -106,8 +117,16 @@ export async function syncSessionSlotAppointment(input: SyncSessionAppointmentIn
   }
 
   if (existing?.id) {
-    await supabase.from('appointments').update(payload).eq('id', existing.id)
-  } else {
-    await supabase.from('appointments').insert(payload)
+    const { error } = await supabase.from('appointments').update(payload).eq('id', existing.id)
+    if (error) throw new Error(error.message)
+    return existing.id
   }
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from('appointments')
+    .insert(payload)
+    .select('id')
+    .maybeSingle()
+  if (insertErr) throw new Error(insertErr.message)
+  return (inserted as { id?: string } | null)?.id ?? null
 }

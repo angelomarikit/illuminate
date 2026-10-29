@@ -16,6 +16,7 @@ type SessionPackage = {
   id: string
   customer_id: string | null
   customer_name: string
+  service_id?: string | null
   service_name: string
   total_sessions: number
   sessions_used: number
