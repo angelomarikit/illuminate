@@ -207,6 +207,69 @@ async function fetchLinesChunked(
   return out
 }
 
+/**
+ * Treatment auto-deducts (Finished session / Completed appointment) live in
+ * inventory_treatment_usage — include them in Stock Assessment Out.
+ */
+async function fetchTreatmentUsageDatedLines(
+  from: string,
+  to: string,
+  activeBranchId: string,
+): Promise<DatedQtyRow[]> {
+  // Broad timestamptz window, then filter by calendar day in JS (same as issues)
+  const { data, error } = await supabase
+    .from('inventory_treatment_usage')
+    .select(
+      'id, branch_id, completed_at, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
+    )
+    .gte('completed_at', `${from}T00:00:00`)
+    .lte('completed_at', `${to}T23:59:59.999`)
+    .order('completed_at', { ascending: true })
+
+  if (error) {
+    if (
+      error.message.includes('inventory_treatment_usage') ||
+      error.message.includes('schema cache')
+    ) {
+      return []
+    }
+    throw error
+  }
+
+  const out: DatedQtyRow[] = []
+  for (const row of (data as
+    | {
+        id: string
+        branch_id: string | null
+        completed_at: string
+        inventory_treatment_usage_lines?:
+          | { id: string; inventory_item_id: string; qty_deducted: number }[]
+          | null
+      }[]
+    | null) ?? []) {
+    // Null branch_id still counts for the active branch (many finishes omit branch)
+    if (
+      isUuid(activeBranchId) &&
+      row.branch_id != null &&
+      row.branch_id !== activeBranchId
+    ) {
+      continue
+    }
+    const moveDate = dateKey(row.completed_at)
+    if (!isDateInRange(moveDate, from, to)) continue
+    for (const line of row.inventory_treatment_usage_lines ?? []) {
+      out.push({
+        lineId: `tu:${line.id}`,
+        parentId: row.id,
+        qty: Number(line.qty_deducted) || 0,
+        inventory_item_id: line.inventory_item_id,
+        moveDate,
+      })
+    }
+  }
+  return out
+}
+
 /** Sum qty by item, optionally skipping days already inside a prior saved ending. */
 function sumByItemInPeriod(
   rows: DatedQtyRow[] | null | undefined,
@@ -476,12 +539,20 @@ export function StockAssessment() {
       if (seq !== loadSeqRef.current) return
       stocktakeDeltas = stDeltas
 
-      ;[recvSinceLines, issuedSinceLines, recvPeriodLines, issuedPeriodLines] = await Promise.all([
-        fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvSinceHeaders),
-        fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedSinceHeaders),
-        fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvPeriodHeaders),
-        fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedPeriodHeaders),
-      ])
+      const [recvSince, issuedSince, recvPeriod, issuedPeriod, treatSince, treatPeriod] =
+        await Promise.all([
+          fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvSinceHeaders),
+          fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedSinceHeaders),
+          fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvPeriodHeaders),
+          fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedPeriodHeaders),
+          fetchTreatmentUsageDatedLines(from, todayStr, branchId),
+          fetchTreatmentUsageDatedLines(from, to, branchId),
+        ])
+
+      recvSinceLines = recvSince
+      issuedSinceLines = [...issuedSince, ...treatSince]
+      recvPeriodLines = recvPeriod
+      issuedPeriodLines = [...issuedPeriod, ...treatPeriod]
 
       const linesByIssue = new Map<string, IssueLineRow[]>()
       for (const line of detailedLines) {
@@ -1096,10 +1167,10 @@ export function StockAssessment() {
             </div>
           </div>
           <p className="sa-hint">
-            In = receiving in this range only · Out = issued/used in this range · Expected =
-            Beginning + In − Out · Count = physical ending. Status compares Expected vs Count after
-            you enter a count. Beginning = last saved count before this range, or ledger opening
-            (stocktake adjustments are not double-counted).
+            In = receiving in this range only · Out = issued/used <em>and</em> treatment
+            auto-deducts (Finished / Completed) in this range · Expected = Beginning + In − Out ·
+            Count = physical ending. Beginning = last saved count before this range, or ledger
+            opening (stocktake adjustments are not double-counted).
           </p>
         </div>
       </div>
@@ -1220,7 +1291,8 @@ export function StockAssessment() {
           )}
           <p className="sa-hint" style={{ marginTop: 12 }}>
             Enter Count, then press Enter or click outside (or Save counts). Status stays “Not
-            counted” until a count is entered — including 0. Out only includes issues dated{' '}
+            counted” until a count is entered — including 0. Out includes issues + treatment
+            auto-deducts dated{' '}
             {rangeStart} → {rangeEnd}.
           </p>
         </div>
