@@ -212,82 +212,172 @@ type TreatmentUsageRow = {
   branch_id: string | null
   completed_at: string
   usage_date?: string | null
+  session_slot_id?: string | null
+  appointment_id?: string | null
   inventory_treatment_usage_lines?:
     | { id: string; inventory_item_id: string; qty_deducted: number }[]
     | null
+  client_session_slots?: { scheduled_date: string | null } | { scheduled_date: string | null }[] | null
+  appointments?: { appointment_date: string | null } | { appointment_date: string | null }[] | null
+}
+
+function embedOne<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null
+  return Array.isArray(value) ? value[0] ?? null : value
+}
+
+function visitDateFromUsage(
+  row: TreatmentUsageRow,
+  slotDateById: Map<string, string>,
+): string {
+  // 1) Session scheduled date (source of truth for package visits)
+  if (row.session_slot_id && slotDateById.has(row.session_slot_id)) {
+    return slotDateById.get(row.session_slot_id) || ''
+  }
+  const slot = embedOne(row.client_session_slots)
+  const fromSlot = dateKey(slot?.scheduled_date)
+  if (fromSlot) return fromSlot
+
+  // 2) Stored usage_date (after SQL fix)
+  const fromUsage = dateKey(row.usage_date)
+  if (fromUsage) return fromUsage
+
+  // 3) Appointment calendar date
+  const apt = embedOne(row.appointments)
+  const fromApt = dateKey(apt?.appointment_date)
+  if (fromApt) return fromApt
+
+  // 4) Last resort: when the row was written
+  return dateKey(row.completed_at)
 }
 
 /**
- * Treatment auto-deducts (Finished session / Completed appointment).
- * Prefer usage_date (visit day) over completed_at (when staff saved) so Out lands
- * on Oct 29 / 30 even if all sessions were marked Finished on Oct 31.
+ * Treatment auto-deducts for Stock Assessment Out.
+ * Visit day = session scheduled_date (29/30/31), NEVER the day staff clicked Save.
  */
 async function fetchTreatmentUsageDatedLines(
   from: string,
   to: string,
   activeBranchId: string,
 ): Promise<DatedQtyRow[]> {
-  let rows: TreatmentUsageRow[] = []
+  // Finished slots in range → exact visit dates even when usage.completed_at is wrong
+  const { data: slotRows } = await supabase
+    .from('client_session_slots')
+    .select('id, scheduled_date')
+    .eq('status', 'finished')
+    .gte('scheduled_date', from)
+    .lte('scheduled_date', to)
 
-  const byUsageDate = await supabase
-    .from('inventory_treatment_usage')
-    .select(
-      'id, branch_id, completed_at, usage_date, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
-    )
-    .gte('usage_date', from)
-    .lte('usage_date', to)
-    .order('usage_date', { ascending: true })
+  const slotDateById = new Map<string, string>()
+  for (const s of (slotRows as { id: string; scheduled_date: string }[] | null) ?? []) {
+    const d = dateKey(s.scheduled_date)
+    if (d) slotDateById.set(s.id, d)
+  }
+  const slotIds = [...slotDateById.keys()]
 
-  if (
-    byUsageDate.error &&
-    (byUsageDate.error.message.includes('usage_date') ||
-      byUsageDate.error.message.includes('schema cache'))
-  ) {
-    const legacy = await supabase
-      .from('inventory_treatment_usage')
-      .select(
-        'id, branch_id, completed_at, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
-      )
-      .gte('completed_at', `${from}T00:00:00`)
-      .lte('completed_at', `${to}T23:59:59.999`)
-      .order('completed_at', { ascending: true })
-    if (
-      legacy.error &&
-      (legacy.error.message.includes('inventory_treatment_usage') ||
-        legacy.error.message.includes('schema cache'))
-    ) {
-      return []
+  const selectWithEmbed =
+    'id, branch_id, completed_at, usage_date, session_slot_id, appointment_id, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted), client_session_slots(scheduled_date), appointments(appointment_date)'
+  const selectPlain =
+    'id, branch_id, completed_at, usage_date, session_slot_id, appointment_id, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)'
+
+  const byId = new Map<string, TreatmentUsageRow>()
+
+  async function absorb(query: PromiseLike<{ data: unknown; error: { message: string } | null }>) {
+    const res = await query
+    if (res.error) {
+      if (
+        res.error.message.includes('inventory_treatment_usage') ||
+        res.error.message.includes('schema cache') ||
+        res.error.message.includes('usage_date') ||
+        res.error.message.includes('client_session_slots') ||
+        res.error.message.includes('appointments') ||
+        res.error.message.includes('relationship')
+      ) {
+        return res.error.message
+      }
+      throw res.error
     }
-    if (legacy.error) throw legacy.error
-    rows = (legacy.data as TreatmentUsageRow[] | null) ?? []
-  } else if (byUsageDate.error) {
-    if (
-      byUsageDate.error.message.includes('inventory_treatment_usage') ||
-      byUsageDate.error.message.includes('schema cache')
-    ) {
-      return []
+    for (const row of (res.data as TreatmentUsageRow[] | null) ?? []) {
+      byId.set(row.id, row)
     }
-    throw byUsageDate.error
-  } else {
-    rows = (byUsageDate.data as TreatmentUsageRow[] | null) ?? []
-    const legacy = await supabase
-      .from('inventory_treatment_usage')
-      .select(
-        'id, branch_id, completed_at, usage_date, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
+    return null
+  }
+
+  // A) Usages linked to finished slots in this date range (primary — fixes Out=3 on save day)
+  if (slotIds.length) {
+    const chunkSize = 80
+    for (let i = 0; i < slotIds.length; i += chunkSize) {
+      const chunk = slotIds.slice(i, i + chunkSize)
+      const errMsg = await absorb(
+        supabase.from('inventory_treatment_usage').select(selectWithEmbed).in('session_slot_id', chunk),
       )
-      .gte('completed_at', `${from}T00:00:00`)
-      .lte('completed_at', `${to}T23:59:59.999`)
-      .order('completed_at', { ascending: true })
-    if (!legacy.error && legacy.data?.length) {
-      const seen = new Set(rows.map((r) => r.id))
-      for (const r of legacy.data as TreatmentUsageRow[]) {
-        if (!seen.has(r.id)) rows.push(r)
+      if (errMsg) {
+        await absorb(
+          supabase.from('inventory_treatment_usage').select(selectPlain).in('session_slot_id', chunk),
+        )
       }
     }
   }
 
+  // B) Rows stamped with usage_date in range
+  {
+    const errMsg = await absorb(
+      supabase
+        .from('inventory_treatment_usage')
+        .select(selectWithEmbed)
+        .gte('usage_date', from)
+        .lte('usage_date', to),
+    )
+    if (errMsg?.includes('usage_date') || errMsg?.includes('relationship')) {
+      // column / embed missing — ignore
+    } else if (errMsg) {
+      await absorb(
+        supabase
+          .from('inventory_treatment_usage')
+          .select(selectPlain)
+          .gte('usage_date', from)
+          .lte('usage_date', to),
+      )
+    }
+  }
+
+  // C) Legacy: completed_at in range (only used if visit date still resolves into range)
+  {
+    const errMsg = await absorb(
+      supabase
+        .from('inventory_treatment_usage')
+        .select(selectWithEmbed)
+        .gte('completed_at', `${from}T00:00:00`)
+        .lte('completed_at', `${to}T23:59:59.999`),
+    )
+    if (errMsg) {
+      await absorb(
+        supabase
+          .from('inventory_treatment_usage')
+          .select(selectPlain)
+          .gte('completed_at', `${from}T00:00:00`)
+          .lte('completed_at', `${to}T23:59:59.999`),
+      )
+    }
+  }
+
+  // Fill slot map for any extra session_slot_ids we loaded
+  const missingSlotIds = [...byId.values()]
+    .map((r) => r.session_slot_id)
+    .filter((id): id is string => Boolean(id) && !slotDateById.has(id))
+  if (missingSlotIds.length) {
+    const { data: extraSlots } = await supabase
+      .from('client_session_slots')
+      .select('id, scheduled_date')
+      .in('id', [...new Set(missingSlotIds)])
+    for (const s of (extraSlots as { id: string; scheduled_date: string }[] | null) ?? []) {
+      const d = dateKey(s.scheduled_date)
+      if (d) slotDateById.set(s.id, d)
+    }
+  }
+
   const out: DatedQtyRow[] = []
-  for (const row of rows) {
+  for (const row of byId.values()) {
     if (
       isUuid(activeBranchId) &&
       row.branch_id != null &&
@@ -295,8 +385,7 @@ async function fetchTreatmentUsageDatedLines(
     ) {
       continue
     }
-    // Visit date first (session scheduled_date), then save timestamp
-    const moveDate = dateKey(row.usage_date) || dateKey(row.completed_at)
+    const moveDate = visitDateFromUsage(row, slotDateById)
     if (!isDateInRange(moveDate, from, to)) continue
     for (const line of row.inventory_treatment_usage_lines ?? []) {
       out.push({

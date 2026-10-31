@@ -88,6 +88,7 @@ After setup.sql, also run (in order):
 41. `supabase/add_session_staff_incentives.sql` (**Session staff + incentives**) - `handled_by` / `incentive_amount` on slots; draft payouts with `source = session_finished`
 42. `supabase/add_auto_deduct_on_finished.sql` (**REQUIRED — auto deduct supplies**) - DB triggers: session Finished + appointment Completed → deduct `service_inventory` once per visit
 43. `supabase/fix_treatment_usage_date.sql` (**Stock Assessment Out by visit date**) - `usage_date` = session date (not save day); backfill + repair Finished sessions missing deducts. Run if Out is 0 on 29/30 but sessions are Finished.
+44. `supabase/fix_stock_assessment_visit_dates.sql` (**if Out=3 on Today / save day**) - force rewrite `usage_date` from session scheduled_date (Celebrity Drip 29/30/31)
 
 ### Itexmo SMS (after #38)
 
