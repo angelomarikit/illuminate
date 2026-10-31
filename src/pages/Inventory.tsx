@@ -941,10 +941,9 @@ export function Inventory() {
         <div className="panel-body">
           {usageRows.length === 0 ? (
             <div className="empty-state">
-              No automatic deductions yet. Link supplies above, then mark the treatment Completed
-              (calendar) or Finished (client sessions). Run{' '}
-              <code>add_treatment_supply_deduction.sql</code> and{' '}
-              <code>fix_treatment_supply_session_match.sql</code> if this stays empty.
+              No automatic deductions yet. Link supplies above, then mark Completed / Finished.
+              Run <code>add_auto_deduct_on_finished.sql</code> in Supabase so every Finished
+              session deducts stock automatically.
             </div>
           ) : (
             <div className="table-wrap">

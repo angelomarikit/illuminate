@@ -8,7 +8,6 @@ import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
 import { formatCurrency, isUuid } from '../lib/utils'
 import { syncSessionSlotAppointment } from '../lib/sessionAppointments'
-import { completeAppointmentWithSupplies } from '../lib/treatmentSupplies'
 import { supabase } from '../lib/supabase'
 import './SessionScheduleModal.css'
 
@@ -210,14 +209,6 @@ export function SessionScheduleModal({
     setSaving(true)
     setError('')
 
-    for (const slot of slots) {
-      if (slot.status === 'finished' && !slot.handledBy.trim()) {
-        setSaving(false)
-        setError(`Session ${slot.sessionNumber}: enter the staff who handled the client.`)
-        return
-      }
-    }
-
     const payload = slots.map((slot) => ({
       // Always send id — some production tables lack gen_random_uuid() default on id
       id: slot.id || crypto.randomUUID(),
@@ -299,11 +290,17 @@ export function SessionScheduleModal({
     }
 
     const deductNotes: string[] = []
+    const finishedCountSaved = slots.filter((s) => s.status === 'finished').length
+    if (finishedCountSaved > 0) {
+      deductNotes.push(
+        `${finishedCountSaved} finished session(s): linked supplies auto-deduct from inventory (once each).`,
+      )
+    }
     try {
       for (const slot of slots) {
         const slotId = slotsByNumber.get(slot.sessionNumber) || slot.id
         const handler = slot.handledBy.trim() || pkg.administered_by?.trim() || null
-        const appointmentId = await syncSessionSlotAppointment({
+        await syncSessionSlotAppointment({
           packageId: pkg.id,
           sessionNumber: slot.sessionNumber,
           customerName: pkg.customer_name,
@@ -317,30 +314,6 @@ export function SessionScheduleModal({
           customerPhone,
           customerEmail,
         })
-
-        if (slot.status === 'finished' && appointmentId) {
-          const result = await completeAppointmentWithSupplies(
-            appointmentId,
-            pkg.service_id && isUuid(pkg.service_id) ? pkg.service_id : null,
-          )
-          if (!result.ok) {
-            setSaving(false)
-            setError(
-              `Session ${slot.sessionNumber} saved, but inventory deduction failed:\n${result.error}`,
-            )
-            return
-          }
-          if (result.deducted) {
-            deductNotes.push(`Session ${slot.sessionNumber}: supplies deducted`)
-          } else if (result.message && !result.message.includes('already deducted')) {
-            if (
-              result.message.toLowerCase().includes('no supplies linked') ||
-              result.message.toLowerCase().includes('no catalog service')
-            ) {
-              deductNotes.push(result.message)
-            }
-          }
-        }
 
         const incentiveAmt = Math.max(0, Number(slot.incentiveAmount) || 0)
         if (slot.status === 'finished' && slotId && handler && incentiveAmt > 0) {
@@ -473,8 +446,8 @@ export function SessionScheduleModal({
 
           <p className="ssm-hint">
             Set a date for each visit and mark status as Pending, Scheduled, or Finished. Saving
-            updates remaining sessions on the package. Finished visits also deduct linked inventory
-            supplies (once per session).
+            updates remaining sessions. When you mark <strong>Finished</strong>, linked supplies
+            are deducted from inventory automatically (once per session).
           </p>
 
           {loading ? (

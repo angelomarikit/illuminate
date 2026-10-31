@@ -86,6 +86,7 @@ After setup.sql, also run (in order):
 39. `supabase/add_session_installments.sql` (**Package installment payments**) - `client_session_slots.payment_amount` / `attendant` / `sale_id` for client profile Installments UI wired to Sales Proof
 40. `supabase/add_customer_previous_records.sql` (**Previous records screenshots**) - migrate old-system history images onto Client Profile → Previous records
 41. `supabase/add_session_staff_incentives.sql` (**Session staff + incentives**) - `handled_by` / `incentive_amount` on slots; draft payouts with `source = session_finished`
+42. `supabase/add_auto_deduct_on_finished.sql` (**REQUIRED — auto deduct supplies**) - DB triggers: session Finished + appointment Completed → deduct `service_inventory` once per visit
 
 ### Itexmo SMS (after #38)
 
