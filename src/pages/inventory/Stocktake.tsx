@@ -381,6 +381,9 @@ export function Stocktake() {
       return
     }
 
+    // Drop service links so deleted supplies cannot reappear via treatment BOM Out
+    await supabase.from('service_inventory').delete().eq('inventory_item_id', deleteTarget.inventory_item_id)
+
     setMessage(`Deleted “${deleteTarget.name}” from inventory. Recorded in past stocktakes.`)
     setDeleteTarget(null)
     await load()

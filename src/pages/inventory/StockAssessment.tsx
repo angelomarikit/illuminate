@@ -207,191 +207,153 @@ async function fetchLinesChunked(
   return out
 }
 
-type TreatmentUsageRow = {
-  id: string
-  branch_id: string | null
-  completed_at: string
-  usage_date?: string | null
-  session_slot_id?: string | null
-  appointment_id?: string | null
-  inventory_treatment_usage_lines?:
-    | { id: string; inventory_item_id: string; qty_deducted: number }[]
-    | null
-  client_session_slots?: { scheduled_date: string | null } | { scheduled_date: string | null }[] | null
-  appointments?: { appointment_date: string | null } | { appointment_date: string | null }[] | null
-}
-
-function embedOne<T>(value: T | T[] | null | undefined): T | null {
-  if (!value) return null
-  return Array.isArray(value) ? value[0] ?? null : value
-}
-
-function visitDateFromUsage(
-  row: TreatmentUsageRow,
-  slotDateById: Map<string, string>,
-): string {
-  // 1) Session scheduled date (source of truth for package visits)
-  if (row.session_slot_id && slotDateById.has(row.session_slot_id)) {
-    return slotDateById.get(row.session_slot_id) || ''
-  }
-  const slot = embedOne(row.client_session_slots)
-  const fromSlot = dateKey(slot?.scheduled_date)
-  if (fromSlot) return fromSlot
-
-  // 2) Stored usage_date (after SQL fix)
-  const fromUsage = dateKey(row.usage_date)
-  if (fromUsage) return fromUsage
-
-  // 3) Appointment calendar date
-  const apt = embedOne(row.appointments)
-  const fromApt = dateKey(apt?.appointment_date)
-  if (fromApt) return fromApt
-
-  // 4) Last resort: when the row was written
-  return dateKey(row.completed_at)
-}
-
 /**
- * Treatment auto-deducts for Stock Assessment Out.
- * Visit day = session scheduled_date (29/30/31), NEVER the day staff clicked Save.
+ * Stock Assessment Out for treatments — computed from Client Sessions data:
+ * Finished slot on visit date × service_inventory BOM (e.g. Celebrity Drip → 1×1cc + 1×vial).
+ * Does NOT use inventory_treatment_usage timestamps (those were wrong when Save ≠ visit day).
  */
-async function fetchTreatmentUsageDatedLines(
+async function fetchFinishedSessionBomOut(
   from: string,
   to: string,
   activeBranchId: string,
 ): Promise<DatedQtyRow[]> {
-  // Finished slots in range → exact visit dates even when usage.completed_at is wrong
-  const { data: slotRows } = await supabase
+  const { data: slots, error: slotErr } = await supabase
     .from('client_session_slots')
-    .select('id, scheduled_date')
+    .select('id, package_id, scheduled_date, session_number')
     .eq('status', 'finished')
     .gte('scheduled_date', from)
     .lte('scheduled_date', to)
 
-  const slotDateById = new Map<string, string>()
-  for (const s of (slotRows as { id: string; scheduled_date: string }[] | null) ?? []) {
-    const d = dateKey(s.scheduled_date)
-    if (d) slotDateById.set(s.id, d)
-  }
-  const slotIds = [...slotDateById.keys()]
-
-  const selectWithEmbed =
-    'id, branch_id, completed_at, usage_date, session_slot_id, appointment_id, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted), client_session_slots(scheduled_date), appointments(appointment_date)'
-  const selectPlain =
-    'id, branch_id, completed_at, usage_date, session_slot_id, appointment_id, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)'
-
-  const byId = new Map<string, TreatmentUsageRow>()
-
-  async function absorb(query: PromiseLike<{ data: unknown; error: { message: string } | null }>) {
-    const res = await query
-    if (res.error) {
-      if (
-        res.error.message.includes('inventory_treatment_usage') ||
-        res.error.message.includes('schema cache') ||
-        res.error.message.includes('usage_date') ||
-        res.error.message.includes('client_session_slots') ||
-        res.error.message.includes('appointments') ||
-        res.error.message.includes('relationship')
-      ) {
-        return res.error.message
-      }
-      throw res.error
+  if (slotErr) {
+    if (
+      slotErr.message.includes('client_session_slots') ||
+      slotErr.message.includes('schema cache')
+    ) {
+      return []
     }
-    for (const row of (res.data as TreatmentUsageRow[] | null) ?? []) {
-      byId.set(row.id, row)
-    }
-    return null
+    throw slotErr
   }
 
-  // A) Usages linked to finished slots in this date range (primary — fixes Out=3 on save day)
-  if (slotIds.length) {
-    const chunkSize = 80
-    for (let i = 0; i < slotIds.length; i += chunkSize) {
-      const chunk = slotIds.slice(i, i + chunkSize)
-      const errMsg = await absorb(
-        supabase.from('inventory_treatment_usage').select(selectWithEmbed).in('session_slot_id', chunk),
-      )
-      if (errMsg) {
-        await absorb(
-          supabase.from('inventory_treatment_usage').select(selectPlain).in('session_slot_id', chunk),
-        )
-      }
+  const slotList =
+    ((slots as { id: string; package_id: string; scheduled_date: string; session_number: number }[] | null) ??
+      []
+    ).filter((s) => isDateInRange(s.scheduled_date, from, to))
+  if (!slotList.length) return []
+
+  const packageIds = [...new Set(slotList.map((s) => s.package_id))]
+  const { data: pkgs, error: pkgErr } = await supabase
+    .from('client_session_packages')
+    .select('id, service_id, service_name, branch_id')
+    .in('id', packageIds)
+  if (pkgErr) throw pkgErr
+
+  type Pkg = {
+    id: string
+    service_id: string | null
+    service_name: string
+    branch_id: string | null
+  }
+  const pkgById = new Map<string, Pkg>()
+  for (const p of (pkgs as Pkg[] | null) ?? []) {
+    // Null branch counts for active branch (same as treatment usage)
+    if (
+      isUuid(activeBranchId) &&
+      p.branch_id != null &&
+      p.branch_id !== activeBranchId
+    ) {
+      continue
     }
+    pkgById.set(p.id, p)
   }
 
-  // B) Rows stamped with usage_date in range
-  {
-    const errMsg = await absorb(
-      supabase
-        .from('inventory_treatment_usage')
-        .select(selectWithEmbed)
-        .gte('usage_date', from)
-        .lte('usage_date', to),
-    )
-    if (errMsg?.includes('usage_date') || errMsg?.includes('relationship')) {
-      // column / embed missing — ignore
-    } else if (errMsg) {
-      await absorb(
-        supabase
-          .from('inventory_treatment_usage')
-          .select(selectPlain)
-          .gte('usage_date', from)
-          .lte('usage_date', to),
-      )
+  const serviceIds = [
+    ...new Set(
+      [...pkgById.values()]
+        .map((p) => p.service_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ]
+  const namesNeedingLookup = [
+    ...new Set(
+      [...pkgById.values()]
+        .filter((p) => !p.service_id)
+        .map((p) => p.service_name.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ]
+
+  let nameToServiceId = new Map<string, string>()
+  if (namesNeedingLookup.length) {
+    const { data: svcRows } = await supabase.from('services').select('id, name').eq('active', true)
+    for (const s of (svcRows as { id: string; name: string }[] | null) ?? []) {
+      nameToServiceId.set(s.name.trim().toLowerCase(), s.id)
     }
   }
 
-  // C) Legacy: completed_at in range (only used if visit date still resolves into range)
-  {
-    const errMsg = await absorb(
-      supabase
-        .from('inventory_treatment_usage')
-        .select(selectWithEmbed)
-        .gte('completed_at', `${from}T00:00:00`)
-        .lte('completed_at', `${to}T23:59:59.999`),
-    )
-    if (errMsg) {
-      await absorb(
-        supabase
-          .from('inventory_treatment_usage')
-          .select(selectPlain)
-          .gte('completed_at', `${from}T00:00:00`)
-          .lte('completed_at', `${to}T23:59:59.999`),
-      )
+  const resolvedServiceIds = new Set(serviceIds)
+  for (const p of pkgById.values()) {
+    if (p.service_id) continue
+    const sid = nameToServiceId.get(p.service_name.trim().toLowerCase())
+    if (sid) {
+      p.service_id = sid
+      resolvedServiceIds.add(sid)
     }
   }
 
-  // Fill slot map for any extra session_slot_ids we loaded
-  const missingSlotIds = [...byId.values()]
-    .map((r) => r.session_slot_id)
-    .filter((id): id is string => Boolean(id) && !slotDateById.has(id))
-  if (missingSlotIds.length) {
-    const { data: extraSlots } = await supabase
-      .from('client_session_slots')
-      .select('id, scheduled_date')
-      .in('id', [...new Set(missingSlotIds)])
-    for (const s of (extraSlots as { id: string; scheduled_date: string }[] | null) ?? []) {
-      const d = dateKey(s.scheduled_date)
-      if (d) slotDateById.set(s.id, d)
+  if (!resolvedServiceIds.size) return []
+
+  const { data: links, error: linkErr } = await supabase
+    .from('service_inventory')
+    .select('service_id, inventory_item_id, qty_per_service')
+    .in('service_id', [...resolvedServiceIds])
+  if (linkErr) {
+    if (
+      linkErr.message.includes('service_inventory') ||
+      linkErr.message.includes('schema cache')
+    ) {
+      return []
+    }
+    throw linkErr
+  }
+
+  const bomByService = new Map<string, { inventory_item_id: string; qty: number }[]>()
+  const itemIds = new Set<string>()
+  for (const link of (links as
+    | { service_id: string; inventory_item_id: string; qty_per_service: number }[]
+    | null) ?? []) {
+    const qty = Math.max(0.01, Number(link.qty_per_service) || 1)
+    const list = bomByService.get(link.service_id) ?? []
+    list.push({ inventory_item_id: link.inventory_item_id, qty })
+    bomByService.set(link.service_id, list)
+    itemIds.add(link.inventory_item_id)
+  }
+
+  // Skip soft-deleted supplies so deleted items cannot "come back" on the sheet Out
+  const liveItemIds = new Set<string>()
+  if (itemIds.size) {
+    const { data: liveItems } = await supabase
+      .from('inventory_items')
+      .select('id')
+      .in('id', [...itemIds])
+      .is('deleted_at', null)
+    for (const i of (liveItems as { id: string }[] | null) ?? []) {
+      liveItemIds.add(i.id)
     }
   }
 
   const out: DatedQtyRow[] = []
-  for (const row of byId.values()) {
-    if (
-      isUuid(activeBranchId) &&
-      row.branch_id != null &&
-      row.branch_id !== activeBranchId
-    ) {
-      continue
-    }
-    const moveDate = visitDateFromUsage(row, slotDateById)
+  for (const slot of slotList) {
+    const pkg = pkgById.get(slot.package_id)
+    if (!pkg?.service_id) continue
+    const moveDate = dateKey(slot.scheduled_date)
     if (!isDateInRange(moveDate, from, to)) continue
-    for (const line of row.inventory_treatment_usage_lines ?? []) {
+    const bom = bomByService.get(pkg.service_id) ?? []
+    for (const line of bom) {
+      if (!liveItemIds.has(line.inventory_item_id)) continue
       out.push({
-        lineId: `tu:${line.id}`,
-        parentId: row.id,
-        qty: Number(line.qty_deducted) || 0,
+        lineId: `sessbom:${slot.id}:${line.inventory_item_id}`,
+        parentId: slot.id,
+        qty: line.qty,
         inventory_item_id: line.inventory_item_id,
         moveDate,
       })
@@ -588,9 +550,9 @@ export function StockAssessment() {
 
     const todayStr = toDateInput(new Date())
     const bKey = branchKeyFor(branchId)
-    // Snapshot range for this request — ignore stale responses after period changes
-    const from = rangeStart
-    const to = rangeEnd
+    // Snapshot range — always normalize so FROM > TO cannot empty the Out column
+    const from = rangeStart <= rangeEnd ? rangeStart : rangeEnd
+    const to = rangeStart <= rangeEnd ? rangeEnd : rangeStart
 
     const [
       { data: itemData, error: itemErr },
@@ -669,20 +631,21 @@ export function StockAssessment() {
       if (seq !== loadSeqRef.current) return
       stocktakeDeltas = stDeltas
 
-      const [recvSince, issuedSince, recvPeriod, issuedPeriod, treatSince, treatPeriod] =
+      const [recvSince, issuedSince, recvPeriod, issuedPeriod, sessBomSince, sessBomPeriod] =
         await Promise.all([
           fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvSinceHeaders),
           fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedSinceHeaders),
           fetchLinesChunked('inventory_receipt_lines', 'receipt_id', recvPeriodHeaders),
           fetchLinesChunked('inventory_issue_lines', 'issue_id', issuedPeriodHeaders),
-          fetchTreatmentUsageDatedLines(from, todayStr, branchId),
-          fetchTreatmentUsageDatedLines(from, to, branchId),
+          // Out from Finished sessions × linked BOM (Celebrity Drip → 1cc + vial)
+          fetchFinishedSessionBomOut(from, todayStr, branchId),
+          fetchFinishedSessionBomOut(from, to, branchId),
         ])
 
       recvSinceLines = recvSince
-      issuedSinceLines = [...issuedSince, ...treatSince]
+      issuedSinceLines = [...issuedSince, ...sessBomSince]
       recvPeriodLines = recvPeriod
-      issuedPeriodLines = [...issuedPeriod, ...treatPeriod]
+      issuedPeriodLines = [...issuedPeriod, ...sessBomPeriod]
 
       const linesByIssue = new Map<string, IssueLineRow[]>()
       for (const line of detailedLines) {
@@ -1297,10 +1260,10 @@ export function StockAssessment() {
             </div>
           </div>
           <p className="sa-hint">
-            In = receiving in this range only · Out = issued/used <em>and</em> treatment
-            auto-deducts on the <strong>visit date</strong> (session date), not the day you
-            clicked Save · Expected = Beginning + In − Out · Count = physical ending. Beginning =
-            last saved count before this range, or ledger opening.
+            In = receiving in this range only · Out = manual issues +{' '}
+            <strong>Finished</strong> client sessions × linked supplies (e.g. Celebrity Drip → 1×
+            1cc + 1× Celebrity Drip) on the <strong>session date</strong> · Expected = Beginning +
+            In − Out. Soft-deleted catalog items are excluded.
           </p>
         </div>
       </div>
@@ -1421,8 +1384,8 @@ export function StockAssessment() {
           )}
           <p className="sa-hint" style={{ marginTop: 12 }}>
             Enter Count, then press Enter or click outside (or Save counts). Status stays “Not
-            counted” until a count is entered — including 0. Out includes issues + treatment
-            auto-deducts dated{' '}
+            counted” until a count is entered — including 0. Out includes issues + Finished
+            sessions × linked BOM dated{' '}
             {rangeStart} → {rangeEnd}.
           </p>
         </div>
