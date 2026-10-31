@@ -208,46 +208,83 @@ async function fetchLinesChunked(
 }
 
 /**
- * Treatment auto-deducts (Finished session / Completed appointment) live in
- * inventory_treatment_usage — include them in Stock Assessment Out.
+ * Treatment auto-deducts (Finished session / Completed appointment).
+ * Prefer usage_date (visit day) over completed_at (when staff saved) so Out lands
+ * on Oct 29 / 30 even if all sessions were marked Finished on Oct 31.
  */
 async function fetchTreatmentUsageDatedLines(
   from: string,
   to: string,
   activeBranchId: string,
 ): Promise<DatedQtyRow[]> {
-  // Broad timestamptz window, then filter by calendar day in JS (same as issues)
-  const { data, error } = await supabase
+  // Prefer usage_date (visit day); merge completed_at window for legacy rows
+  const byUsageDate = await supabase
     .from('inventory_treatment_usage')
     .select(
-      'id, branch_id, completed_at, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
+      'id, branch_id, completed_at, usage_date, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
     )
-    .gte('completed_at', `${from}T00:00:00`)
-    .lte('completed_at', `${to}T23:59:59.999`)
-    .order('completed_at', { ascending: true })
+    .gte('usage_date', from)
+    .lte('usage_date', to)
+    .order('usage_date', { ascending: true })
 
-  if (error) {
+  let rows = byUsageDate.data
+  let err = byUsageDate.error
+
+  if (
+    err &&
+    (err.message.includes('usage_date') || err.message.includes('schema cache'))
+  ) {
+    const legacy = await supabase
+      .from('inventory_treatment_usage')
+      .select(
+        'id, branch_id, completed_at, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
+      )
+      .gte('completed_at', `${from}T00:00:00`)
+      .lte('completed_at', `${to}T23:59:59.999`)
+      .order('completed_at', { ascending: true })
+    rows = legacy.data
+    err = legacy.error
+  } else if (!err) {
+    const legacy = await supabase
+      .from('inventory_treatment_usage')
+      .select(
+        'id, branch_id, completed_at, usage_date, inventory_treatment_usage_lines(id, inventory_item_id, qty_deducted)',
+      )
+      .gte('completed_at', `${from}T00:00:00`)
+      .lte('completed_at', `${to}T23:59:59.999`)
+      .order('completed_at', { ascending: true })
+    if (!legacy.error && legacy.data?.length) {
+      const seen = new Set((rows as { id: string }[] | null)?.map((r) => r.id) ?? [])
+      const merged = [...((rows as { id: string }[] | null) ?? [])]
+      for (const r of legacy.data as { id: string }[]) {
+        if (!seen.has(r.id)) merged.push(r)
+      }
+      rows = merged
+    }
+  }
+
+  if (err) {
     if (
-      error.message.includes('inventory_treatment_usage') ||
-      error.message.includes('schema cache')
+      err.message.includes('inventory_treatment_usage') ||
+      err.message.includes('schema cache')
     ) {
       return []
     }
-    throw error
+    throw err
   }
 
   const out: DatedQtyRow[] = []
-  for (const row of (data as
+  for (const row of (rows as
     | {
         id: string
         branch_id: string | null
         completed_at: string
+        usage_date?: string | null
         inventory_treatment_usage_lines?:
           | { id: string; inventory_item_id: string; qty_deducted: number }[]
           | null
       }[]
     | null) ?? []) {
-    // Null branch_id still counts for the active branch (many finishes omit branch)
     if (
       isUuid(activeBranchId) &&
       row.branch_id != null &&
@@ -255,7 +292,8 @@ async function fetchTreatmentUsageDatedLines(
     ) {
       continue
     }
-    const moveDate = dateKey(row.completed_at)
+    // Visit date first (session scheduled_date), then save timestamp
+    const moveDate = dateKey(row.usage_date) || dateKey(row.completed_at)
     if (!isDateInRange(moveDate, from, to)) continue
     for (const line of row.inventory_treatment_usage_lines ?? []) {
       out.push({
@@ -1168,9 +1206,9 @@ export function StockAssessment() {
           </div>
           <p className="sa-hint">
             In = receiving in this range only · Out = issued/used <em>and</em> treatment
-            auto-deducts (Finished / Completed) in this range · Expected = Beginning + In − Out ·
-            Count = physical ending. Beginning = last saved count before this range, or ledger
-            opening (stocktake adjustments are not double-counted).
+            auto-deducts on the <strong>visit date</strong> (session date), not the day you
+            clicked Save · Expected = Beginning + In − Out · Count = physical ending. Beginning =
+            last saved count before this range, or ledger opening.
           </p>
         </div>
       </div>

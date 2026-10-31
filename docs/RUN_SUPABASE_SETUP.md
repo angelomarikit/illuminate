@@ -87,6 +87,7 @@ After setup.sql, also run (in order):
 40. `supabase/add_customer_previous_records.sql` (**Previous records screenshots**) - migrate old-system history images onto Client Profile → Previous records
 41. `supabase/add_session_staff_incentives.sql` (**Session staff + incentives**) - `handled_by` / `incentive_amount` on slots; draft payouts with `source = session_finished`
 42. `supabase/add_auto_deduct_on_finished.sql` (**REQUIRED — auto deduct supplies**) - DB triggers: session Finished + appointment Completed → deduct `service_inventory` once per visit
+43. `supabase/fix_treatment_usage_date.sql` (**Stock Assessment Out by visit date**) - `usage_date` = session date (not save day); backfill + repair Finished sessions missing deducts. Run if Out is 0 on 29/30 but sessions are Finished.
 
 ### Itexmo SMS (after #38)
 
