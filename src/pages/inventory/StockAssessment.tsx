@@ -207,6 +207,16 @@ async function fetchLinesChunked(
   return out
 }
 
+type TreatmentUsageRow = {
+  id: string
+  branch_id: string | null
+  completed_at: string
+  usage_date?: string | null
+  inventory_treatment_usage_lines?:
+    | { id: string; inventory_item_id: string; qty_deducted: number }[]
+    | null
+}
+
 /**
  * Treatment auto-deducts (Finished session / Completed appointment).
  * Prefer usage_date (visit day) over completed_at (when staff saved) so Out lands
@@ -217,7 +227,8 @@ async function fetchTreatmentUsageDatedLines(
   to: string,
   activeBranchId: string,
 ): Promise<DatedQtyRow[]> {
-  // Prefer usage_date (visit day); merge completed_at window for legacy rows
+  let rows: TreatmentUsageRow[] = []
+
   const byUsageDate = await supabase
     .from('inventory_treatment_usage')
     .select(
@@ -227,12 +238,10 @@ async function fetchTreatmentUsageDatedLines(
     .lte('usage_date', to)
     .order('usage_date', { ascending: true })
 
-  let rows = byUsageDate.data
-  let err = byUsageDate.error
-
   if (
-    err &&
-    (err.message.includes('usage_date') || err.message.includes('schema cache'))
+    byUsageDate.error &&
+    (byUsageDate.error.message.includes('usage_date') ||
+      byUsageDate.error.message.includes('schema cache'))
   ) {
     const legacy = await supabase
       .from('inventory_treatment_usage')
@@ -242,9 +251,25 @@ async function fetchTreatmentUsageDatedLines(
       .gte('completed_at', `${from}T00:00:00`)
       .lte('completed_at', `${to}T23:59:59.999`)
       .order('completed_at', { ascending: true })
-    rows = legacy.data
-    err = legacy.error
-  } else if (!err) {
+    if (
+      legacy.error &&
+      (legacy.error.message.includes('inventory_treatment_usage') ||
+        legacy.error.message.includes('schema cache'))
+    ) {
+      return []
+    }
+    if (legacy.error) throw legacy.error
+    rows = (legacy.data as TreatmentUsageRow[] | null) ?? []
+  } else if (byUsageDate.error) {
+    if (
+      byUsageDate.error.message.includes('inventory_treatment_usage') ||
+      byUsageDate.error.message.includes('schema cache')
+    ) {
+      return []
+    }
+    throw byUsageDate.error
+  } else {
+    rows = (byUsageDate.data as TreatmentUsageRow[] | null) ?? []
     const legacy = await supabase
       .from('inventory_treatment_usage')
       .select(
@@ -254,37 +279,15 @@ async function fetchTreatmentUsageDatedLines(
       .lte('completed_at', `${to}T23:59:59.999`)
       .order('completed_at', { ascending: true })
     if (!legacy.error && legacy.data?.length) {
-      const seen = new Set((rows as { id: string }[] | null)?.map((r) => r.id) ?? [])
-      const merged = [...((rows as { id: string }[] | null) ?? [])]
-      for (const r of legacy.data as { id: string }[]) {
-        if (!seen.has(r.id)) merged.push(r)
+      const seen = new Set(rows.map((r) => r.id))
+      for (const r of legacy.data as TreatmentUsageRow[]) {
+        if (!seen.has(r.id)) rows.push(r)
       }
-      rows = merged
     }
-  }
-
-  if (err) {
-    if (
-      err.message.includes('inventory_treatment_usage') ||
-      err.message.includes('schema cache')
-    ) {
-      return []
-    }
-    throw err
   }
 
   const out: DatedQtyRow[] = []
-  for (const row of (rows as
-    | {
-        id: string
-        branch_id: string | null
-        completed_at: string
-        usage_date?: string | null
-        inventory_treatment_usage_lines?:
-          | { id: string; inventory_item_id: string; qty_deducted: number }[]
-          | null
-      }[]
-    | null) ?? []) {
+  for (const row of rows) {
     if (
       isUuid(activeBranchId) &&
       row.branch_id != null &&
