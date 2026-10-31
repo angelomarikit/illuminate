@@ -105,8 +105,8 @@ export function Inventory() {
   const [form, setForm] = useState(emptyItem)
   const [adjustId, setAdjustId] = useState('')
   const [adjustQty, setAdjustQty] = useState('0')
-  const [linkItemId, setLinkItemId] = useState('')
-  const [linkServiceId, setLinkServiceId] = useState('')
+  const [linkItemIds, setLinkItemIds] = useState<string[]>([])
+  const [linkServiceIds, setLinkServiceIds] = useState<string[]>([])
   const [linkQty, setLinkQty] = useState('1')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -279,43 +279,64 @@ export function Inventory() {
     await load()
   }
 
+  function toggleLinkId(list: string[], id: string, next: boolean) {
+    if (next) return list.includes(id) ? list : [...list, id]
+    return list.filter((x) => x !== id)
+  }
+
+  async function upsertServiceInventoryLink(
+    serviceId: string,
+    itemId: string,
+    qty: number,
+  ): Promise<string | null> {
+    const payload = {
+      service_id: serviceId,
+      inventory_item_id: itemId,
+      qty_per_service: qty,
+    }
+    const { error: upsertErr } = await supabase.from('service_inventory').upsert(payload, {
+      onConflict: 'service_id,inventory_item_id',
+    })
+    if (!upsertErr) return null
+
+    const { data: existing } = await supabase
+      .from('service_inventory')
+      .select('id')
+      .eq('service_id', serviceId)
+      .eq('inventory_item_id', itemId)
+      .maybeSingle()
+    if (existing?.id) {
+      const { error: updErr } = await supabase
+        .from('service_inventory')
+        .update({ qty_per_service: qty })
+        .eq('id', existing.id)
+      return updErr?.message || null
+    }
+    const { error: insErr } = await supabase.from('service_inventory').insert(payload)
+    return insErr?.message || null
+  }
+
   async function onLink(e: FormEvent) {
     e.preventDefault()
-    if (!linkItemId || !linkServiceId) {
-      setError('Select a service and inventory item.')
+    if (!linkItemIds.length || !linkServiceIds.length) {
+      setError('Select at least one service and one inventory item (multi-select supported).')
       return
     }
     setSaving(true)
     setError('')
     const qty = Math.max(0.01, Number(linkQty) || 1)
-    const payload = {
-      service_id: linkServiceId,
-      inventory_item_id: linkItemId,
-      qty_per_service: qty,
-    }
-
     let errMsg = ''
-    const { error: upsertErr } = await supabase.from('service_inventory').upsert(payload, {
-      onConflict: 'service_id,inventory_item_id',
-    })
-    if (upsertErr) {
-      // Fallback when unique constraint / onConflict is missing on prod
-      const { data: existing } = await supabase
-        .from('service_inventory')
-        .select('id')
-        .eq('service_id', linkServiceId)
-        .eq('inventory_item_id', linkItemId)
-        .maybeSingle()
-      if (existing?.id) {
-        const { error: updErr } = await supabase
-          .from('service_inventory')
-          .update({ qty_per_service: qty })
-          .eq('id', existing.id)
-        if (updErr) errMsg = updErr.message
-      } else {
-        const { error: insErr } = await supabase.from('service_inventory').insert(payload)
-        errMsg = insErr?.message || ''
+    let saved = 0
+    for (const serviceId of linkServiceIds) {
+      for (const itemId of linkItemIds) {
+        const fail = await upsertServiceInventoryLink(serviceId, itemId, qty)
+        if (fail) {
+          errMsg = fail
+          break
+        }
+        saved += 1
       }
+      if (errMsg) break
     }
 
     setSaving(false)
@@ -329,12 +350,12 @@ export function Inventory() {
       )
       return
     }
-    const svcLabel = services.find((s) => s.id === linkServiceId)?.name || 'service'
-    const itemLabel = rows.find((i) => i.id === linkItemId)?.name || 'item'
     setLinkQty('1')
+    setLinkItemIds([])
+    setLinkServiceIds([])
     setMode('none')
     setMessage(
-      `Linked ${qty} × ${itemLabel} → ${svcLabel}. Deducted when that treatment is Completed or a package session is marked Finished.`,
+      `Linked ${saved} supply pairing(s) at ${qty} each. Stock deducts when those services are Completed / Finished.`,
     )
     await load()
   }
@@ -636,71 +657,149 @@ export function Inventory() {
       {mode === 'link' ? (
         <div className="panel" style={{ marginBottom: 16 }}>
           <div className="panel-header">
-            <h2 className="panel-title">Link item to clinic service</h2>
+            <h2 className="panel-title">Link supplies ↔ services (multi)</h2>
           </div>
           <div className="panel-body">
             <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '0.88rem' }}>
-              Set how much of each supply a treatment uses. Stock deducts automatically when an
-              appointment is <strong>Completed</strong> or a Client Sessions visit is marked{' '}
-              <strong>Finished</strong> (once per visit). Re-linking the same item updates the
-              quantity.
+              Select <strong>one or more</strong> inventory items and <strong>one or more</strong>{' '}
+              services (e.g. Botox + Facial promo / Halloween promo). Every selected pair is linked
+              at the same qty. Stock deducts automatically when that service is{' '}
+              <strong>Completed</strong> or a session is <strong>Finished</strong>.
             </p>
-            <form
-              onSubmit={(e) => void onLink(e)}
-              style={{
-                display: 'grid',
-                gap: 12,
-                gridTemplateColumns: '1fr 1fr 120px auto',
-                alignItems: 'end',
-              }}
-            >
-              <div className="field">
-                <label>Inventory item</label>
-                <select
-                  className="select"
-                  required
-                  value={linkItemId}
-                  onChange={(e) => setLinkItemId(e.target.value)}
+            <form onSubmit={(e) => void onLink(e)} style={{ display: 'grid', gap: 14 }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  gridTemplateColumns: '1fr 1fr',
+                  alignItems: 'start',
+                }}
+              >
+                <div className="field">
+                  <label>
+                    Inventory items ({linkItemIds.length} selected)
+                  </label>
+                  <div
+                    style={{
+                      maxHeight: 220,
+                      overflow: 'auto',
+                      border: '1px solid var(--line)',
+                      borderRadius: 12,
+                      padding: 8,
+                      display: 'grid',
+                      gap: 6,
+                    }}
+                  >
+                    {rows.map((item) => {
+                      const checked = linkItemIds.includes(item.id)
+                      return (
+                        <label
+                          key={item.id}
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'center',
+                            fontSize: '0.88rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setLinkItemIds((prev) =>
+                                toggleLinkId(prev, item.id, e.target.checked),
+                              )
+                            }
+                          />
+                          <span>
+                            {item.name}{' '}
+                            <span style={{ color: 'var(--muted)' }}>
+                              ({item.stock} {item.unit})
+                            </span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="field">
+                  <label>
+                    Services / promos ({linkServiceIds.length} selected)
+                  </label>
+                  <div
+                    style={{
+                      maxHeight: 220,
+                      overflow: 'auto',
+                      border: '1px solid var(--line)',
+                      borderRadius: 12,
+                      padding: 8,
+                      display: 'grid',
+                      gap: 6,
+                    }}
+                  >
+                    {services.map((svc) => {
+                      const checked = linkServiceIds.includes(svc.id)
+                      return (
+                        <label
+                          key={svc.id}
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'center',
+                            fontSize: '0.88rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setLinkServiceIds((prev) =>
+                                toggleLinkId(prev, svc.id, e.target.checked),
+                              )
+                            }
+                          />
+                          <span>
+                            {svc.name}{' '}
+                            <span style={{ color: 'var(--muted)' }}>· {svc.category}</span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  gridTemplateColumns: '140px auto',
+                  alignItems: 'end',
+                }}
+              >
+                <div className="field">
+                  <label>Qty per service</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0.01}
+                    step="0.01"
+                    required
+                    value={linkQty}
+                    onChange={(e) => setLinkQty(e.target.value)}
+                  />
+                </div>
+                <button
+                  className="btn btn-primary"
+                  type="submit"
+                  disabled={saving || !linkItemIds.length || !linkServiceIds.length}
                 >
-                  <option value="">Select item</option>
-                  {rows.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                  {saving
+                    ? 'Saving…'
+                    : `Link ${linkItemIds.length * linkServiceIds.length || 0} pair(s)`}
+                </button>
               </div>
-              <div className="field">
-                <label>Service</label>
-                <select
-                  className="select"
-                  required
-                  value={linkServiceId}
-                  onChange={(e) => setLinkServiceId(e.target.value)}
-                >
-                  <option value="">Select service</option>
-                  {services.map((svc) => (
-                    <option key={svc.id} value={svc.id}>
-                      {svc.name} · {svc.category}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Qty / service</label>
-                <input
-                  className="input"
-                  type="number"
-                  min={0.01}
-                  step="0.01"
-                  required
-                  value={linkQty}
-                  onChange={(e) => setLinkQty(e.target.value)}
-                />
-              </div>
-              <button className="btn btn-primary" type="submit" disabled={saving}>
-                {saving ? 'Saving...' : 'Link'}
-              </button>
             </form>
           </div>
         </div>

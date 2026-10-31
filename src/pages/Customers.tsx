@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { Pencil, Search, Trash2, X } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { AvailServiceModal } from '../components/AvailServiceModal'
+import { ClientPreviousRecordsPanel } from '../components/ClientPreviousRecordsPanel'
 import { ClientRecordsPanel } from '../components/ClientRecordsPanel'
 import { ClientsSubnav } from '../components/ClientsSubnav'
 import { MembershipBadge } from '../components/MembershipBadge'
@@ -191,7 +192,7 @@ export function Customers() {
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [profileModalOpen, setProfileModalOpen] = useState(false)
-  const [profileTab, setProfileTab] = useState<'records' | 'intake'>('records')
+  const [profileTab, setProfileTab] = useState<'records' | 'history' | 'intake'>('records')
   const [recordsRefreshKey, setRecordsRefreshKey] = useState(0)
   const [availOpen, setAvailOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
@@ -464,7 +465,7 @@ export function Customers() {
       <PageHeader
         kicker="Clients"
         title="Clients list"
-        subtitle="Clean client profiles with membership, wallet, sessions, and consent forms."
+        subtitle="Client profiles with membership, sessions, previous-record screenshots, and intake."
         actions={
           <button
             className="btn btn-primary"
@@ -828,6 +829,15 @@ export function Customers() {
               <button
                 type="button"
                 role="tab"
+                aria-selected={profileTab === 'history'}
+                className={`crm-profile-tab ${profileTab === 'history' ? 'is-active' : ''}`}
+                onClick={() => setProfileTab('history')}
+              >
+                Previous records
+              </button>
+              <button
+                type="button"
+                role="tab"
                 aria-selected={profileTab === 'intake'}
                 className={`crm-profile-tab ${profileTab === 'intake' ? 'is-active' : ''}`}
                 onClick={() => setProfileTab('intake')}
@@ -844,6 +854,13 @@ export function Customers() {
                   membership={selected.membership}
                   membershipExpiresAt={selected.membershipExpiresAt}
                   refreshKey={recordsRefreshKey}
+                />
+              ) : null}
+
+              {profileTab === 'history' ? (
+                <ClientPreviousRecordsPanel
+                  customerId={selected.id}
+                  customerName={selected.name}
                 />
               ) : null}
 

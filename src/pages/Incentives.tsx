@@ -27,7 +27,7 @@ type Payout = {
   computed_amount: number
   adjustment: number
   final_amount: number
-  source: 'manual' | 'pos_sales_by'
+  source: 'manual' | 'pos_sales_by' | 'session_finished'
   status: 'draft' | 'approved' | 'paid'
   notes: string | null
 }
@@ -524,7 +524,13 @@ export function Incentives() {
                           <td>
                             <strong>{formatCurrency(p.final_amount)}</strong>
                           </td>
-                          <td>{p.source === 'pos_sales_by' ? 'POS Sales by' : 'Manual'}</td>
+                          <td>
+                            {p.source === 'pos_sales_by'
+                              ? 'POS Sales by'
+                              : p.source === 'session_finished'
+                                ? 'Session finished'
+                                : 'Manual'}
+                          </td>
                           <td>
                             <span className="badge">{p.status}</span>
                           </td>

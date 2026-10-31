@@ -146,6 +146,16 @@
   font-size: 0.72rem;
 }
 
+.ssm-slot-staff {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1.4fr 0.8fr;
+  gap: 12px;
+  align-items: end;
+  padding-top: 4px;
+  border-top: 1px dashed var(--line, #e8e8e8);
+}
+
 .ssm-staff {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -206,8 +216,13 @@
     grid-template-columns: 1fr 1fr;
   }
 
-  .ssm-slot-notes {
+  .ssm-slot-notes,
+  .ssm-slot-staff {
     grid-column: 1 / -1;
+  }
+
+  .ssm-slot-staff {
+    grid-template-columns: 1fr;
   }
 }
 

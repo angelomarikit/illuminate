@@ -15,6 +15,7 @@ type PackageRow = {
   id: string
   customer_id: string | null
   customer_name: string
+  service_id?: string | null
   service_name: string
   total_sessions: number
   sessions_used: number
@@ -107,6 +108,7 @@ export function ClientRecordsPanel({
       id: pkg.id,
       customer_id: pkg.customer_id,
       customer_name: pkg.customer_name || customerName,
+      service_id: pkg.service_id ?? null,
       service_name: pkg.service_name,
       total_sessions: pkg.total_sessions,
       sessions_used: pkg.sessions_used,
@@ -132,7 +134,7 @@ export function ClientRecordsPanel({
       supabase
         .from('client_session_packages')
         .select(
-          'id, customer_id, customer_name, service_name, total_sessions, sessions_used, package_amount, discount_amount, sold_on, next_session_date, sale_receipt_no, doctor_notes, administered_by, consult_by, sales_by, notes, status, branch_id',
+          'id, customer_id, customer_name, service_id, service_name, total_sessions, sessions_used, package_amount, discount_amount, sold_on, next_session_date, sale_receipt_no, doctor_notes, administered_by, consult_by, sales_by, notes, status, branch_id',
         )
         .eq('customer_id', customerId)
         .order('sold_on', { ascending: false }),

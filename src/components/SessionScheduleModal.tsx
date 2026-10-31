@@ -2,12 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { CalendarDays, X } from 'lucide-react'
 import { CareNotesPanel } from './CareNotesPanel'
 import { MembershipBadge } from './MembershipBadge'
+import { StaffAssignField } from './StaffAssignField'
 import { StatusMessage } from './StatusMessage'
+import { useAuth } from '../context/AuthContext'
+import { useBranch } from '../context/BranchContext'
 import { formatCurrency, isUuid } from '../lib/utils'
 import { syncSessionSlotAppointment } from '../lib/sessionAppointments'
 import { completeAppointmentWithSupplies } from '../lib/treatmentSupplies'
 import { supabase } from '../lib/supabase'
 import './SessionScheduleModal.css'
+
+type ProfileOption = { id: string; full_name: string; role?: string }
 
 export type SessionPackageForModal = {
   id: string
@@ -39,6 +44,8 @@ type SlotDraft = {
   scheduledTime: string
   status: SessionSlotStatus
   notes: string
+  handledBy: string
+  incentiveAmount: string
 }
 
 type MembershipInfo = {
@@ -64,7 +71,7 @@ const STATUS_OPTIONS: { value: SessionSlotStatus; label: string }[] = [
   { value: 'no_show', label: 'No show' },
 ]
 
-function emptySlots(total: number, used: number): SlotDraft[] {
+function emptySlots(total: number, used: number, defaultHandler = ''): SlotDraft[] {
   return Array.from({ length: Math.max(1, total) }, (_, i) => {
     const n = i + 1
     return {
@@ -74,6 +81,8 @@ function emptySlots(total: number, used: number): SlotDraft[] {
       scheduledTime: '',
       status: n <= used ? ('finished' as const) : ('pending' as const),
       notes: '',
+      handledBy: defaultHandler,
+      incentiveAmount: '',
     }
   })
 }
@@ -87,7 +96,10 @@ export function SessionScheduleModal({
   onSaveDoctorNotes,
   savingNotes,
 }: Props) {
+  const { user } = useAuth()
+  const { branchId } = useBranch()
   const [slots, setSlots] = useState<SlotDraft[]>([])
+  const [profiles, setProfiles] = useState<ProfileOption[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -99,42 +111,72 @@ export function SessionScheduleModal({
     async function load() {
       setLoading(true)
       setError('')
-      const { data, error: err } = await supabase
-        .from('client_session_slots')
-        .select('id, session_number, scheduled_date, scheduled_time, status, notes')
-        .eq('package_id', pkg.id)
-        .order('session_number')
+      const [{ data, error: err }, { data: profileRows }] = await Promise.all([
+        supabase
+          .from('client_session_slots')
+          .select(
+            'id, session_number, scheduled_date, scheduled_time, status, notes, handled_by, incentive_amount',
+          )
+          .eq('package_id', pkg.id)
+          .order('session_number'),
+        supabase
+          .from('profiles')
+          .select('id, full_name, role')
+          .in('role', ['Owner', 'Admin', 'Receptionist', 'Staff', 'Inventory', 'HR'])
+          .order('full_name'),
+      ])
 
       if (cancelled) return
 
+      setProfiles((profileRows as ProfileOption[] | null) ?? [])
+      const defaultHandler = pkg.administered_by?.trim() || ''
+
       if (err) {
-        if (
+        if (err.message.includes('handled_by') || err.message.includes('incentive_amount')) {
+          setError(
+            `${err.message} — run supabase/add_session_staff_incentives.sql in Supabase.`,
+          )
+        } else if (
           err.message.includes('client_session_slots') ||
           err.message.includes('schema cache')
         ) {
           setError(`${err.message} — run supabase/add_client_session_slots.sql in Supabase.`)
-          setSlots(emptySlots(pkg.total_sessions, pkg.sessions_used))
         } else {
           setError(err.message)
-          setSlots(emptySlots(pkg.total_sessions, pkg.sessions_used))
         }
+        setSlots(emptySlots(pkg.total_sessions, pkg.sessions_used, defaultHandler))
       } else if (!data?.length) {
-        setSlots(emptySlots(pkg.total_sessions, pkg.sessions_used))
+        setSlots(emptySlots(pkg.total_sessions, pkg.sessions_used, defaultHandler))
       } else {
         const byNum = new Map(data.map((row) => [row.session_number as number, row]))
         const total = Math.max(pkg.total_sessions, data.length)
         setSlots(
           Array.from({ length: total }, (_, i) => {
             const n = i + 1
-            const row = byNum.get(n)
+            const row = byNum.get(n) as
+              | {
+                  id?: string
+                  scheduled_date?: string
+                  scheduled_time?: string
+                  status?: string
+                  notes?: string
+                  handled_by?: string | null
+                  incentive_amount?: number | null
+                }
+              | undefined
             const timeRaw = row?.scheduled_time ? String(row.scheduled_time) : ''
+            const incentive = Number(row?.incentive_amount ?? 0)
             return {
-              id: (row?.id as string) ?? null,
+              id: row?.id ?? null,
               sessionNumber: n,
               scheduledDate: row?.scheduled_date ? String(row.scheduled_date).slice(0, 10) : '',
               scheduledTime: timeRaw ? timeRaw.slice(0, 5) : '',
-              status: (row?.status as SessionSlotStatus) || (n <= pkg.sessions_used ? 'finished' : 'pending'),
-              notes: (row?.notes as string) ?? '',
+              status:
+                (row?.status as SessionSlotStatus) ||
+                (n <= pkg.sessions_used ? 'finished' : 'pending'),
+              notes: row?.notes ?? '',
+              handledBy: (row?.handled_by as string) || defaultHandler,
+              incentiveAmount: incentive > 0 ? String(incentive) : '',
             }
           }),
         )
@@ -146,7 +188,7 @@ export function SessionScheduleModal({
     return () => {
       cancelled = true
     }
-  }, [open, pkg.id, pkg.total_sessions, pkg.sessions_used])
+  }, [open, pkg.id, pkg.total_sessions, pkg.sessions_used, pkg.administered_by])
 
   const finishedCount = useMemo(
     () => slots.filter((s) => s.status === 'finished').length,
@@ -168,6 +210,14 @@ export function SessionScheduleModal({
     setSaving(true)
     setError('')
 
+    for (const slot of slots) {
+      if (slot.status === 'finished' && !slot.handledBy.trim()) {
+        setSaving(false)
+        setError(`Session ${slot.sessionNumber}: enter the staff who handled the client.`)
+        return
+      }
+    }
+
     const payload = slots.map((slot) => ({
       // Always send id — some production tables lack gen_random_uuid() default on id
       id: slot.id || crypto.randomUUID(),
@@ -177,22 +227,41 @@ export function SessionScheduleModal({
       scheduled_time: slot.scheduledTime ? `${slot.scheduledTime}:00` : null,
       status: slot.status,
       notes: slot.notes.trim() || null,
+      handled_by: slot.handledBy.trim() || null,
+      incentive_amount: Math.max(0, Number(slot.incentiveAmount) || 0),
       updated_at: new Date().toISOString(),
     }))
 
-    const { error: upsertErr } = await supabase.from('client_session_slots').upsert(payload, {
-      onConflict: 'package_id,session_number',
-    })
+    const { data: upserted, error: upsertErr } = await supabase
+      .from('client_session_slots')
+      .upsert(payload, { onConflict: 'package_id,session_number' })
+      .select('id, session_number, handled_by, incentive_amount, status, scheduled_date')
 
     if (upsertErr) {
       setSaving(false)
       setError(
-        upsertErr.message.includes('client_session_slots') || upsertErr.message.includes('schema cache')
-          ? `${upsertErr.message} — run supabase/add_client_session_slots.sql in Supabase.`
-          : upsertErr.message,
+        upsertErr.message.includes('handled_by') || upsertErr.message.includes('incentive_amount')
+          ? `${upsertErr.message} — run supabase/add_session_staff_incentives.sql in Supabase.`
+          : upsertErr.message.includes('client_session_slots') ||
+              upsertErr.message.includes('schema cache')
+            ? `${upsertErr.message} — run supabase/add_client_session_slots.sql in Supabase.`
+            : upsertErr.message,
       )
       return
     }
+
+    const slotsByNumber = new Map(
+      ((upserted as { id: string; session_number: number }[] | null) ?? []).map((row) => [
+        row.session_number,
+        row.id,
+      ]),
+    )
+    setSlots((prev) =>
+      prev.map((slot) => ({
+        ...slot,
+        id: slotsByNumber.get(slot.sessionNumber) || slot.id,
+      })),
+    )
 
     const nextDate =
       slots
@@ -232,12 +301,14 @@ export function SessionScheduleModal({
     const deductNotes: string[] = []
     try {
       for (const slot of slots) {
+        const slotId = slotsByNumber.get(slot.sessionNumber) || slot.id
+        const handler = slot.handledBy.trim() || pkg.administered_by?.trim() || null
         const appointmentId = await syncSessionSlotAppointment({
           packageId: pkg.id,
           sessionNumber: slot.sessionNumber,
           customerName: pkg.customer_name,
           serviceName: pkg.service_name,
-          staffName: pkg.administered_by,
+          staffName: handler,
           scheduledDate: slot.scheduledDate || null,
           scheduledTime: slot.scheduledTime || null,
           status: slot.status,
@@ -262,11 +333,57 @@ export function SessionScheduleModal({
           if (result.deducted) {
             deductNotes.push(`Session ${slot.sessionNumber}: supplies deducted`)
           } else if (result.message && !result.message.includes('already deducted')) {
-            // Surface “no supplies linked” once so staff know to link in Inventory
-            if (result.message.toLowerCase().includes('no supplies linked') ||
-              result.message.toLowerCase().includes('no catalog service')) {
+            if (
+              result.message.toLowerCase().includes('no supplies linked') ||
+              result.message.toLowerCase().includes('no catalog service')
+            ) {
               deductNotes.push(result.message)
             }
+          }
+        }
+
+        const incentiveAmt = Math.max(0, Number(slot.incentiveAmount) || 0)
+        if (slot.status === 'finished' && slotId && handler && incentiveAmt > 0) {
+          const visitDate = slot.scheduledDate || new Date().toISOString().slice(0, 10)
+          const profileId = profiles.find((p) => p.full_name === handler)?.id ?? null
+          const payout = {
+            branch_id:
+              pkg.branch_id && isUuid(pkg.branch_id)
+                ? pkg.branch_id
+                : isUuid(branchId)
+                  ? branchId
+                  : null,
+            profile_id: profileId,
+            staff_name: handler,
+            incentive_type: 'service_commission' as const,
+            period_start: visitDate,
+            period_end: visitDate,
+            sales_amount: 0,
+            computed_amount: incentiveAmt,
+            adjustment: 0,
+            final_amount: incentiveAmt,
+            source: 'session_finished',
+            status: 'draft',
+            notes: `${pkg.service_name} · Session ${slot.sessionNumber} · ${pkg.customer_name}`,
+            session_slot_id: slotId,
+            created_by: user?.id && isUuid(user.id) ? user.id : null,
+          }
+          const { data: existingInc } = await supabase
+            .from('incentive_payouts')
+            .select('id')
+            .eq('session_slot_id', slotId)
+            .maybeSingle()
+          const { error: incErr } = existingInc?.id
+            ? await supabase.from('incentive_payouts').update(payout).eq('id', existingInc.id)
+            : await supabase.from('incentive_payouts').insert(payout)
+          if (incErr) {
+            deductNotes.push(
+              `Session ${slot.sessionNumber}: incentive not saved — run supabase/add_session_staff_incentives.sql (${incErr.message})`,
+            )
+          } else {
+            deductNotes.push(
+              `Session ${slot.sessionNumber}: ₱${incentiveAmt.toLocaleString('en-PH')} incentive draft for ${handler}`,
+            )
           }
         }
       }
@@ -437,6 +554,36 @@ export function SessionScheduleModal({
                           updateSlot(slot.sessionNumber, { notes: e.target.value })
                         }
                       />
+                    </div>
+                    <div className="ssm-slot-staff">
+                      <StaffAssignField
+                        compact
+                        label="Handled by (staff)"
+                        value={slot.handledBy}
+                        profiles={profiles}
+                        required={slot.status === 'finished'}
+                        onChange={(value) =>
+                          updateSlot(slot.sessionNumber, { handledBy: value })
+                        }
+                      />
+                      <div className="field">
+                        <label htmlFor={`slot-incentive-${slot.sessionNumber}`}>
+                          Incentive ₱ (optional)
+                        </label>
+                        <input
+                          id={`slot-incentive-${slot.sessionNumber}`}
+                          className="input"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          disabled={saving}
+                          placeholder="0"
+                          value={slot.incentiveAmount}
+                          onChange={(e) =>
+                            updateSlot(slot.sessionNumber, { incentiveAmount: e.target.value })
+                          }
+                        />
+                      </div>
                     </div>
                   </div>
                 </article>

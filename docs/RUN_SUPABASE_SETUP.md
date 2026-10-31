@@ -84,6 +84,8 @@ After setup.sql, also run (in order):
 37. `supabase/add_inventory_persistence.sql` (**Inventory catalog prices + Stock Assessment endings**) - `inventory_items.unit_cost` / `selling_price`, plus `inventory_assessment_endings` so Ending Inventory survives refresh
 38. `supabase/add_sms_reminders.sql` (**Itexmo SMS confirmations & reminders**) - `sms_settings` + `sms_logs` for Owner/Admin SMS Reminders page
 39. `supabase/add_session_installments.sql` (**Package installment payments**) - `client_session_slots.payment_amount` / `attendant` / `sale_id` for client profile Installments UI wired to Sales Proof
+40. `supabase/add_customer_previous_records.sql` (**Previous records screenshots**) - migrate old-system history images onto Client Profile → Previous records
+41. `supabase/add_session_staff_incentives.sql` (**Session staff + incentives**) - `handled_by` / `incentive_amount` on slots; draft payouts with `source = session_finished`
 
 ### Itexmo SMS (after #38)
 
