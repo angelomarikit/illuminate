@@ -141,7 +141,8 @@ export function ClientPreviousRecordsPanel({ customerId, customerName }: Props) 
 
   return (
     <div className="cpr-panel">
-      <StatusMessage error={error} message={message} />
+      {error ? <StatusMessage type="error">{error}</StatusMessage> : null}
+      {message ? <StatusMessage type="success">{message}</StatusMessage> : null}
 
       <section className="cpr-intro">
         <h3>Previous records (old system)</h3>

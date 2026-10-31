@@ -969,7 +969,7 @@ export function Appointments() {
     if (status === 'completed') {
       setError('')
       const result = await completeAppointmentWithSupplies(id)
-      if (!result.ok) {
+      if (result.ok === false) {
         setError(result.error)
         return
       }
@@ -995,7 +995,7 @@ export function Appointments() {
     setError('')
     const result = await completeAppointmentWithSupplies(editingId)
     setSaving(false)
-    if (!result.ok) {
+    if (result.ok === false) {
       setError(result.error)
       return
     }
