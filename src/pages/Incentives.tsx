@@ -32,13 +32,57 @@ type Payout = {
   notes: string | null
 }
 type ProfileOpt = { id: string; full_name: string }
+type PeriodPreset = 'daily' | 'weekly' | 'monthly' | 'custom'
 
-function monthBounds(isoMonth: string) {
-  const [y, m] = isoMonth.split('-').map(Number)
-  const start = `${isoMonth}-01`
-  const endDate = new Date(y, m, 0)
-  const end = `${isoMonth}-${String(endDate.getDate()).padStart(2, '0')}`
-  return { start, end }
+function toDateInput(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function startOfWeek(d: Date) {
+  const x = new Date(d)
+  const day = x.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  x.setDate(x.getDate() + diff)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
+
+function endOfWeek(d: Date) {
+  const start = startOfWeek(d)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 6)
+  return end
+}
+
+function startOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1)
+}
+
+function endOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0)
+}
+
+function formatRangeLabel(start: string, end: string) {
+  if (start === end) {
+    return new Date(`${start}T12:00:00`).toLocaleDateString('en-PH', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }
+  const a = new Date(`${start}T12:00:00`).toLocaleDateString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+  })
+  const b = new Date(`${end}T12:00:00`).toLocaleDateString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+  return `${a} – ${b}`
 }
 
 const TYPE_LABEL: Record<IncentiveType, string> = {
@@ -51,7 +95,10 @@ export function Incentives() {
   const { user } = useAuth()
   const { branchId } = useBranch()
   const [tab, setTab] = useState<'payouts' | 'rules'>('payouts')
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [preset, setPreset] = useState<PeriodPreset>('monthly')
+  const [rangeStart, setRangeStart] = useState(() => toDateInput(startOfMonth(new Date())))
+  const [rangeEnd, setRangeEnd] = useState(() => toDateInput(endOfMonth(new Date())))
+  const [staffFilter, setStaffFilter] = useState('')
   const [rules, setRules] = useState<Rule[]>([])
   const [payouts, setPayouts] = useState<Payout[]>([])
   const [profiles, setProfiles] = useState<ProfileOpt[]>([])
@@ -74,20 +121,41 @@ export function Incentives() {
     notes: '',
   })
 
-  const { start, end } = useMemo(() => monthBounds(month), [month])
+  const start = rangeStart <= rangeEnd ? rangeStart : rangeEnd
+  const end = rangeStart <= rangeEnd ? rangeEnd : rangeStart
+
+  function applyPreset(next: PeriodPreset) {
+    const now = new Date()
+    setPreset(next)
+    if (next === 'daily') {
+      const d = toDateInput(now)
+      setRangeStart(d)
+      setRangeEnd(d)
+    } else if (next === 'weekly') {
+      setRangeStart(toDateInput(startOfWeek(now)))
+      setRangeEnd(toDateInput(endOfWeek(now)))
+    } else if (next === 'monthly') {
+      setRangeStart(toDateInput(startOfMonth(now)))
+      setRangeEnd(toDateInput(endOfMonth(now)))
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
+    // Overlap: payout period intersects selected range
+    let payQ = supabase
+      .from('incentive_payouts')
+      .select('*')
+      .lte('period_start', end)
+      .gte('period_end', start)
+      .order('staff_name')
+      .order('period_start', { ascending: false })
+
     const [{ data: ruleData, error: ruleErr }, { data: payData }, { data: prof }] =
       await Promise.all([
         supabase.from('incentive_rules').select('*').order('name'),
-        supabase
-          .from('incentive_payouts')
-          .select('*')
-          .gte('period_start', start)
-          .lte('period_end', end)
-          .order('staff_name'),
+        payQ,
         supabase
           .from('profiles')
           .select('id, full_name')
@@ -290,7 +358,7 @@ export function Incentives() {
 
     if (!inserts.length) {
       setSaving(false)
-      setError('No POS sales with “Sales by” found for this month.')
+      setError(`No POS sales with “Sales by” found for ${formatRangeLabel(start, end)}.`)
       return
     }
 
@@ -300,7 +368,9 @@ export function Incentives() {
       setError(err.message)
       return
     }
-    setMessage(`Created ${inserts.length} incentive draft(s) from POS Sales by.`)
+    setMessage(
+      `Created ${inserts.length} incentive draft(s) from POS Sales by · ${formatRangeLabel(start, end)}.`,
+    )
     await load()
   }
 
@@ -329,20 +399,38 @@ export function Incentives() {
     await load()
   }
 
-  const totalFinal = payouts.reduce((s, p) => s + p.final_amount, 0)
+  const filteredPayouts = useMemo(() => {
+    const q = staffFilter.trim().toLowerCase()
+    if (!q) return payouts
+    return payouts.filter(
+      (p) =>
+        p.staff_name.toLowerCase().includes(q) ||
+        (p.notes || '').toLowerCase().includes(q),
+    )
+  }, [payouts, staffFilter])
+
+  const totalFinal = filteredPayouts.reduce((s, p) => s + p.final_amount, 0)
+
+  const byStaffTotals = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of filteredPayouts) {
+      map.set(p.staff_name, (map.get(p.staff_name) || 0) + p.final_amount)
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1])
+  }, [filteredPayouts])
 
   return (
     <div>
       <PageHeader
         kicker="HR"
         title="Incentives & commission"
-        subtitle="Service and product incentives from POS Sales by — or add amounts manually."
+        subtitle="Compute individual staff incentives daily, weekly, monthly, or any custom date range — from POS Sales by, Finished sessions, or manual entries."
         actions={
           <button
             className="btn btn-primary"
             type="button"
             disabled={saving}
-            onClick={computeFromSalesBy}
+            onClick={() => void computeFromSalesBy()}
           >
             Compute from POS Sales by
           </button>
@@ -371,19 +459,137 @@ export function Incentives() {
 
       {tab === 'payouts' ? (
         <>
-          <div className="toolbar" style={{ marginBottom: 16 }}>
-            <div className="field" style={{ margin: 0, maxWidth: 220 }}>
-              <label>Period (month)</label>
-              <input
-                className="input"
-                type="month"
-                value={month}
-                onChange={(e) => setMonth(e.target.value)}
-              />
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <div className="panel-header">
+              <h2 className="panel-title">Period & staff</h2>
             </div>
-            <div style={{ alignSelf: 'end', color: 'var(--muted)' }}>
-              Period incentives:{' '}
-              <strong style={{ color: 'var(--ink)' }}>{formatCurrency(totalFinal)}</strong>
+            <div className="panel-body" style={{ display: 'grid', gap: 14 }}>
+              <div className="chips" style={{ margin: 0 }}>
+                {(
+                  [
+                    ['daily', 'Daily'],
+                    ['weekly', 'Weekly'],
+                    ['monthly', 'Monthly'],
+                    ['custom', 'Custom range'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`chip ${preset === key ? 'active' : ''}`}
+                    onClick={() => applyPreset(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                  alignItems: 'end',
+                }}
+              >
+                <div className="field" style={{ margin: 0 }}>
+                  <label htmlFor="inc-from">From</label>
+                  <input
+                    id="inc-from"
+                    className="input"
+                    type="date"
+                    value={rangeStart}
+                    onChange={(e) => {
+                      setPreset('custom')
+                      setRangeStart(e.target.value)
+                    }}
+                  />
+                </div>
+                <div className="field" style={{ margin: 0 }}>
+                  <label htmlFor="inc-to">To</label>
+                  <input
+                    id="inc-to"
+                    className="input"
+                    type="date"
+                    value={rangeEnd}
+                    min={rangeStart}
+                    onChange={(e) => {
+                      setPreset('custom')
+                      setRangeEnd(e.target.value)
+                    }}
+                  />
+                </div>
+                <div className="field" style={{ margin: 0 }}>
+                  <label htmlFor="inc-staff">Staff (optional)</label>
+                  <select
+                    id="inc-staff"
+                    className="select"
+                    value={staffFilter}
+                    onChange={(e) => setStaffFilter(e.target.value)}
+                  >
+                    <option value="">All staff</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.full_name}>
+                        {p.full_name}
+                      </option>
+                    ))}
+                    {/* Keep free-text names from session incentives that aren't in profiles */}
+                    {[...new Set(payouts.map((p) => p.staff_name))]
+                      .filter(
+                        (name) =>
+                          name &&
+                          !profiles.some(
+                            (p) => p.full_name.trim().toLowerCase() === name.trim().toLowerCase(),
+                          ),
+                      )
+                      .map((name) => (
+                        <option key={`extra-${name}`} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.88rem' }}>
+                Showing <strong style={{ color: 'var(--ink)' }}>{formatRangeLabel(start, end)}</strong>
+                {staffFilter ? (
+                  <>
+                    {' '}
+                    · staff <strong style={{ color: 'var(--ink)' }}>{staffFilter}</strong>
+                  </>
+                ) : null}
+                {' · '}
+                Period incentives:{' '}
+                <strong style={{ color: 'var(--ink)' }}>{formatCurrency(totalFinal)}</strong>
+              </p>
+
+              {byStaffTotals.length > 1 ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 8,
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  }}
+                >
+                  {byStaffTotals.map(([name, amount]) => (
+                    <button
+                      key={name}
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      style={{
+                        justifyContent: 'space-between',
+                        textAlign: 'left',
+                        border: '1px solid var(--line)',
+                      }}
+                      onClick={() => setStaffFilter(name)}
+                    >
+                      <span>{name}</span>
+                      <strong>{formatCurrency(amount)}</strong>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -485,14 +691,16 @@ export function Incentives() {
 
           <div className="panel">
             <div className="panel-header">
-              <h2 className="panel-title">Payouts · {month}</h2>
+              <h2 className="panel-title">Payouts · {formatRangeLabel(start, end)}</h2>
             </div>
             <div className="panel-body">
               {loading ? (
                 <div className="empty-state">Loading…</div>
-              ) : payouts.length === 0 ? (
+              ) : filteredPayouts.length === 0 ? (
                 <div className="empty-state">
-                  No payouts yet. Compute from POS Sales by, or add manually.
+                  No payouts in this range
+                  {staffFilter ? ` for ${staffFilter}` : ''}. Compute from POS Sales by, finish
+                  sessions with incentives, or add manually.
                 </div>
               ) : (
                 <div className="table-wrap">
@@ -500,6 +708,7 @@ export function Incentives() {
                     <thead>
                       <tr>
                         <th>Staff</th>
+                        <th>Period</th>
                         <th>Type</th>
                         <th>Sales</th>
                         <th>Incentive</th>
@@ -509,7 +718,7 @@ export function Incentives() {
                       </tr>
                     </thead>
                     <tbody>
-                      {payouts.map((p) => (
+                      {filteredPayouts.map((p) => (
                         <tr key={p.id}>
                           <td>
                             <strong>{p.staff_name}</strong>
@@ -518,6 +727,9 @@ export function Incentives() {
                                 {p.notes}
                               </div>
                             ) : null}
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
+                            {formatRangeLabel(p.period_start, p.period_end)}
                           </td>
                           <td>{TYPE_LABEL[p.incentive_type]}</td>
                           <td>{formatCurrency(p.sales_amount)}</td>
@@ -539,7 +751,7 @@ export function Incentives() {
                               <button
                                 className="btn btn-ghost btn-sm"
                                 type="button"
-                                onClick={() => setStatus(p.id, 'approved')}
+                                onClick={() => void setStatus(p.id, 'approved')}
                               >
                                 Approve
                               </button>
@@ -548,7 +760,7 @@ export function Incentives() {
                               <button
                                 className="btn btn-primary btn-sm"
                                 type="button"
-                                onClick={() => setStatus(p.id, 'paid')}
+                                onClick={() => void setStatus(p.id, 'paid')}
                               >
                                 Mark paid
                               </button>
