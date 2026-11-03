@@ -378,13 +378,25 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
     })
   }
 
-  async function persistAvail(lines: AvailLine[]) {
+  async function persistAvail(lines: AvailLine[], opts?: { seriesPackage?: boolean }) {
     if (!lines.length) {
       setError('Nothing to avail. Keep at least one category, or fill the manual form.')
       return
     }
-    if (lines.some((l) => l.sessions < 1 || !(l.packageAmount > 0))) {
-      setError('Each availed line needs sessions ≥ 1 and a price greater than 0.')
+    if (lines.some((l) => l.sessions < 1)) {
+      setError('Each availed line needs sessions ≥ 1.')
+      return
+    }
+    const saleTotalPreview = lines.reduce((sum, line) => sum + line.packageAmount, 0)
+    // Series promos: price/session may be 0; only the overall package total must be > 0
+    // (one category can carry the clinic package amount; others can stay 0).
+    if (opts?.seriesPackage) {
+      if (!(saleTotalPreview > 0)) {
+        setError('Enter the overall package total (₱) for this series — price per session can be 0.')
+        return
+      }
+    } else if (lines.some((l) => !(l.packageAmount > 0))) {
+      setError('Each availed line needs a price greater than 0.')
       return
     }
     if (!attendant.trim()) {
@@ -502,7 +514,7 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (selectedSeries) {
-      await persistAvail(buildKeptLines())
+      await persistAvail(buildKeptLines(), { seriesPackage: true })
       return
     }
     const line = buildManualLine()
@@ -670,7 +682,7 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                               />
                             </div>
                             <div className="field" style={{ margin: 0 }}>
-                              <label htmlFor={`avail-price-${line.id}`}>Price / session *</label>
+                              <label htmlFor={`avail-price-${line.id}`}>Price / session</label>
                               <input
                                 id={`avail-price-${line.id}`}
                                 className="input"
@@ -684,12 +696,11 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                                     packageAmount: '',
                                   })
                                 }
-                                placeholder="Enter price"
-                                required
+                                placeholder="0 if package-priced"
                               />
                             </div>
                             <div className="field" style={{ margin: 0 }}>
-                              <label htmlFor={`avail-pkg-${line.id}`}>Package total</label>
+                              <label htmlFor={`avail-pkg-${line.id}`}>Package total *</label>
                               <input
                                 id={`avail-pkg-${line.id}`}
                                 className="input"
@@ -706,12 +717,13 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                                 onChange={(e) =>
                                   updateLineEdit(line.id, { packageAmount: e.target.value })
                                 }
-                                placeholder="Or enter total"
+                                placeholder="Clinic package amount"
                               />
                             </div>
                           </div>
                           <p className="avail-hint" style={{ marginTop: 8 }}>
-                            Series has no stored price — enter the clinic package amount manually.
+                            Series package — price/session may be 0. Put the clinic package amount on
+                            Package total (one category can carry the full amount).
                           </p>
                         </article>
                       )
