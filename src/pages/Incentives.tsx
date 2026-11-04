@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
 import { formatCurrency, isUuid } from '../lib/utils'
+import { mapUpsellTier, resolveSaleUpsell, type UpsellTier } from '../lib/upsell'
 import { supabase } from '../lib/supabase'
 
-type IncentiveType = 'service_commission' | 'product_incentive' | 'other'
+type IncentiveType = 'service_commission' | 'product_incentive' | 'other' | 'upsell'
 type Rule = {
   id: string
   name: string
@@ -33,6 +34,15 @@ type Payout = {
 }
 type ProfileOpt = { id: string; full_name: string }
 type PeriodPreset = 'daily' | 'weekly' | 'monthly' | 'custom'
+type UpsellSaleRow = {
+  id: string
+  customer_name: string | null
+  items: string | null
+  total: number | string | null
+  upsell_amount: number | string | null
+  upsell_staff: string | null
+  administered_by: string | null
+}
 
 function toDateInput(d: Date) {
   const y = d.getFullYear()
@@ -89,6 +99,7 @@ const TYPE_LABEL: Record<IncentiveType, string> = {
   service_commission: 'Service commission',
   product_incentive: 'Product incentive',
   other: 'Other',
+  upsell: 'Upsell incentive',
 }
 
 export function Incentives() {
@@ -102,6 +113,9 @@ export function Incentives() {
   const [rules, setRules] = useState<Rule[]>([])
   const [payouts, setPayouts] = useState<Payout[]>([])
   const [profiles, setProfiles] = useState<ProfileOpt[]>([])
+  const [tiers, setTiers] = useState<UpsellTier[]>([])
+  const [upsellSales, setUpsellSales] = useState<UpsellSaleRow[]>([])
+  const [tierForm, setTierForm] = useState({ min: '', max: '', amount: '' })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -152,34 +166,54 @@ export function Incentives() {
       .order('staff_name')
       .order('period_start', { ascending: false })
 
-    const [{ data: ruleData, error: ruleErr }, { data: payData }, { data: prof }] =
-      await Promise.all([
-        supabase.from('incentive_rules').select('*').order('name'),
-        payQ,
-        supabase
-          .from('profiles')
-          .select('id, full_name')
-          .in('role', ['Owner', 'Admin', 'Receptionist', 'Staff', 'HR'])
-          .order('full_name'),
-      ])
+    let salesQ = supabase
+      .from('sales')
+      .select(
+        'id, customer_name, items, total, sold_at, upsell_amount, upsell_staff, administered_by',
+      )
+      .gte('sold_at', `${start}T00:00:00`)
+      .lte('sold_at', `${end}T23:59:59`)
+      .order('sold_at', { ascending: false })
+    if (isUuid(branchId)) salesQ = salesQ.eq('branch_id', branchId)
 
-    if (ruleErr) {
+    const [ruleRes, payRes, profRes, tierRes, salesRes] = await Promise.all([
+      supabase.from('incentive_rules').select('*').order('name'),
+      payQ,
+      supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('role', ['Owner', 'Admin', 'Receptionist', 'Staff', 'HR'])
+        .order('full_name'),
+      supabase.from('upsell_tiers').select('*').order('sort_order').order('min_amount'),
+      salesQ,
+    ])
+
+    if (ruleRes.error) {
       setError(
-        ruleErr.message.includes('incentive') || ruleErr.message.includes('schema cache')
-          ? `${ruleErr.message} — run supabase/add_hr_role.sql in Supabase.`
-          : ruleErr.message,
+        ruleRes.error.message.includes('incentive') || ruleRes.error.message.includes('schema cache')
+          ? `${ruleRes.error.message} — run supabase/add_hr_role.sql in Supabase.`
+          : ruleRes.error.message,
       )
     }
 
+    if (tierRes.error || salesRes.error) {
+      const msg = tierRes.error?.message || salesRes.error?.message || ''
+      if (msg.includes('upsell_') || msg.includes('schema cache')) {
+        setError(`${msg} — run supabase/add_upsell_incentives.sql in Supabase.`)
+      } else if (msg) {
+        setError(msg)
+      }
+    }
+
     setRules(
-      ((ruleData as Rule[] | null) ?? []).map((r) => ({
+      ((ruleRes.data as Rule[] | null) ?? []).map((r) => ({
         ...r,
         rate_percent: Number(r.rate_percent ?? 0),
         flat_amount: Number(r.flat_amount ?? 0),
       })),
     )
     setPayouts(
-      ((payData as Payout[] | null) ?? []).map((p) => ({
+      ((payRes.data as Payout[] | null) ?? []).map((p) => ({
         ...p,
         sales_amount: Number(p.sales_amount ?? 0),
         computed_amount: Number(p.computed_amount ?? 0),
@@ -187,9 +221,13 @@ export function Incentives() {
         final_amount: Number(p.final_amount ?? 0),
       })),
     )
-    setProfiles((prof as ProfileOpt[] | null) ?? [])
+    setProfiles((profRes.data as ProfileOpt[] | null) ?? [])
+    setTiers(
+      tierRes.error ? [] : ((tierRes.data as Parameters<typeof mapUpsellTier>[0][] | null) ?? []).map(mapUpsellTier),
+    )
+    setUpsellSales(salesRes.error ? [] : ((salesRes.data as UpsellSaleRow[] | null) ?? []))
     setLoading(false)
-  }, [start, end])
+  }, [start, end, branchId])
 
   useEffect(() => {
     load()
@@ -419,21 +457,182 @@ export function Incentives() {
     return [...map.entries()].sort((a, b) => b[1] - a[1])
   }, [filteredPayouts])
 
+  const upsellGroups = useMemo(() => {
+    const q = staffFilter.trim().toLowerCase()
+    const map = new Map<
+      string,
+      { id: string; client: string; treatment: string; payment: number; upsell: number }[]
+    >()
+    for (const sale of upsellSales) {
+      const resolved = resolveSaleUpsell(sale, tiers)
+      if (!resolved) continue
+      if (q && !resolved.staff.toLowerCase().includes(q)) continue
+      const lines = map.get(resolved.staff) ?? []
+      lines.push({
+        id: sale.id,
+        client: sale.customer_name?.trim() || 'Walk-in',
+        treatment: sale.items?.trim() || '—',
+        payment: resolved.payment,
+        upsell: resolved.upsell,
+      })
+      map.set(resolved.staff, lines)
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  }, [upsellSales, tiers, staffFilter])
+
+  const upsellGrand = useMemo(() => {
+    let payment = 0
+    let upsell = 0
+    for (const [, lines] of upsellGroups) {
+      for (const line of lines) {
+        payment += line.payment
+        upsell += line.upsell
+      }
+    }
+    return { payment, upsell }
+  }, [upsellGroups])
+
+  async function persistTier(tier: UpsellTier) {
+    if (!tier.id) return
+    setSaving(true)
+    setError('')
+    const { error: err } = await supabase
+      .from('upsell_tiers')
+      .update({
+        min_amount: tier.min_amount,
+        max_amount: tier.max_amount,
+        upsell_amount: tier.upsell_amount,
+        active: tier.active,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', tier.id)
+    setSaving(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setMessage('Upsell tier saved.')
+    await load()
+  }
+
+  async function addTier(e: FormEvent) {
+    e.preventDefault()
+    const min = Number(tierForm.min)
+    const max = tierForm.max.trim() === '' ? null : Number(tierForm.max)
+    if (!Number.isFinite(min) || min < 0) {
+      setError('Enter a minimum package amount.')
+      return
+    }
+    if (max !== null && (!(max > min))) {
+      setError('Maximum must be higher than the minimum. Leave it blank for no cap.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    const nextOrder = tiers.reduce((maxOrder, tier) => Math.max(maxOrder, tier.sort_order), 0) + 1
+    const { error: err } = await supabase.from('upsell_tiers').insert({
+      min_amount: min,
+      max_amount: max,
+      upsell_amount: Number(tierForm.amount) || 0,
+      sort_order: nextOrder,
+      active: true,
+    })
+    setSaving(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setMessage('Upsell tier added.')
+    setTierForm({ min: '', max: '', amount: '' })
+    await load()
+  }
+
+  async function addUpsellDrafts() {
+    if (!upsellGroups.length) {
+      setError('No attendant sales in this period.')
+      return
+    }
+    const existing = new Set(
+      payouts
+        .filter(
+          (p) =>
+            p.incentive_type === 'upsell' &&
+            p.period_start === start &&
+            p.period_end === end &&
+            p.status === 'draft',
+        )
+        .map((p) => p.staff_name.trim().toLowerCase()),
+    )
+    const inserts = upsellGroups
+      .filter(([staff]) => !existing.has(staff.trim().toLowerCase()))
+      .map(([staff, lines]) => {
+        const payment = lines.reduce((sum, line) => sum + line.payment, 0)
+        const upsell = lines.reduce((sum, line) => sum + line.upsell, 0)
+        const profile = profiles.find(
+          (p) => p.full_name.trim().toLowerCase() === staff.trim().toLowerCase(),
+        )
+        return {
+          branch_id: isUuid(branchId) ? branchId : null,
+          profile_id: profile?.id ?? null,
+          staff_name: staff,
+          incentive_type: 'upsell' as const,
+          period_start: start,
+          period_end: end,
+          sales_amount: payment,
+          computed_amount: upsell,
+          adjustment: 0,
+          final_amount: upsell,
+          source: 'pos_sales_by' as const,
+          status: 'draft' as const,
+          notes: `Upsell from package sales · ${formatRangeLabel(start, end)}`,
+          created_by: user?.id ?? null,
+        }
+      })
+    if (!inserts.length) {
+      setError('Upsell drafts for this period are already added.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    const { error: err } = await supabase.from('incentive_payouts').insert(inserts)
+    setSaving(false)
+    if (err) {
+      setError(
+        err.message.includes('upsell') || err.message.includes('incentive_type')
+          ? `${err.message} — run supabase/add_upsell_incentives.sql in Supabase.`
+          : err.message,
+      )
+      return
+    }
+    setMessage(`Added ${inserts.length} upsell draft(s) for ${formatRangeLabel(start, end)}.`)
+    await load()
+  }
+
   return (
     <div>
       <PageHeader
         kicker="HR"
         title="Incentives & commission"
-        subtitle="Compute individual staff incentives daily, weekly, monthly, or any custom date range — from POS Sales by, Finished sessions, or manual entries."
+        subtitle="Compute service incentives from POS and finished sessions, and upsell incentives from the attendant who offered the package."
         actions={
-          <button
-            className="btn btn-primary"
-            type="button"
-            disabled={saving}
-            onClick={() => void computeFromSalesBy()}
-          >
-            Compute from POS Sales by
-          </button>
+          <>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              disabled={saving}
+              onClick={() => void addUpsellDrafts()}
+            >
+              Add upsell drafts
+            </button>
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={saving}
+              onClick={() => void computeFromSalesBy()}
+            >
+              Compute from POS Sales by
+            </button>
+          </>
         }
       />
 
@@ -595,6 +794,78 @@ export function Incentives() {
 
           <div className="panel" style={{ marginBottom: 16 }}>
             <div className="panel-header">
+              <h2 className="panel-title">Sales and upsell</h2>
+            </div>
+            <div className="panel-body">
+              <p style={{ marginTop: 0, color: 'var(--muted)', fontSize: '0.88rem' }}>
+                One row per sale, credited to the attendant who offered it. Saved sales keep their
+                upsell amount. Older sales use the current tiers.
+              </p>
+              {loading ? (
+                <div className="empty-state">Loading sales…</div>
+              ) : upsellGroups.length === 0 ? (
+                <div className="empty-state">No attendant sales in this period.</div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Client</th>
+                        <th>Treatment</th>
+                        <th style={{ textAlign: 'right' }}>Payment</th>
+                        <th style={{ textAlign: 'right' }}>Upsell</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {upsellGroups.map(([staff, lines]) => {
+                        const payment = lines.reduce((sum, line) => sum + line.payment, 0)
+                        const upsell = lines.reduce((sum, line) => sum + line.upsell, 0)
+                        return (
+                          <Fragment key={staff}>
+                            {lines.map((line) => (
+                              <tr key={line.id}>
+                                <td>{staff}</td>
+                                <td>{line.client}</td>
+                                <td>{line.treatment}</td>
+                                <td style={{ textAlign: 'right' }}>{formatCurrency(line.payment)}</td>
+                                <td style={{ textAlign: 'right' }}>{formatCurrency(line.upsell)}</td>
+                              </tr>
+                            ))}
+                            <tr>
+                              <td colSpan={3}>
+                                <strong>{staff} total</strong>
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <strong>{formatCurrency(payment)}</strong>
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <strong>{formatCurrency(upsell)}</strong>
+                              </td>
+                            </tr>
+                          </Fragment>
+                        )
+                      })}
+                      <tr>
+                        <td colSpan={3}>
+                          <strong>Grand total</strong>
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <strong>{formatCurrency(upsellGrand.payment)}</strong>
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <strong>{formatCurrency(upsellGrand.upsell)}</strong>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <div className="panel-header">
               <h2 className="panel-title">Manual incentive</h2>
             </div>
             <div className="panel-body">
@@ -648,6 +919,7 @@ export function Incentives() {
                   >
                     <option value="service_commission">Service commission</option>
                     <option value="product_incentive">Product incentive</option>
+                    <option value="upsell">Upsell incentive</option>
                     <option value="other">Other</option>
                   </select>
                 </div>
@@ -776,7 +1048,174 @@ export function Incentives() {
           </div>
         </>
       ) : (
-        <div className="grid-2">
+        <>
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <div className="panel-header">
+              <h2 className="panel-title">Upsell tiers</h2>
+            </div>
+            <div className="panel-body" style={{ display: 'grid', gap: 14 }}>
+              <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.88rem' }}>
+                Package total falls in a range (minimum included, maximum not included). A blank
+                maximum means no cap. The attendant on Avail or Administered by on POS receives this
+                amount once per sale.
+              </p>
+              {tiers.length === 0 ? (
+                <div className="empty-state">
+                  No tiers yet. Run supabase/add_upsell_incentives.sql, or add a row below.
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>From ₱</th>
+                        <th>Up to ₱</th>
+                        <th>Upsell ₱</th>
+                        <th>Status</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tiers.map((tier) => (
+                        <tr key={tier.id}>
+                          <td>
+                            <input
+                              className="input"
+                              type="number"
+                              min={0}
+                              value={tier.min_amount}
+                              onChange={(e) =>
+                                setTiers((prev) =>
+                                  prev.map((row) =>
+                                    row.id === tier.id
+                                      ? { ...row, min_amount: Number(e.target.value) }
+                                      : row,
+                                  ),
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="input"
+                              type="number"
+                              min={0}
+                              placeholder="No cap"
+                              value={tier.max_amount ?? ''}
+                              onChange={(e) =>
+                                setTiers((prev) =>
+                                  prev.map((row) =>
+                                    row.id === tier.id
+                                      ? {
+                                          ...row,
+                                          max_amount:
+                                            e.target.value.trim() === ''
+                                              ? null
+                                              : Number(e.target.value),
+                                        }
+                                      : row,
+                                  ),
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="input"
+                              type="number"
+                              min={0}
+                              value={tier.upsell_amount}
+                              onChange={(e) =>
+                                setTiers((prev) =>
+                                  prev.map((row) =>
+                                    row.id === tier.id
+                                      ? { ...row, upsell_amount: Number(e.target.value) }
+                                      : row,
+                                  ),
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              type="button"
+                              onClick={() =>
+                                setTiers((prev) =>
+                                  prev.map((row) =>
+                                    row.id === tier.id ? { ...row, active: !row.active } : row,
+                                  ),
+                                )
+                              }
+                            >
+                              {tier.active ? 'Active' : 'Off'}
+                            </button>
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              type="button"
+                              disabled={saving}
+                              onClick={() => void persistTier(tier)}
+                            >
+                              Save
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <form
+                onSubmit={addTier}
+                style={{
+                  display: 'grid',
+                  gap: 10,
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                  alignItems: 'end',
+                }}
+              >
+                <div className="field" style={{ margin: 0 }}>
+                  <label>From ₱</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    required
+                    value={tierForm.min}
+                    onChange={(e) => setTierForm((f) => ({ ...f, min: e.target.value }))}
+                  />
+                </div>
+                <div className="field" style={{ margin: 0 }}>
+                  <label>Up to ₱ (optional)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    placeholder="No cap"
+                    value={tierForm.max}
+                    onChange={(e) => setTierForm((f) => ({ ...f, max: e.target.value }))}
+                  />
+                </div>
+                <div className="field" style={{ margin: 0 }}>
+                  <label>Upsell ₱</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    required
+                    value={tierForm.amount}
+                    onChange={(e) => setTierForm((f) => ({ ...f, amount: e.target.value }))}
+                  />
+                </div>
+                <button className="btn btn-primary" type="submit" disabled={saving}>
+                  Add tier
+                </button>
+              </form>
+            </div>
+          </div>
+          <div className="grid-2">
           <div className="panel">
             <div className="panel-header">
               <h2 className="panel-title">New rule</h2>
@@ -889,6 +1328,7 @@ export function Incentives() {
             </div>
           </div>
         </div>
+        </>
       )}
     </div>
   )
