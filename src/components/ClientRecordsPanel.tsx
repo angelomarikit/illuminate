@@ -84,6 +84,22 @@ function formatMoney(n: number) {
   })
 }
 
+/** One sale can cover several series lines. Give each line its share of that receipt so Total Paid is not multiplied. */
+function shareOfReceipt(pkg: PackageRow, group: PackageRow[], saleTotal: number) {
+  if (group.length <= 1) return saleTotal
+  const weightSum = group.reduce((sum, line) => sum + Math.max(0, line.package_amount), 0)
+  if (weightSum <= 0) return group[0]?.id === pkg.id ? saleTotal : 0
+  const isLast = group[group.length - 1]?.id === pkg.id
+  if (!isLast) {
+    return Number(((saleTotal * Math.max(0, pkg.package_amount)) / weightSum).toFixed(2))
+  }
+  const prior = group.slice(0, -1).reduce((sum, line) => {
+    const share = (saleTotal * Math.max(0, line.package_amount)) / weightSum
+    return sum + Number(share.toFixed(2))
+  }, 0)
+  return Number((saleTotal - prior).toFixed(2))
+}
+
 export function ClientRecordsPanel({
   customerId,
   customerName,
@@ -198,19 +214,36 @@ export function ClientRecordsPanel({
       }
     }
 
+    const packagesByReceipt = new Map<string, PackageRow[]>()
+    for (const pkg of packages) {
+      if (!pkg.sale_receipt_no) continue
+      const group = packagesByReceipt.get(pkg.sale_receipt_no) ?? []
+      group.push(pkg)
+      packagesByReceipt.set(pkg.sale_receipt_no, group)
+    }
+
     const packageRecords: ClientRecord[] = packages.map((pkg) => {
       const linked = pkg.sale_receipt_no ? saleByReceipt.get(pkg.sale_receipt_no) : undefined
       const totalPrice = pkg.package_amount
       const installmentPaid = installmentPaidByPkg.get(pkg.id) || 0
       const originalPaid = linked ? linked.total : 0
-      // When installments are used, paid = sum of installment payments only
-      // (original package receipt is list-price booking, not cash collected twice).
+      const receiptGroup = pkg.sale_receipt_no
+        ? (packagesByReceipt.get(pkg.sale_receipt_no) ?? [pkg])
+        : [pkg]
+      const receiptOnInstallment = receiptGroup.some(
+        (line) => (installmentPaidByPkg.get(line.id) || 0) > 0,
+      )
+      // Installments: paid = slot payments only (the booking receipt is list price, not cash again).
+      // Shared series receipt: split the sale once by each line's package amount (₱0 lines stay ₱0).
+      // A single package still shows the full receipt.
       const paymentsMade =
         installmentPaid > 0
           ? installmentPaid
-          : originalPaid > 0
-            ? originalPaid
-            : pkg.package_amount
+          : receiptOnInstallment
+            ? 0
+            : originalPaid > 0
+              ? shareOfReceipt(pkg, receiptGroup, originalPaid)
+              : pkg.package_amount
       const sessionsLeft = Math.max(0, pkg.total_sessions - pkg.sessions_used)
       const notes =
         [pkg.doctor_notes, pkg.notes, linked?.items && linked.items !== pkg.service_name ? linked.items : null]
