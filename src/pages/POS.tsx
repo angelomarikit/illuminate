@@ -13,7 +13,6 @@ import {
   resolveMembershipAfterPurchase,
 } from '../lib/membership'
 import { supabase } from '../lib/supabase'
-import { mapUpsellTier, upsellForAmount, type UpsellTier } from '../lib/upsell'
 import { formatCurrency, isUuid, receiptNumber } from '../lib/utils'
 import type { Customer, ServiceCategory, ServiceItem, ServiceSeries, ServiceSeriesItem } from '../types'
 import './pos.css'
@@ -81,10 +80,9 @@ export function POS() {
   const [customServiceId, setCustomServiceId] = useState('')
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null)
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null)
-  const [upsellTiers, setUpsellTiers] = useState<UpsellTier[]>([])
 
   const load = useCallback(async () => {
-    const [svcRes, cusRes, profRes, catsRes, seriesRes, tierRes] = await Promise.all([
+    const [svcRes, cusRes, profRes, catsRes, seriesRes] = await Promise.all([
       supabase.from('services').select('*').eq('active', true).order('name'),
       supabase.from('customers').select('*').order('full_name'),
       supabase
@@ -106,11 +104,6 @@ export function POS() {
         .eq('active', true)
         .order('sort_order')
         .order('name'),
-      supabase
-        .from('upsell_tiers')
-        .select('id, min_amount, max_amount, upsell_amount, active, sort_order')
-        .eq('active', true)
-        .order('sort_order'),
     ])
 
     const svc = svcRes.data
@@ -220,11 +213,6 @@ export function POS() {
     } else {
       setSeriesList([])
     }
-    setUpsellTiers(
-      tierRes.error
-        ? []
-        : ((tierRes.data as Parameters<typeof mapUpsellTier>[0][] | null) ?? []).map(mapUpsellTier),
-    )
   }, [branchId, user?.name])
 
   const categories = useMemo(() => ['All', ...catalogCategories], [catalogCategories])
@@ -576,23 +564,19 @@ export function POS() {
       staff_name: user?.name ?? 'Staff',
       branch_id: isUuid(branchId) ? branchId : null,
       payment_proof_url: paymentProofUrl,
-      upsell_amount: administeredBy.trim() ? upsellForAmount(payable, upsellTiers) : null,
-      upsell_staff: administeredBy.trim() || null,
       ...attribution,
     })
 
     if (saleErr) {
       setSaving(false)
       setError(
-        saleErr.message.includes('upsell_')
-          ? `${saleErr.message} — run supabase/add_upsell_incentives.sql in Supabase.`
-          : saleErr.message.includes('payment_proof_url') || saleErr.message.includes('schema cache')
-            ? `${saleErr.message} — run supabase/add_sale_payment_proof.sql in Supabase.`
-            : saleErr.message.includes('sales_by') ||
-                saleErr.message.includes('discount_amount') ||
-                saleErr.message.includes('schema cache')
-              ? `${saleErr.message} — run supabase/add_pos_attribution.sql in Supabase.`
-              : saleErr.message,
+        saleErr.message.includes('payment_proof_url') || saleErr.message.includes('schema cache')
+          ? `${saleErr.message} — run supabase/add_sale_payment_proof.sql in Supabase.`
+          : saleErr.message.includes('sales_by') ||
+              saleErr.message.includes('discount_amount') ||
+              saleErr.message.includes('schema cache')
+            ? `${saleErr.message} — run supabase/add_pos_attribution.sql in Supabase.`
+            : saleErr.message,
       )
       return
     }
@@ -1124,11 +1108,6 @@ export function POS() {
                         value={administeredBy}
                         onChange={setAdministeredBy}
                         profiles={profiles}
-                        hint={
-                          administeredBy.trim()
-                            ? `Upsell incentive ${formatCurrency(upsellForAmount(payable, upsellTiers))} from this sale.`
-                            : 'Set this to credit the upsell incentive.'
-                        }
                       />
                       <StaffAssignField
                         compact

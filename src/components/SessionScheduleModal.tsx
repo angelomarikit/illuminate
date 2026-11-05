@@ -45,6 +45,7 @@ type SlotDraft = {
   notes: string
   handledBy: string
   incentiveAmount: string
+  upsellAmount: string
 }
 
 type MembershipInfo = {
@@ -82,6 +83,7 @@ function emptySlots(total: number, used: number, defaultHandler = ''): SlotDraft
       notes: '',
       handledBy: defaultHandler,
       incentiveAmount: '',
+      upsellAmount: '',
     }
   })
 }
@@ -114,7 +116,7 @@ export function SessionScheduleModal({
         supabase
           .from('client_session_slots')
           .select(
-            'id, session_number, scheduled_date, scheduled_time, status, notes, handled_by, incentive_amount',
+            'id, session_number, scheduled_date, scheduled_time, status, notes, handled_by, incentive_amount, upsell_amount',
           )
           .eq('package_id', pkg.id)
           .order('session_number'),
@@ -131,7 +133,9 @@ export function SessionScheduleModal({
       const defaultHandler = pkg.administered_by?.trim() || ''
 
       if (err) {
-        if (err.message.includes('handled_by') || err.message.includes('incentive_amount')) {
+        if (err.message.includes('upsell_amount')) {
+          setError(`${err.message} — run supabase/add_manual_session_upsell.sql in Supabase.`)
+        } else if (err.message.includes('handled_by') || err.message.includes('incentive_amount')) {
           setError(
             `${err.message} — run supabase/add_session_staff_incentives.sql in Supabase.`,
           )
@@ -161,10 +165,12 @@ export function SessionScheduleModal({
                   notes?: string
                   handled_by?: string | null
                   incentive_amount?: number | null
+                  upsell_amount?: number | null
                 }
               | undefined
             const timeRaw = row?.scheduled_time ? String(row.scheduled_time) : ''
             const incentive = Number(row?.incentive_amount ?? 0)
+            const upsell = Number(row?.upsell_amount ?? 0)
             return {
               id: row?.id ?? null,
               sessionNumber: n,
@@ -176,6 +182,7 @@ export function SessionScheduleModal({
               notes: row?.notes ?? '',
               handledBy: (row?.handled_by as string) || defaultHandler,
               incentiveAmount: incentive > 0 ? String(incentive) : '',
+              upsellAmount: upsell > 0 ? String(upsell) : '',
             }
           }),
         )
@@ -220,6 +227,7 @@ export function SessionScheduleModal({
       notes: slot.notes.trim() || null,
       handled_by: slot.handledBy.trim() || null,
       incentive_amount: Math.max(0, Number(slot.incentiveAmount) || 0),
+      upsell_amount: Math.max(0, Number(slot.upsellAmount) || 0),
       updated_at: new Date().toISOString(),
     }))
 
@@ -231,8 +239,10 @@ export function SessionScheduleModal({
     if (upsertErr) {
       setSaving(false)
       setError(
-        upsertErr.message.includes('handled_by') || upsertErr.message.includes('incentive_amount')
-          ? `${upsertErr.message} — run supabase/add_session_staff_incentives.sql in Supabase.`
+        upsertErr.message.includes('upsell_amount')
+          ? `${upsertErr.message} — run supabase/add_manual_session_upsell.sql in Supabase.`
+          : upsertErr.message.includes('handled_by') || upsertErr.message.includes('incentive_amount')
+            ? `${upsertErr.message} — run supabase/add_session_staff_incentives.sql in Supabase.`
           : upsertErr.message.includes('client_session_slots') ||
               upsertErr.message.includes('schema cache')
             ? `${upsertErr.message} — run supabase/add_client_session_slots.sql in Supabase.`
@@ -316,47 +326,58 @@ export function SessionScheduleModal({
         })
 
         const incentiveAmt = Math.max(0, Number(slot.incentiveAmount) || 0)
-        if (slot.status === 'finished' && slotId && handler && incentiveAmt > 0) {
+        const upsellAmt = Math.max(0, Number(slot.upsellAmount) || 0)
+        if (slot.status === 'finished' && slotId && handler) {
           const visitDate = slot.scheduledDate || new Date().toISOString().slice(0, 10)
           const profileId = profiles.find((p) => p.full_name === handler)?.id ?? null
-          const payout = {
-            branch_id:
-              pkg.branch_id && isUuid(pkg.branch_id)
-                ? pkg.branch_id
-                : isUuid(branchId)
-                  ? branchId
-                  : null,
-            profile_id: profileId,
-            staff_name: handler,
-            incentive_type: 'service_commission' as const,
-            period_start: visitDate,
-            period_end: visitDate,
-            sales_amount: 0,
-            computed_amount: incentiveAmt,
-            adjustment: 0,
-            final_amount: incentiveAmt,
-            source: 'session_finished',
-            status: 'draft',
-            notes: `${pkg.service_name} · Session ${slot.sessionNumber} · ${pkg.customer_name}`,
-            session_slot_id: slotId,
-            created_by: user?.id && isUuid(user.id) ? user.id : null,
+          const drafts: { type: 'service_commission' | 'upsell'; amount: number; label: string }[] = []
+          if (incentiveAmt > 0) {
+            drafts.push({ type: 'service_commission', amount: incentiveAmt, label: 'service incentive' })
           }
-          const { data: existingInc } = await supabase
-            .from('incentive_payouts')
-            .select('id')
-            .eq('session_slot_id', slotId)
-            .maybeSingle()
-          const { error: incErr } = existingInc?.id
-            ? await supabase.from('incentive_payouts').update(payout).eq('id', existingInc.id)
-            : await supabase.from('incentive_payouts').insert(payout)
-          if (incErr) {
-            deductNotes.push(
-              `Session ${slot.sessionNumber}: incentive not saved — run supabase/add_session_staff_incentives.sql (${incErr.message})`,
-            )
-          } else {
-            deductNotes.push(
-              `Session ${slot.sessionNumber}: ₱${incentiveAmt.toLocaleString('en-PH')} incentive draft for ${handler}`,
-            )
+          if (upsellAmt > 0) {
+            drafts.push({ type: 'upsell', amount: upsellAmt, label: 'upsell incentive' })
+          }
+          for (const draft of drafts) {
+            const payout = {
+              branch_id:
+                pkg.branch_id && isUuid(pkg.branch_id)
+                  ? pkg.branch_id
+                  : isUuid(branchId)
+                    ? branchId
+                    : null,
+              profile_id: profileId,
+              staff_name: handler,
+              incentive_type: draft.type,
+              period_start: visitDate,
+              period_end: visitDate,
+              sales_amount: 0,
+              computed_amount: draft.amount,
+              adjustment: 0,
+              final_amount: draft.amount,
+              source: 'session_finished' as const,
+              status: 'draft' as const,
+              notes: `${pkg.service_name} · Session ${slot.sessionNumber} · ${pkg.customer_name}`,
+              session_slot_id: slotId,
+              created_by: user?.id && isUuid(user.id) ? user.id : null,
+            }
+            const { data: existingInc } = await supabase
+              .from('incentive_payouts')
+              .select('id')
+              .eq('session_slot_id', slotId)
+              .eq('incentive_type', draft.type)
+              .maybeSingle()
+            const { error: incErr } = existingInc?.id
+              ? await supabase.from('incentive_payouts').update(payout).eq('id', existingInc.id)
+              : await supabase.from('incentive_payouts').insert(payout)
+            if (incErr) {
+              deductNotes.push(
+                `Session ${slot.sessionNumber}: ${draft.label} not saved — run supabase/add_manual_session_upsell.sql (${incErr.message})`,
+              )
+            } else {
+              deductNotes.push(
+                `Session ${slot.sessionNumber}: ₱${draft.amount.toLocaleString('en-PH')} ${draft.label} draft for ${handler}`,
+              )
+            }
           }
         }
       }
@@ -554,6 +575,24 @@ export function SessionScheduleModal({
                           value={slot.incentiveAmount}
                           onChange={(e) =>
                             updateSlot(slot.sessionNumber, { incentiveAmount: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor={`slot-upsell-${slot.sessionNumber}`}>
+                          Upsell incentive ₱ (optional)
+                        </label>
+                        <input
+                          id={`slot-upsell-${slot.sessionNumber}`}
+                          className="input"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          disabled={saving}
+                          placeholder="0"
+                          value={slot.upsellAmount}
+                          onChange={(e) =>
+                            updateSlot(slot.sessionNumber, { upsellAmount: e.target.value })
                           }
                         />
                       </div>

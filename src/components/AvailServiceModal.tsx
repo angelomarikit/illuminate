@@ -5,7 +5,6 @@ import { StaffAssignField } from './StaffAssignField'
 import { StatusMessage } from './StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
-import { mapUpsellTier, upsellForAmount, type UpsellTier } from '../lib/upsell'
 import { formatCurrency, isUuid, receiptNumber } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import type { Customer, ServiceItem, ServiceSeries, ServiceSeriesItem } from '../types'
@@ -135,7 +134,6 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
   const [manualTotal, setManualTotal] = useState('')
   const [sessions, setSessions] = useState('1')
   const [attendant, setAttendant] = useState('')
-  const [upsellTiers, setUpsellTiers] = useState<UpsellTier[]>([])
   const [notes, setNotes] = useState('')
   const [availDate, setAvailDate] = useState(todayIso)
 
@@ -159,7 +157,7 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       setNotes('')
       setAvailDate(todayIso())
 
-      const [svcRes, catsRes, profRes, seriesRes, tierRes] = await Promise.all([
+      const [svcRes, catsRes, profRes, seriesRes] = await Promise.all([
         supabase
           .from('services')
           .select(
@@ -186,11 +184,6 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
           .eq('active', true)
           .order('sort_order')
           .order('name'),
-        supabase
-          .from('upsell_tiers')
-          .select('id, min_amount, max_amount, upsell_amount, active, sort_order')
-          .eq('active', true)
-          .order('sort_order'),
       ])
 
       if (cancelled) return
@@ -227,14 +220,6 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       if (merged[0]) setCategory(merged[0])
 
       setProfiles((profRes.data as ProfileOption[] | null) ?? [])
-      setUpsellTiers(
-        tierRes.error
-          ? []
-          : ((tierRes.data as Parameters<typeof mapUpsellTier>[0][] | null) ?? []).map(mapUpsellTier),
-      )
-      setUpsellTiers(
-        tierRes.error ? [] : ((tierRes.data as Parameters<typeof mapUpsellTier>[0][] | null) ?? []).map(mapUpsellTier),
-      )
 
       if (seriesRes.error) {
         if (
@@ -402,15 +387,9 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       setError('Each availed line needs sessions ≥ 1.')
       return
     }
-    const saleTotalPreview = lines.reduce((sum, line) => sum + line.packageAmount, 0)
-    // Series promos: price/session may be 0; only the overall package total must be > 0
-    // (one category can carry the clinic package amount; others can stay 0).
-    if (opts?.seriesPackage) {
-      if (!(saleTotalPreview > 0)) {
-        setError('Enter the overall package total (₱) for this series — price per session can be 0.')
-        return
-      }
-    } else if (lines.some((l) => !(l.packageAmount > 0))) {
+    // A new series still usually has a package total, but previous client records
+    // may have no amount. Price/session and the overall total may both be 0.
+    if (!opts?.seriesPackage && lines.some((l) => !(l.packageAmount > 0))) {
       setError('Each availed line needs a price greater than 0.')
       return
     }
@@ -458,21 +437,17 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
       branch_id: isUuid(branchId) ? branchId : null,
       payment_proof_url: null,
       sold_at: new Date(`${soldOn}T12:00:00`).toISOString(),
-      upsell_amount: upsellForAmount(saleTotal, upsellTiers),
-      upsell_staff: attendant.trim(),
       ...attribution,
     })
 
     if (saleErr) {
       setSaving(false)
       setError(
-        saleErr.message.includes('upsell_')
-          ? `${saleErr.message} — run supabase/add_upsell_incentives.sql in Supabase.`
-          : saleErr.message.includes('sales_by') ||
-              saleErr.message.includes('discount_amount') ||
-              saleErr.message.includes('schema cache')
-            ? `${saleErr.message} — run supabase/add_pos_attribution.sql in Supabase.`
-            : saleErr.message,
+        saleErr.message.includes('sales_by') ||
+          saleErr.message.includes('discount_amount') ||
+          saleErr.message.includes('schema cache')
+          ? `${saleErr.message} — run supabase/add_pos_attribution.sql in Supabase.`
+          : saleErr.message,
       )
       return
     }
@@ -719,7 +694,7 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                               />
                             </div>
                             <div className="field" style={{ margin: 0 }}>
-                              <label htmlFor={`avail-pkg-${line.id}`}>Package total *</label>
+                              <label htmlFor={`avail-pkg-${line.id}`}>Package total</label>
                               <input
                                 id={`avail-pkg-${line.id}`}
                                 className="input"
@@ -741,8 +716,8 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                             </div>
                           </div>
                           <p className="avail-hint" style={{ marginTop: 8 }}>
-                            Series package — price/session may be 0. Put the clinic package amount on
-                            Package total (one category can carry the full amount).
+                            Series package — price/session and package total can both be 0 when logging a
+                            previous record. For a new sale, put the clinic amount on one Package total.
                           </p>
                         </article>
                       )
@@ -904,18 +879,8 @@ export function AvailServiceModal({ customer, open, onClose, onSuccess }: Props)
                 profiles={profiles}
                 compact
                 required
-                hint="Same as Administered by on Sessions / POS. This person receives the upsell."
+                hint="Same as Administered by on Sessions / POS"
               />
-              <p className="avail-hint" style={{ marginTop: 8 }}>
-                Upsell incentive:{' '}
-                <strong>
-                  {formatCurrency(
-                    upsellForAmount(selectedSeries ? keptTotal : singleTotal, upsellTiers),
-                  )}
-                </strong>{' '}
-                from the package total
-                {attendant.trim() ? ` · ${attendant.trim()}` : ''}.
-              </p>
             </div>
 
             <div className="field avail-span-2">
