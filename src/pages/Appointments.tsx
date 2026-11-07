@@ -425,6 +425,7 @@ export function Appointments() {
   const [cancelSaving, setCancelSaving] = useState(false)
   const [rescheduleMode, setRescheduleMode] = useState(false)
   const dateInputRef = useRef<HTMLInputElement | null>(null)
+  const calendarBoardRef = useRef<HTMLDivElement | null>(null)
   const isEditing = Boolean(editingId)
   const editingAppointment = useMemo(
     () => (editingId ? rows.find((row) => row.id === editingId) ?? null : null),
@@ -439,7 +440,7 @@ export function Appointments() {
 
   const monthCells = useMemo(() => buildMonthCells(monthCursor), [monthCursor])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<Appointment[]> => {
     setLoading(true)
     let q = supabase
       .from('appointments')
@@ -465,7 +466,7 @@ export function Appointments() {
     if (err) {
       setError(err.message)
       setLoading(false)
-      return
+      return []
     }
 
     const fromAppointments = (data as Row[] | null)?.map(mapRow) ?? []
@@ -534,9 +535,11 @@ export function Appointments() {
       }
     }
 
+    const merged = [...fromAppointments, ...fromSlots]
     setError('')
-    setRows([...fromAppointments, ...fromSlots])
+    setRows(merged)
     setLoading(false)
+    return merged
   }, [branchId])
 
   const loadActivityForAppointment = useCallback(async (appointmentId: string) => {
@@ -913,6 +916,8 @@ export function Appointments() {
     }
 
     const bookedDate = String(payload.appointment_date || '').slice(0, 10)
+    const clientName = payload.customer_name
+    const bookedTime = String(payload.appointment_time || '').slice(0, 5)
 
     let savedId: string | null = editingId
     let errMessage = ''
@@ -927,12 +932,14 @@ export function Appointments() {
       if (res.error) errMessage = res.error.message
       else savedId = res.data?.id ?? editingId
     } else {
-      // Preferred path: security-definer RPC works for Owner/Admin/Receptionist/Staff/HR/Inventory
+      // Preferred path: security-definer RPC (Owner/Admin/Receptionist/Staff/HR/Inventory)
       const rpc = await supabase.rpc('create_clinic_appointment', {
         p_customer_name: payload.customer_name,
         p_service_name: payload.service_name,
         p_appointment_date: payload.appointment_date,
-        p_appointment_time: payload.appointment_time,
+        p_appointment_time: payload.appointment_time.length === 5
+          ? `${payload.appointment_time}:00`
+          : payload.appointment_time,
         p_staff_name: payload.staff_name,
         p_duration_min: payload.duration_min,
         p_special_note: payload.special_note,
@@ -942,6 +949,12 @@ export function Appointments() {
         p_type: type,
         p_status: type === 'walk-in' ? 'walk-in' : 'confirmed',
       })
+
+      const rpcMissing =
+        Boolean(rpc.error) &&
+        (String(rpc.error?.message || '').includes('Could not find the function') ||
+          String(rpc.error?.message || '').includes('schema cache') ||
+          rpc.error?.code === 'PGRST202')
 
       if (!rpc.error && rpc.data) {
         const raw = rpc.data as { id?: string; ok?: boolean } | string
@@ -955,53 +968,40 @@ export function Appointments() {
         } else {
           savedId = raw.id ?? null
         }
+      } else if (rpc.error && !rpcMissing) {
+        errMessage = rpc.error.message
       } else {
-        // Fallback: direct insert (older DBs without the RPC)
-        const insertRow = {
-          ...payload,
+        // Bare insert — no booked_by_* (trigger stamps them). Avoid FK / tracker failures.
+        const bareRow: Record<string, unknown> = {
+          customer_name: payload.customer_name,
+          service_name: payload.service_name,
+          staff_name: payload.staff_name,
+          appointment_date: payload.appointment_date,
+          appointment_time: payload.appointment_time,
+          duration_min: payload.duration_min,
+          special_note: payload.special_note,
+          customer_phone: payload.customer_phone,
+          calendar_color: payload.calendar_color,
           status: type === 'walk-in' ? 'walk-in' : 'confirmed',
           type,
           source: 'clinic',
           branch_id: isUuid(branchId) ? branchId : null,
-          booked_by_name: user?.name ?? null,
-          booked_by_role: user?.role ?? null,
-          // Only send booked_by_id when it is a real uuid; trigger clears invalid FKs
-          ...(user?.id && isUuid(user.id) ? { booked_by_id: user.id } : {}),
         }
-        let res = await supabase
-          .from('appointments')
-          .insert(insertRow)
-          .select('id')
-          .maybeSingle()
-        if (
-          res.error &&
-          (res.error.message.includes('booked_by') ||
-            res.error.message.includes('appointment_activity_log') ||
-            res.error.message.includes('foreign key') ||
-            res.error.message.includes('row-level security') ||
-            res.error.message.includes('RLS'))
-        ) {
-          const {
-            booked_by_id: _id,
-            booked_by_name: _name,
-            booked_by_role: _role,
-            ...bare
-          } = insertRow
-          res = await supabase.from('appointments').insert(bare).select('id').maybeSingle()
+        let res = await supabase.from('appointments').insert(bareRow).select('id').maybeSingle()
+        if (res.error && res.error.message.includes('calendar_color')) {
+          const { calendar_color: _color, ...withoutColor } = bareRow
+          res = await supabase.from('appointments').insert(withoutColor).select('id').maybeSingle()
         }
         if (res.error) {
-          errMessage =
-            rpc.error && !String(rpc.error.message || '').includes('Could not find the function')
-              ? rpc.error.message
-              : res.error.message
+          errMessage = res.error.message
         } else {
           savedId = res.data?.id ?? null
         }
       }
     }
 
-    setSaving(false)
     if (errMessage) {
+      setSaving(false)
       setError(
         errMessage.includes('row-level security') || errMessage.includes('RLS')
           ? `${errMessage} — run supabase/fix_clinic_booking_all_roles.sql in Supabase so Owner/Admin/Staff can book.`
@@ -1016,10 +1016,7 @@ export function Appointments() {
       return
     }
 
-    if (!wasEditing && savedId && type !== 'walk-in' && phone) {
-      queueConfirmationSms(String(savedId))
-    }
-
+    // Jump UI to the booked day before reload so the board paints the right day.
     if (bookedDate) {
       setFocusDate(bookedDate)
       setMonthCursor(startOfMonth(parseLocalISODate(bookedDate)))
@@ -1027,6 +1024,36 @@ export function Appointments() {
       setRangeFrom('')
       setRangeTo('')
       setFilter('all')
+      setSearchQuery(clientName)
+      setListTab('active')
+    }
+
+    const loaded = await load()
+    const visible = loaded.find(
+      (a) =>
+        a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
+        String(a.date || '').slice(0, 10) === bookedDate &&
+        (!bookedTime || String(a.time || '').slice(0, 5) === bookedTime),
+    )
+    const foundByNameDate = loaded.find(
+      (a) =>
+        a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
+        String(a.date || '').slice(0, 10) === bookedDate,
+    )
+    const confirmed = visible || foundByNameDate || (savedId ? loaded.find((a) => a.id === savedId) : null)
+
+    setSaving(false)
+
+    if (!wasEditing && !confirmed) {
+      setError(
+        `Booking did not appear on the calendar after save (${clientName} · ${bookedDate}). Run supabase/fix_clinic_booking_all_roles.sql in the Illuminate Supabase SQL Editor, then try again.`,
+      )
+      setMessage('')
+      return
+    }
+
+    if (!wasEditing && confirmed?.id && type !== 'walk-in' && phone) {
+      queueConfirmationSms(String(confirmed.id))
     }
 
     setForm(emptyForm)
@@ -1044,7 +1071,10 @@ export function Appointments() {
             ? 'Booking created. Confirmation SMS queued.'
             : 'Booking created.',
     )
-    await load()
+
+    requestAnimationFrame(() => {
+      calendarBoardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   async function updateStatus(id: string, status: AppointmentStatus) {
@@ -1536,7 +1566,7 @@ export function Appointments() {
         </div>
       </div>
 
-      <div className="panel" style={{ marginBottom: 16 }}>
+      <div className="panel" style={{ marginBottom: 16 }} ref={calendarBoardRef}>
         <div className="panel-header appt-board-header">
           <h2 className="panel-title">
             {boardMode === 'day'
