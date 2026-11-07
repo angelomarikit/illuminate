@@ -195,6 +195,7 @@
 .calendar-day-col {
   position: relative;
   min-width: 0;
+  overflow: visible;
 }
 
 .calendar-day-slots {
@@ -242,6 +243,7 @@
   inset: 0;
   pointer-events: none;
   z-index: 2;
+  overflow: visible;
 }
 
 .calendar-event {

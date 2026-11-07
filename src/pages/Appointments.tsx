@@ -237,8 +237,9 @@ function mapRow(row: Row): Appointment {
     customerName: row.customer_name,
     serviceName: row.service_name,
     staffName: row.staff_name ?? '',
-    date: row.appointment_date,
-    time: String(row.appointment_time).slice(0, 5),
+    // Always YYYY-MM-DD — calendar day columns compare with === and miss ISO timestamps.
+    date: String(row.appointment_date ?? '').slice(0, 10),
+    time: String(row.appointment_time ?? '').slice(0, 5),
     durationMin: row.duration_min,
     status: row.status as AppointmentStatus,
     branchId: row.branch_id ?? '',
@@ -911,36 +912,121 @@ export function Appointments() {
       customer_phone: phone || null,
     }
 
-    const { data: saved, error: err } = editingId
-      ? await supabase
+    const bookedDate = String(payload.appointment_date || '').slice(0, 10)
+
+    let savedId: string | null = editingId
+    let errMessage = ''
+
+    if (editingId) {
+      const res = await supabase
+        .from('appointments')
+        .update(payload)
+        .eq('id', editingId)
+        .select('id')
+        .maybeSingle()
+      if (res.error) errMessage = res.error.message
+      else savedId = res.data?.id ?? editingId
+    } else {
+      // Preferred path: security-definer RPC works for Owner/Admin/Receptionist/Staff/HR/Inventory
+      const rpc = await supabase.rpc('create_clinic_appointment', {
+        p_customer_name: payload.customer_name,
+        p_service_name: payload.service_name,
+        p_appointment_date: payload.appointment_date,
+        p_appointment_time: payload.appointment_time,
+        p_staff_name: payload.staff_name,
+        p_duration_min: payload.duration_min,
+        p_special_note: payload.special_note,
+        p_calendar_color: payload.calendar_color,
+        p_customer_phone: payload.customer_phone,
+        p_branch_id: isUuid(branchId) ? branchId : null,
+        p_type: type,
+        p_status: type === 'walk-in' ? 'walk-in' : 'confirmed',
+      })
+
+      if (!rpc.error && rpc.data) {
+        const raw = rpc.data as { id?: string; ok?: boolean } | string
+        if (typeof raw === 'string') {
+          try {
+            const parsed = JSON.parse(raw) as { id?: string }
+            savedId = parsed.id ?? null
+          } catch {
+            savedId = null
+          }
+        } else {
+          savedId = raw.id ?? null
+        }
+      } else {
+        // Fallback: direct insert (older DBs without the RPC)
+        const insertRow = {
+          ...payload,
+          status: type === 'walk-in' ? 'walk-in' : 'confirmed',
+          type,
+          source: 'clinic',
+          branch_id: isUuid(branchId) ? branchId : null,
+          booked_by_name: user?.name ?? null,
+          booked_by_role: user?.role ?? null,
+          // Only send booked_by_id when it is a real uuid; trigger clears invalid FKs
+          ...(user?.id && isUuid(user.id) ? { booked_by_id: user.id } : {}),
+        }
+        let res = await supabase
           .from('appointments')
-          .update(payload)
-          .eq('id', editingId)
-          .select('id, customer_phone')
+          .insert(insertRow)
+          .select('id')
           .maybeSingle()
-      : await supabase
-          .from('appointments')
-          .insert({
-            ...payload,
-            status: type === 'walk-in' ? 'walk-in' : 'confirmed',
-            type,
-            source: 'clinic',
-            branch_id: isUuid(branchId) ? branchId : null,
-            booked_by_id: user?.id ?? null,
-            booked_by_name: user?.name ?? null,
-            booked_by_role: user?.role ?? null,
-          })
-          .select('id, customer_phone')
-          .maybeSingle()
+        if (
+          res.error &&
+          (res.error.message.includes('booked_by') ||
+            res.error.message.includes('appointment_activity_log') ||
+            res.error.message.includes('foreign key') ||
+            res.error.message.includes('row-level security') ||
+            res.error.message.includes('RLS'))
+        ) {
+          const {
+            booked_by_id: _id,
+            booked_by_name: _name,
+            booked_by_role: _role,
+            ...bare
+          } = insertRow
+          res = await supabase.from('appointments').insert(bare).select('id').maybeSingle()
+        }
+        if (res.error) {
+          errMessage =
+            rpc.error && !String(rpc.error.message || '').includes('Could not find the function')
+              ? rpc.error.message
+              : res.error.message
+        } else {
+          savedId = res.data?.id ?? null
+        }
+      }
+    }
 
     setSaving(false)
-    if (err) {
-      setError(err.message)
+    if (errMessage) {
+      setError(
+        errMessage.includes('row-level security') || errMessage.includes('RLS')
+          ? `${errMessage} — run supabase/fix_clinic_booking_all_roles.sql in Supabase so Owner/Admin/Staff can book.`
+          : errMessage.includes('appointment_activity_log') || errMessage.includes('booked_by')
+            ? `${errMessage} — run supabase/fix_clinic_booking_all_roles.sql in Supabase.`
+            : errMessage.includes('calendar_color')
+              ? `${errMessage} — run supabase/add_appointment_calendar_color.sql in Supabase.`
+              : errMessage.includes('Only clinic staff')
+                ? `${errMessage} — your account role cannot create clinic bookings.`
+                : errMessage,
+      )
       return
     }
 
-    if (!wasEditing && saved?.id && type !== 'walk-in' && phone) {
-      queueConfirmationSms(String(saved.id))
+    if (!wasEditing && savedId && type !== 'walk-in' && phone) {
+      queueConfirmationSms(String(savedId))
+    }
+
+    if (bookedDate) {
+      setFocusDate(bookedDate)
+      setMonthCursor(startOfMonth(parseLocalISODate(bookedDate)))
+      setBoardMode('day')
+      setRangeFrom('')
+      setRangeTo('')
+      setFilter('all')
     }
 
     setForm(emptyForm)
@@ -1585,7 +1671,9 @@ export function Appointments() {
                   ))}
                 </div>
                 {boardDays.map((day) => {
-                  const dayApts = boardAppointments.filter((a) => a.date === day.key)
+                  const dayApts = boardAppointments.filter(
+                    (a) => String(a.date || '').slice(0, 10) === day.key,
+                  )
                   const laidOut = layoutDayEvents(dayApts, timeToMinutes(hours[0]))
                   return (
                     <div className="calendar-day-col" key={day.key}>
