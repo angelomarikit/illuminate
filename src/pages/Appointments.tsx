@@ -442,34 +442,50 @@ export function Appointments() {
 
   const load = useCallback(async (): Promise<Appointment[]> => {
     setLoading(true)
-    let q = supabase
-      .from('appointments')
-      .select('*')
-      .order('appointment_date')
-      .order('appointment_time')
-    // Include unassigned / website bookings (null branch) so pending requests always appear
-    if (isUuid(branchId)) {
-      q = q.or(`branch_id.eq.${branchId},branch_id.is.null`)
-    }
-    const [{ data, error: err }, slotRes] = await Promise.all([
-      q,
-      supabase
-        .from('client_session_slots')
-        .select(
-          'id, session_number, scheduled_date, scheduled_time, status, notes, package_id, client_session_packages(customer_name, service_name, branch_id, administered_by)',
-        )
-        .not('scheduled_date', 'is', null)
-        .not('scheduled_time', 'is', null)
-        .in('status', ['scheduled', 'finished']),
-    ])
 
-    if (err) {
-      setError(err.message)
+    // PostgREST defaults to max 1000 rows. Ascending date order was truncating
+    // future bookings (e.g. Dec 2026), so saves looked successful but invisible.
+    const pageSize = 1000
+    const allRows: Row[] = []
+    let pageError: { message: string } | null = null
+    for (let from = 0; from < 20000; from += pageSize) {
+      let page = supabase
+        .from('appointments')
+        .select('*')
+        .order('appointment_date')
+        .order('appointment_time')
+        .order('id')
+        .range(from, from + pageSize - 1)
+      // Include unassigned / website bookings (null branch) so pending requests always appear
+      if (isUuid(branchId)) {
+        page = page.or(`branch_id.eq.${branchId},branch_id.is.null`)
+      }
+      const { data, error: err } = await page
+      if (err) {
+        pageError = err
+        break
+      }
+      const batch = (data as Row[] | null) ?? []
+      allRows.push(...batch)
+      if (batch.length < pageSize) break
+    }
+
+    const slotRes = await supabase
+      .from('client_session_slots')
+      .select(
+        'id, session_number, scheduled_date, scheduled_time, status, notes, package_id, client_session_packages(customer_name, service_name, branch_id, administered_by)',
+      )
+      .not('scheduled_date', 'is', null)
+      .not('scheduled_time', 'is', null)
+      .in('status', ['scheduled', 'finished'])
+
+    if (pageError) {
+      setError(pageError.message)
       setLoading(false)
       return []
     }
 
-    const fromAppointments = (data as Row[] | null)?.map(mapRow) ?? []
+    const fromAppointments = allRows.map(mapRow)
     const markers = new Set(
       fromAppointments
         .map((a) => a.specialNote || '')
@@ -1029,24 +1045,35 @@ export function Appointments() {
     }
 
     const loaded = await load()
-    const visible = loaded.find(
-      (a) =>
-        a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
-        String(a.date || '').slice(0, 10) === bookedDate &&
-        (!bookedTime || String(a.time || '').slice(0, 5) === bookedTime),
-    )
-    const foundByNameDate = loaded.find(
-      (a) =>
-        a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
-        String(a.date || '').slice(0, 10) === bookedDate,
-    )
-    const confirmed = visible || foundByNameDate || (savedId ? loaded.find((a) => a.id === savedId) : null)
+    let confirmed =
+      loaded.find(
+        (a) =>
+          a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
+          String(a.date || '').slice(0, 10) === bookedDate &&
+          (!bookedTime || String(a.time || '').slice(0, 5) === bookedTime),
+      ) ||
+      loaded.find(
+        (a) =>
+          a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
+          String(a.date || '').slice(0, 10) === bookedDate,
+      ) ||
+      (savedId ? loaded.find((a) => a.id === savedId) : undefined)
+
+    // Direct fetch by id if list still missing it (pagination / race safety).
+    if (!wasEditing && !confirmed && savedId) {
+      const byId = await supabase.from('appointments').select('*').eq('id', savedId).maybeSingle()
+      if (!byId.error && byId.data) {
+        const mapped = mapRow(byId.data as Row)
+        confirmed = mapped
+        setRows((prev) => (prev.some((a) => a.id === mapped.id) ? prev : [...prev, mapped]))
+      }
+    }
 
     setSaving(false)
 
     if (!wasEditing && !confirmed) {
       setError(
-        `Booking did not appear on the calendar after save (${clientName} · ${bookedDate}). Run supabase/fix_clinic_booking_all_roles.sql in the Illuminate Supabase SQL Editor, then try again.`,
+        `Booking did not appear on the calendar after save (${clientName} · ${bookedDate}). Check branch filter and try refreshing; if it keeps failing, contact support.`,
       )
       setMessage('')
       return
