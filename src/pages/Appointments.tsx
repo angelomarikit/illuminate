@@ -570,6 +570,14 @@ export function Appointments() {
         })
         .map((m) => m.toLowerCase()),
     )
+    // Also dedupe by client+day+time so missing markers cannot stack two blocks
+    // on the same slot (looks like “overlapping schedule”).
+    const bookedSlotKeys = new Set(
+      fromAppointments.map(
+        (a) =>
+          `${a.customerName.trim().toLowerCase()}|${String(a.date).slice(0, 10)}|${String(a.time).slice(0, 5)}`,
+      ),
+    )
 
     type SlotPkg =
       | {
@@ -608,12 +616,18 @@ export function Appointments() {
         if (markers.has(marker.toLowerCase())) continue
 
         const time = String(row.scheduled_time).slice(0, 5)
+        const date = String(row.scheduled_date).slice(0, 10)
+        const name = (pkg.customer_name || 'Client').trim()
+        const slotKey = `${name.toLowerCase()}|${date}|${time}`
+        if (bookedSlotKeys.has(slotKey)) continue
+        bookedSlotKeys.add(slotKey)
+
         fromSlots.push({
           id: `slot-${row.id}`,
-          customerName: pkg.customer_name || 'Client',
+          customerName: name,
           serviceName: `${pkg.service_name || 'Service'} · Session ${row.session_number}`,
           staffName: pkg.administered_by || '',
-          date: String(row.scheduled_date).slice(0, 10),
+          date,
           time,
           durationMin: 60,
           status: (row.status === 'finished' ? 'completed' : 'confirmed') as AppointmentStatus,
@@ -626,7 +640,13 @@ export function Appointments() {
       }
     }
 
-    const merged = [...fromAppointments, ...fromSlots]
+    // Stable unique ids — duplicate React keys collapse layout packing.
+    const seenIds = new Set<string>()
+    const merged = [...fromAppointments, ...fromSlots].filter((a) => {
+      if (!a.id || seenIds.has(a.id)) return false
+      seenIds.add(a.id)
+      return true
+    })
     setError('')
     setRows(merged)
     setLoading(false)

@@ -271,6 +271,8 @@
   pointer-events: auto;
   z-index: 2;
   box-sizing: border-box;
+  /* Inline left/width from layoutDayEvents must win over base width:100%. */
+  max-width: none;
 }
 
 .calendar-event:hover {
@@ -299,12 +301,17 @@
   outline-offset: -2px;
 }
 
+/* Keep position from .is-spanning (absolute). `position: relative` here used to
+   override it and dump completed blocks back into normal flow → visual overlap. */
 .calendar-event.is-completed {
-  position: relative;
   padding-right: 26px;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.22),
     0 1px 2px rgba(10, 10, 10, 0.06);
+}
+
+.calendar-event.is-spanning.is-completed {
+  position: absolute;
 }
 
 .calendar-event.is-completed::before {
