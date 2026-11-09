@@ -264,6 +264,74 @@ function mapRow(row: Row): Appointment {
   }
 }
 
+/** PostgREST/RPC may return jsonb as object, stringified JSON, or a bare uuid. */
+function parseSavedAppointmentId(data: unknown): string | null {
+  if (data == null) return null
+  if (typeof data === 'string') {
+    const trimmed = data.trim()
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+      return trimmed
+    }
+    try {
+      return parseSavedAppointmentId(JSON.parse(trimmed))
+    } catch {
+      return null
+    }
+  }
+  if (typeof data === 'object') {
+    const obj = data as Record<string, unknown>
+    if (obj.id != null && String(obj.id).trim()) return String(obj.id).trim()
+    if (obj.data != null) return parseSavedAppointmentId(obj.data)
+  }
+  return null
+}
+
+function appointmentFromSave(input: {
+  id: string
+  customerName: string
+  serviceName: string
+  staffName: string | null
+  date: string
+  time: string
+  durationMin: number
+  specialNote: string | null
+  calendarColor: string
+  customerPhone: string | null
+  branchId: string
+  type: Appointment['type']
+  status: AppointmentStatus
+}): Appointment {
+  return {
+    id: input.id,
+    customerName: input.customerName,
+    serviceName: input.serviceName,
+    staffName: input.staffName ?? '',
+    date: String(input.date).slice(0, 10),
+    time: String(input.time).slice(0, 5),
+    durationMin: input.durationMin || 60,
+    status: input.status,
+    branchId: input.branchId,
+    type: input.type,
+    customerEmail: '',
+    customerPhone: input.customerPhone ?? '',
+    customerAge: null,
+    customerSex: '',
+    customerAddress: '',
+    medicalHistory: '',
+    specialNote: input.specialNote ?? '',
+    source: 'clinic',
+    calendarColor: input.calendarColor || CALENDAR_COLORS[0],
+    cancellationReason: '',
+    bookedById: null,
+    bookedByName: '',
+    bookedByRole: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    lastModifiedByName: '',
+    lastModifiedByRole: '',
+  }
+}
+
 function formatStampDate(iso: string | undefined) {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -443,18 +511,23 @@ export function Appointments() {
   const load = useCallback(async (): Promise<Appointment[]> => {
     setLoading(true)
 
-    // PostgREST defaults to max 1000 rows. Ascending date order was truncating
-    // future bookings (e.g. Dec 2026), so saves looked successful but invisible.
+    // PostgREST caps each response at ~1000 rows. Load newest-first in pages so
+    // future bookings (Dec 2026+) are never truncated behind older history.
     const pageSize = 1000
     const allRows: Row[] = []
     let pageError: { message: string } | null = null
+    const windowStart = addDays(toLocalISODate(), -120)
+    const windowEnd = addDays(toLocalISODate(), 540)
+
     for (let from = 0; from < 20000; from += pageSize) {
       let page = supabase
         .from('appointments')
         .select('*')
-        .order('appointment_date')
-        .order('appointment_time')
-        .order('id')
+        .gte('appointment_date', windowStart)
+        .lte('appointment_date', windowEnd)
+        .order('appointment_date', { ascending: false })
+        .order('appointment_time', { ascending: false })
+        .order('id', { ascending: false })
         .range(from, from + pageSize - 1)
       // Include unassigned / website bookings (null branch) so pending requests always appear
       if (isUuid(branchId)) {
@@ -477,6 +550,8 @@ export function Appointments() {
       )
       .not('scheduled_date', 'is', null)
       .not('scheduled_time', 'is', null)
+      .gte('scheduled_date', windowStart)
+      .lte('scheduled_date', windowEnd)
       .in('status', ['scheduled', 'finished'])
 
     if (pageError) {
@@ -973,17 +1048,7 @@ export function Appointments() {
           rpc.error?.code === 'PGRST202')
 
       if (!rpc.error && rpc.data) {
-        const raw = rpc.data as { id?: string; ok?: boolean } | string
-        if (typeof raw === 'string') {
-          try {
-            const parsed = JSON.parse(raw) as { id?: string }
-            savedId = parsed.id ?? null
-          } catch {
-            savedId = null
-          }
-        } else {
-          savedId = raw.id ?? null
-        }
+        savedId = parseSavedAppointmentId(rpc.data)
       } else if (rpc.error && !rpcMissing) {
         errMessage = rpc.error.message
       } else {
@@ -1032,7 +1097,7 @@ export function Appointments() {
       return
     }
 
-    // Jump UI to the booked day before reload so the board paints the right day.
+    // Jump UI to the booked day so the board paints the right day.
     if (bookedDate) {
       setFocusDate(bookedDate)
       setMonthCursor(startOfMonth(parseLocalISODate(bookedDate)))
@@ -1044,45 +1109,56 @@ export function Appointments() {
       setListTab('active')
     }
 
-    const loaded = await load()
-    let confirmed =
-      loaded.find(
-        (a) =>
-          a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
-          String(a.date || '').slice(0, 10) === bookedDate &&
-          (!bookedTime || String(a.time || '').slice(0, 5) === bookedTime),
-      ) ||
-      loaded.find(
-        (a) =>
-          a.customerName.trim().toLowerCase() === clientName.trim().toLowerCase() &&
-          String(a.date || '').slice(0, 10) === bookedDate,
-      ) ||
-      (savedId ? loaded.find((a) => a.id === savedId) : undefined)
-
-    // Direct fetch by id if list still missing it (pagination / race safety).
-    if (!wasEditing && !confirmed && savedId) {
-      const byId = await supabase.from('appointments').select('*').eq('id', savedId).maybeSingle()
-      if (!byId.error && byId.data) {
-        const mapped = mapRow(byId.data as Row)
-        confirmed = mapped
-        setRows((prev) => (prev.some((a) => a.id === mapped.id) ? prev : [...prev, mapped]))
-      }
-    }
-
-    setSaving(false)
-
-    if (!wasEditing && !confirmed) {
+    // Long-term rule: if the DB accepted the write (we have an id), treat as success.
+    // Never block the staff on a follow-up list reload / PostgREST row-cap race.
+    if (!wasEditing && !savedId) {
+      setSaving(false)
       setError(
-        `Booking did not appear on the calendar after save (${clientName} · ${bookedDate}). Check branch filter and try refreshing; if it keeps failing, contact support.`,
+        `Booking may not have been saved (${clientName} · ${bookedDate}). Please try again.`,
       )
       setMessage('')
       return
     }
 
-    if (!wasEditing && confirmed?.id && type !== 'walk-in' && phone) {
-      queueConfirmationSms(String(confirmed.id))
+    if (!wasEditing && savedId) {
+      const local = appointmentFromSave({
+        id: savedId,
+        customerName: clientName,
+        serviceName: payload.service_name,
+        staffName: payload.staff_name,
+        date: bookedDate,
+        time: bookedTime || payload.appointment_time,
+        durationMin: payload.duration_min,
+        specialNote: payload.special_note,
+        calendarColor: payload.calendar_color,
+        customerPhone: payload.customer_phone,
+        branchId: isUuid(branchId) ? branchId : '',
+        type,
+        status: (type === 'walk-in' ? 'walk-in' : 'confirmed') as AppointmentStatus,
+      })
+      setRows((prev) => (prev.some((a) => a.id === local.id) ? prev : [local, ...prev]))
+
+      // Prefer server row when readable; keep optimistic row if list reload is slow.
+      void supabase
+        .from('appointments')
+        .select('*')
+        .eq('id', savedId)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (!data) return
+          const mapped = mapRow(data as Row)
+          setRows((prev) => {
+            const without = prev.filter((a) => a.id !== mapped.id)
+            return [mapped, ...without]
+          })
+        })
+
+      if (type !== 'walk-in' && phone) {
+        queueConfirmationSms(String(savedId))
+      }
     }
 
+    setSaving(false)
     setForm(emptyForm)
     setFormType('none')
     setEditingId(null)
@@ -1098,6 +1174,15 @@ export function Appointments() {
             ? 'Booking created. Confirmation SMS queued.'
             : 'Booking created.',
     )
+
+    // Refresh board in the background — do not gate success on this.
+    void load().then(async (loaded) => {
+      if (!savedId || loaded.some((a) => a.id === savedId)) return
+      const byId = await supabase.from('appointments').select('*').eq('id', savedId).maybeSingle()
+      if (byId.error || !byId.data) return
+      const mapped = mapRow(byId.data as Row)
+      setRows((prev) => (prev.some((a) => a.id === mapped.id) ? prev : [mapped, ...prev]))
+    })
 
     requestAnimationFrame(() => {
       calendarBoardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
