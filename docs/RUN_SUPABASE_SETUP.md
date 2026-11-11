@@ -102,7 +102,7 @@ After setup.sql, also run (in order):
 3. **Secrets** (Dashboard → Edge Functions → Secrets, or Project Settings → Edge Functions):
    - `ITEXMO_EMAIL` — Itexmo login email/username
    - `ITEXMO_PASSWORD` — Itexmo password (never put in git / `VITE_*`)
-   - `ITEXMO_API_CODE` — `PR-ILLUM594659_XXQTI`
+   - `ITEXMO_API_CODE` — e.g. `PR-ILLUM262840_950PR` (copy from Itexmo dashboard; never commit to git)
    - Optional: `ITEXMO_SENDER_ID`, `SMS_CRON_SECRET`
    - API is `https://api.itexmo.com/api/broadcast` (V5). Classic `php_api` is broken (empty/500).
    - `ITEXMO_EMAIL` must be the **account email** from Itexmo Profile (Username `Illuminate` fails API auth).

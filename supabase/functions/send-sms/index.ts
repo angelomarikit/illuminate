@@ -264,30 +264,25 @@ async function sendItexmo(phone: string, message: string, clientId?: string) {
     )
   }
 
-  // Per Itexmo Api Docs broadcast body + Basic Auth (Email must be real email).
-  const senderId = ITEXMO_SENDER_ID || 'ITM.TEST3' // docs: optional; ITM.TEST3 if Trial
-
-  const makeBody = (withSender: boolean): Record<string, unknown> => {
-    const body: Record<string, unknown> = {
-      ApiCode: ITEXMO_API_CODE,
-      Email: ITEXMO_EMAIL,
-      Password: ITEXMO_PASSWORD,
-      Recipients: [phone],
-      Message: message,
-    }
-    if (withSender) body.SenderId = senderId
-    if (clientId) body.ClientId = clientId.slice(0, 50)
-    return body
+  // V5 broadcast API. Email must be the registered account EMAIL (not Username).
+  // Prefer Basic Auth + JSON body (Itexmo Api Docs); fall back without Basic Auth.
+  const body: Record<string, unknown> = {
+    Email: ITEXMO_EMAIL,
+    Password: ITEXMO_PASSWORD,
+    ApiCode: ITEXMO_API_CODE,
+    Recipients: [phone],
+    Message: message,
   }
+  // Only send SenderId when explicitly configured — unapproved sender → auth failures.
+  if (ITEXMO_SENDER_ID) body.SenderId = ITEXMO_SENDER_ID
+  if (clientId) body.ClientId = clientId.slice(0, 50)
 
-  // Docs require Basic Auth on every request
-  let { res, text, parsed } = await postItexmoBroadcast(makeBody(true), true)
+  let { res, text, parsed } = await postItexmoBroadcast(body, true)
   let msg = itexmoErrorMessage(parsed, text, res.status)
   let failed = !res.ok || parsed.Error === true || parsed.error === true
 
-  // Retry without SenderId if sender/auth-related failure
-  if (failed && (/authorization|sender/i.test(msg) || msg.includes('13'))) {
-    ;({ res, text, parsed } = await postItexmoBroadcast(makeBody(false), true))
+  if (failed && (isCredentialError(msg) || /authorization/i.test(msg))) {
+    ;({ res, text, parsed } = await postItexmoBroadcast(body, false))
     msg = itexmoErrorMessage(parsed, text, res.status)
     failed = !res.ok || parsed.Error === true || parsed.error === true
   }
@@ -295,15 +290,15 @@ async function sendItexmo(phone: string, message: string, clientId?: string) {
   if (failed) {
     if (isCredentialError(msg)) {
       throw new Error(
-        `${msg} — Email secret is "${ITEXMO_EMAIL}" (passwordLen=${ITEXMO_PASSWORD.length}, apiCode=${ITEXMO_API_CODE}). ` +
-          'Confirm ITEXMO_PASSWORD matches that email account (illuminateaestheticscenter@gmail.com).',
+        `${msg} — API Email currently set to "${ITEXMO_EMAIL}" (passwordLen=${ITEXMO_PASSWORD.length}, apiCode=${ITEXMO_API_CODE}). ` +
+          'Use the Itexmo Profile EMAIL + matching password for this ApiCode (not Username "Illuminate").',
       )
     }
     if (/authorization/i.test(msg)) {
       throw new Error(
-        `${msg} — Login/email is OK; Itexmo is blocking this request (often IP whitelist error 21). ` +
-          'Email support@itexmo.com: please disable IP whitelisting for ApiCode PR-ILLUM594659_XXQTI so cloud servers (Supabase Edge) can call api.itexmo.com/api/broadcast. ' +
-          `Tried SenderId=${senderId} as well.`,
+        `${msg} — Login/ApiCode usually OK; Itexmo is blocking the request (often IP whitelist). ` +
+          'In dashboard.itexmo.com turn OFF IP whitelisting for this ApiCode, or ask support@itexmo.com to allow Supabase Edge (dynamic IPs). ' +
+          'Also confirm ITEXMO_EMAIL / ITEXMO_PASSWORD belong to the same account as this ApiCode. Do not set ITEXMO_SENDER_ID unless Itexmo approved it.',
       )
     }
     throw new Error(msg)
