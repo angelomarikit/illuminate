@@ -6,7 +6,7 @@ import { StatusMessage } from '../../components/StatusMessage'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
 import { supabase } from '../../lib/supabase'
-import { isUuid } from '../../lib/utils'
+import { inventoryCatalogBranchOrFilter, isUuid } from '../../lib/utils'
 import './StockAssessment.css'
 
 type ItemRow = {
@@ -544,8 +544,9 @@ export function StockAssessment() {
       .order('issued_at', { ascending: false })
       .limit(120)
 
-    if (isUuid(branchId)) {
-      itemQ = itemQ.eq('branch_id', branchId)
+    const itemBranchOr = inventoryCatalogBranchOrFilter(branchId)
+    if (itemBranchOr) {
+      itemQ = itemQ.or(itemBranchOr)
     }
 
     const todayStr = toDateInput(new Date())
@@ -1297,7 +1298,9 @@ export function StockAssessment() {
           {loading ? (
             <div className="empty-state">Loading assessment…</div>
           ) : sheetRows.length === 0 ? (
-            <div className="empty-state">No inventory items for this branch.</div>
+            <div className="empty-state">
+              No inventory items found. Add items in Stock catalog, then return here.
+            </div>
           ) : filteredSheetRows.length === 0 ? (
             <div className="empty-state">No items match your search.</div>
           ) : (

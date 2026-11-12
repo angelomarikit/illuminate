@@ -5,7 +5,7 @@ import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useBranch } from '../context/BranchContext'
 import { supabase } from '../lib/supabase'
-import { isUuid } from '../lib/utils'
+import { inventoryCatalogBranchOrFilter, isUuid } from '../lib/utils'
 import type { InventoryItem } from '../types'
 
 type Row = {
@@ -115,7 +115,8 @@ export function Inventory() {
   const load = useCallback(async () => {
     setLoading(true)
     let q = supabase.from('inventory_items').select('*').is('deleted_at', null).order('name')
-    if (isUuid(branchId)) q = q.eq('branch_id', branchId)
+    const itemBranchOr = inventoryCatalogBranchOrFilter(branchId)
+    if (itemBranchOr) q = q.or(itemBranchOr)
     const [{ data, error: err }, { data: svc }, { data: linkData, error: linkErr }, usageRes] =
       await Promise.all([
         q,

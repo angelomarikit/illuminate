@@ -4,6 +4,16 @@ export function isUuid(value: string) {
   )
 }
 
+/**
+ * Inventory catalog rows may be branch-owned or shared (`branch_id` null).
+ * When a clinic branch is selected, include both so Stock assessment / catalog
+ * are not empty when older items were saved without a branch.
+ */
+export function inventoryCatalogBranchOrFilter(branchId: string) {
+  if (!isUuid(branchId)) return null
+  return `branch_id.eq.${branchId},branch_id.is.null`
+}
+
 export function formatCurrency(value: number) {
   return new Intl.NumberFormat('en-PH', {
     style: 'currency',

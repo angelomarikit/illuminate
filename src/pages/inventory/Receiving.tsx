@@ -5,7 +5,7 @@ import { StatusMessage } from '../../components/StatusMessage'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
 import { supabase } from '../../lib/supabase'
-import { isUuid } from '../../lib/utils'
+import { inventoryCatalogBranchOrFilter, isUuid } from '../../lib/utils'
 
 type ItemOpt = { id: string; name: string; sku: string; stock: number; unit: string }
 type ReceiptRow = {
@@ -61,8 +61,9 @@ export function Receiving() {
       .select('id, received_at, supplier, reference_no, notes, received_by, created_at')
       .order('received_at', { ascending: false })
       .limit(40)
-    if (isUuid(branchId)) {
-      itemQ = itemQ.eq('branch_id', branchId)
+    const itemBranchOr = inventoryCatalogBranchOrFilter(branchId)
+    if (itemBranchOr) {
+      itemQ = itemQ.or(itemBranchOr)
       receiptQ = receiptQ.or(`branch_id.eq.${branchId},branch_id.is.null`)
     }
     const [{ data: itemData, error: itemErr }, { data: receiptData, error: receiptErr }] =

@@ -6,7 +6,7 @@ import { StatusMessage } from '../../components/StatusMessage'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
 import { supabase } from '../../lib/supabase'
-import { isUuid } from '../../lib/utils'
+import { inventoryCatalogBranchOrFilter, isUuid } from '../../lib/utils'
 
 type ItemRow = {
   id: string
@@ -124,8 +124,9 @@ export function Stocktake() {
       )
       .order('counted_on', { ascending: false })
       .limit(20)
-    if (isUuid(branchId)) {
-      itemQ = itemQ.eq('branch_id', branchId)
+    const itemBranchOr = inventoryCatalogBranchOrFilter(branchId)
+    if (itemBranchOr) {
+      itemQ = itemQ.or(itemBranchOr)
       pastQ = pastQ.or(`branch_id.eq.${branchId},branch_id.is.null`)
     }
     const [{ data: items, error: itemErr }, { data: pastData, error: pastErr }] =

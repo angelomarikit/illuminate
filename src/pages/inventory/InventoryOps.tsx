@@ -12,7 +12,7 @@ import { PageHeader } from '../../components/PageHeader'
 import { StatusMessage } from '../../components/StatusMessage'
 import { useBranch } from '../../context/BranchContext'
 import { supabase } from '../../lib/supabase'
-import { isUuid } from '../../lib/utils'
+import { inventoryCatalogBranchOrFilter, isUuid } from '../../lib/utils'
 import './inventory-ops.css'
 
 type ItemSnap = { name: string; sku: string; unit: string; stock: number }
@@ -114,11 +114,12 @@ export function InventoryOps() {
       .order('name')
       .limit(200)
 
-    if (isUuid(branchId)) {
+    const itemBranchOr = inventoryCatalogBranchOrFilter(branchId)
+    if (itemBranchOr) {
       reorderQ = reorderQ.or(`branch_id.eq.${branchId},branch_id.is.null`)
       receiptQ = receiptQ.or(`branch_id.eq.${branchId},branch_id.is.null`)
       stocktakeQ = stocktakeQ.or(`branch_id.eq.${branchId},branch_id.is.null`)
-      lowQ = lowQ.eq('branch_id', branchId)
+      lowQ = lowQ.or(itemBranchOr)
     }
 
     const [reorderRes, receiptRes, stocktakeRes, lowRes] = await Promise.all([
