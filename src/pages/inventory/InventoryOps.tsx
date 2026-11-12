@@ -12,7 +12,7 @@ import { PageHeader } from '../../components/PageHeader'
 import { StatusMessage } from '../../components/StatusMessage'
 import { useBranch } from '../../context/BranchContext'
 import { supabase } from '../../lib/supabase'
-import { inventoryCatalogBranchOrFilter, isUuid } from '../../lib/utils'
+import { inventoryCatalogBranchOrFilter } from '../../lib/utils'
 import './inventory-ops.css'
 
 type ItemSnap = { name: string; sku: string; unit: string; stock: number }
