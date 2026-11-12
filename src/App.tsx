@@ -16,6 +16,7 @@ import { Sessions } from './pages/Sessions'
 import { Appointments } from './pages/Appointments'
 import { Customers } from './pages/Customers'
 import { RegisterClients } from './pages/RegisterClients'
+import { ClientJourney } from './pages/ClientJourney'
 import { Services } from './pages/Services'
 import { Loyalty } from './pages/Loyalty'
 import { QRCheckin } from './pages/QRCheckin'
@@ -78,6 +79,7 @@ export default function App() {
                     <Route path="clients" element={<Customers />} />
                     <Route path="customers" element={<Navigate to="/clients" replace />} />
                     <Route path="register-clients" element={<RegisterClients />} />
+                    <Route path="client-journey" element={<ClientJourney />} />
                     <Route path="services" element={<Services />} />
                     <Route path="loyalty" element={<Loyalty />} />
                     <Route path="qr-checkin" element={<QRCheckin />} />

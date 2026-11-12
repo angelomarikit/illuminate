@@ -1,17 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, X } from 'lucide-react'
+import { CalendarDays, Plus, Trash2, X } from 'lucide-react'
 import { CareNotesPanel } from './CareNotesPanel'
 import { MembershipBadge } from './MembershipBadge'
 import { StaffAssignField } from './StaffAssignField'
 import { StatusMessage } from './StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
-import { formatCurrency, isUuid } from '../lib/utils'
+import {
+  loadExtraIssuesBySlotIds,
+  upsertSessionExtraSupplies,
+  type InventoryItemOpt,
+} from '../lib/inventoryIssues'
 import { syncSessionSlotAppointment } from '../lib/sessionAppointments'
 import { supabase } from '../lib/supabase'
+import { formatCurrency, inventoryCatalogBranchOrFilter, isUuid } from '../lib/utils'
 import './SessionScheduleModal.css'
 
 type ProfileOption = { id: string; full_name: string; role?: string }
+
+type ExtraSupplyLine = { itemId: string; qty: string; notes: string }
+
+function emptyExtraLine(): ExtraSupplyLine {
+  return { itemId: '', qty: '1', notes: '' }
+}
 
 export type SessionPackageForModal = {
   id: string
@@ -46,6 +57,8 @@ type SlotDraft = {
   handledBy: string
   incentiveAmount: string
   upsellAmount: string
+  /** Optional extras beyond service BOM; only saved when status is finished. */
+  extraSupplies: ExtraSupplyLine[]
 }
 
 type MembershipInfo = {
@@ -84,6 +97,7 @@ function emptySlots(total: number, used: number, defaultHandler = ''): SlotDraft
       handledBy: defaultHandler,
       incentiveAmount: '',
       upsellAmount: '',
+      extraSupplies: [],
     }
   })
 }
@@ -101,6 +115,7 @@ export function SessionScheduleModal({
   const { branchId } = useBranch()
   const [slots, setSlots] = useState<SlotDraft[]>([])
   const [profiles, setProfiles] = useState<ProfileOption[]>([])
+  const [inventoryItems, setInventoryItems] = useState<InventoryItemOpt[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -112,7 +127,16 @@ export function SessionScheduleModal({
     async function load() {
       setLoading(true)
       setError('')
-      const [{ data, error: err }, { data: profileRows }] = await Promise.all([
+
+      let itemQ = supabase
+        .from('inventory_items')
+        .select('id, name, sku, stock, unit')
+        .is('deleted_at', null)
+        .order('name')
+      const itemBranchOr = inventoryCatalogBranchOrFilter(branchId)
+      if (itemBranchOr) itemQ = itemQ.or(itemBranchOr)
+
+      const [{ data, error: err }, { data: profileRows }, { data: itemRows }] = await Promise.all([
         supabase
           .from('client_session_slots')
           .select(
@@ -125,11 +149,13 @@ export function SessionScheduleModal({
           .select('id, full_name, role')
           .in('role', ['Owner', 'Admin', 'Receptionist', 'Staff', 'Inventory', 'HR'])
           .order('full_name'),
+        itemQ,
       ])
 
       if (cancelled) return
 
       setProfiles((profileRows as ProfileOption[] | null) ?? [])
+      setInventoryItems((itemRows as InventoryItemOpt[] | null) ?? [])
       const defaultHandler = pkg.administered_by?.trim() || ''
 
       if (err) {
@@ -153,6 +179,10 @@ export function SessionScheduleModal({
       } else {
         const byNum = new Map(data.map((row) => [row.session_number as number, row]))
         const total = Math.max(pkg.total_sessions, data.length)
+        const slotIds = data.map((row) => String((row as { id?: string }).id || '')).filter(Boolean)
+        const extrasBySlot = await loadExtraIssuesBySlotIds(slotIds)
+        if (cancelled) return
+
         setSlots(
           Array.from({ length: total }, (_, i) => {
             const n = i + 1
@@ -171,8 +201,10 @@ export function SessionScheduleModal({
             const timeRaw = row?.scheduled_time ? String(row.scheduled_time) : ''
             const incentive = Number(row?.incentive_amount ?? 0)
             const upsell = Number(row?.upsell_amount ?? 0)
+            const slotId = row?.id ?? null
+            const loadedExtras = slotId ? extrasBySlot[slotId] ?? [] : []
             return {
-              id: row?.id ?? null,
+              id: slotId,
               sessionNumber: n,
               scheduledDate: row?.scheduled_date ? String(row.scheduled_date).slice(0, 10) : '',
               scheduledTime: timeRaw ? timeRaw.slice(0, 5) : '',
@@ -183,6 +215,11 @@ export function SessionScheduleModal({
               handledBy: (row?.handled_by as string) || defaultHandler,
               incentiveAmount: incentive > 0 ? String(incentive) : '',
               upsellAmount: upsell > 0 ? String(upsell) : '',
+              extraSupplies: loadedExtras.map((l) => ({
+                itemId: l.inventory_item_id,
+                qty: String(l.qty),
+                notes: l.notes ?? '',
+              })),
             }
           }),
         )
@@ -194,7 +231,7 @@ export function SessionScheduleModal({
     return () => {
       cancelled = true
     }
-  }, [open, pkg.id, pkg.total_sessions, pkg.sessions_used, pkg.administered_by])
+  }, [open, pkg.id, pkg.total_sessions, pkg.sessions_used, pkg.administered_by, branchId])
 
   const finishedCount = useMemo(
     () => slots.filter((s) => s.status === 'finished').length,
@@ -209,6 +246,45 @@ export function SessionScheduleModal({
   function updateSlot(sessionNumber: number, patch: Partial<SlotDraft>) {
     setSlots((prev) =>
       prev.map((slot) => (slot.sessionNumber === sessionNumber ? { ...slot, ...patch } : slot)),
+    )
+  }
+
+  function updateExtraLine(
+    sessionNumber: number,
+    index: number,
+    patch: Partial<ExtraSupplyLine>,
+  ) {
+    setSlots((prev) =>
+      prev.map((slot) => {
+        if (slot.sessionNumber !== sessionNumber) return slot
+        const extraSupplies = slot.extraSupplies.map((line, i) =>
+          i === index ? { ...line, ...patch } : line,
+        )
+        return { ...slot, extraSupplies }
+      }),
+    )
+  }
+
+  function addExtraLine(sessionNumber: number) {
+    setSlots((prev) =>
+      prev.map((slot) =>
+        slot.sessionNumber === sessionNumber
+          ? { ...slot, extraSupplies: [...slot.extraSupplies, emptyExtraLine()] }
+          : slot,
+      ),
+    )
+  }
+
+  function removeExtraLine(sessionNumber: number, index: number) {
+    setSlots((prev) =>
+      prev.map((slot) =>
+        slot.sessionNumber === sessionNumber
+          ? {
+              ...slot,
+              extraSupplies: slot.extraSupplies.filter((_, i) => i !== index),
+            }
+          : slot,
+      ),
     )
   }
 
@@ -306,6 +382,14 @@ export function SessionScheduleModal({
         `${finishedCountSaved} finished session(s): linked supplies auto-deduct from inventory (once each).`,
       )
     }
+
+    const issueBranch =
+      pkg.branch_id && isUuid(pkg.branch_id)
+        ? pkg.branch_id
+        : isUuid(branchId)
+          ? branchId
+          : null
+
     try {
       for (const slot of slots) {
         const slotId = slotsByNumber.get(slot.sessionNumber) || slot.id
@@ -339,12 +423,7 @@ export function SessionScheduleModal({
           }
           for (const draft of drafts) {
             const payout = {
-              branch_id:
-                pkg.branch_id && isUuid(pkg.branch_id)
-                  ? pkg.branch_id
-                  : isUuid(branchId)
-                    ? branchId
-                    : null,
+              branch_id: issueBranch,
               profile_id: profileId,
               staff_name: handler,
               incentive_type: draft.type,
@@ -376,6 +455,47 @@ export function SessionScheduleModal({
             } else {
               deductNotes.push(
                 `Session ${slot.sessionNumber}: ₱${draft.amount.toLocaleString('en-PH')} ${draft.label} draft for ${handler}`,
+              )
+            }
+          }
+        }
+
+        // Optional extra supplies (beyond BOM) — Finished only; clear if status changed away
+        if (slotId && isUuid(slotId)) {
+          const visitDate = slot.scheduledDate || new Date().toISOString().slice(0, 10)
+          const lines =
+            slot.status === 'finished'
+              ? slot.extraSupplies
+                  .map((l) => ({
+                    inventory_item_id: l.itemId,
+                    qty: Math.max(0, Number(l.qty) || 0),
+                    notes: l.notes.trim() || null,
+                  }))
+                  .filter((l) => l.inventory_item_id && l.qty > 0)
+              : []
+
+          const hadExtrasDraft = slot.extraSupplies.some(
+            (l) => l.itemId && Math.max(0, Number(l.qty) || 0) > 0,
+          )
+          if (slot.status === 'finished' || hadExtrasDraft) {
+            const extrasResult = await upsertSessionExtraSupplies({
+              sessionSlotId: slotId,
+              branchId: issueBranch,
+              issuedAt: visitDate,
+              reason: `Session ${slot.sessionNumber} · ${pkg.service_name} · ${pkg.customer_name}`,
+              notes: 'Extra supplies from Client Sessions',
+              issuedBy: user?.name ?? handler,
+              createdBy: user?.id ?? null,
+              lines,
+            })
+            if (extrasResult.ok === false) {
+              setSaving(false)
+              setError(`Session ${slot.sessionNumber}: ${extrasResult.error}`)
+              return
+            }
+            if (lines.length > 0) {
+              deductNotes.push(
+                `Session ${slot.sessionNumber}: ${lines.length} extra supply line(s) logged.`,
               )
             }
           }
@@ -467,8 +587,9 @@ export function SessionScheduleModal({
 
           <p className="ssm-hint">
             Set a date for each visit and mark status as Pending, Scheduled, or Finished. Saving
-            updates remaining sessions. When you mark <strong>Finished</strong>, linked supplies
-            are deducted from inventory automatically (once per session).
+            updates remaining sessions. When you mark <strong>Finished</strong>, linked BOM supplies
+            deduct automatically (once per session). You can also add optional{' '}
+            <strong>extra supplies</strong> on that visit.
           </p>
 
           {loading ? (
@@ -598,6 +719,109 @@ export function SessionScheduleModal({
                       </div>
                     </div>
                   </div>
+
+                  {slot.status === 'finished' ? (
+                    <div className="ssm-extras">
+                      <div className="ssm-extras-head">
+                        <strong>Extra supplies used (optional)</strong>
+                        <span>Beyond linked BOM — logged like Stock Assessment issues</span>
+                      </div>
+                      {slot.extraSupplies.length === 0 ? (
+                        <p className="ssm-extras-empty">No extra items. Add a line if needed.</p>
+                      ) : (
+                        <div className="ssm-extras-lines">
+                          {slot.extraSupplies.map((line, index) => (
+                            <div className="ssm-extras-row" key={`${slot.sessionNumber}-x-${index}`}>
+                              <div className="field">
+                                <label htmlFor={`slot-extra-item-${slot.sessionNumber}-${index}`}>
+                                  Item
+                                </label>
+                                <select
+                                  id={`slot-extra-item-${slot.sessionNumber}-${index}`}
+                                  className="select"
+                                  value={line.itemId}
+                                  disabled={saving}
+                                  onChange={(e) =>
+                                    updateExtraLine(slot.sessionNumber, index, {
+                                      itemId: e.target.value,
+                                    })
+                                  }
+                                >
+                                  <option value="">Select</option>
+                                  {inventoryItems.map((item) => (
+                                    <option key={item.id} value={item.id}>
+                                      {item.name}
+                                      {item.sku ? ` · ${item.sku}` : ''} (on hand {item.stock}{' '}
+                                      {item.unit || 'pc'})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="field ssm-extras-qty">
+                                <label htmlFor={`slot-extra-qty-${slot.sessionNumber}-${index}`}>
+                                  Qty
+                                </label>
+                                <input
+                                  id={`slot-extra-qty-${slot.sessionNumber}-${index}`}
+                                  className="input"
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  disabled={saving}
+                                  value={line.qty}
+                                  onChange={(e) =>
+                                    updateExtraLine(slot.sessionNumber, index, {
+                                      qty: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div className="field">
+                                <label htmlFor={`slot-extra-note-${slot.sessionNumber}-${index}`}>
+                                  Line note
+                                </label>
+                                <input
+                                  id={`slot-extra-note-${slot.sessionNumber}-${index}`}
+                                  className="input"
+                                  disabled={saving}
+                                  placeholder="Optional"
+                                  value={line.notes}
+                                  onChange={(e) =>
+                                    updateExtraLine(slot.sessionNumber, index, {
+                                      notes: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-secondary ssm-extras-remove"
+                                disabled={saving}
+                                onClick={() => removeExtraLine(slot.sessionNumber, index)}
+                              >
+                                <Trash2 size={14} aria-hidden />
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-secondary ssm-extras-add"
+                        disabled={saving || inventoryItems.length === 0}
+                        onClick={() => addExtraLine(slot.sessionNumber)}
+                      >
+                        <Plus size={14} aria-hidden />
+                        Add line
+                      </button>
+                      {inventoryItems.length === 0 ? (
+                        <p className="ssm-extras-empty">
+                          No catalog items for this branch. Add items in Stock catalog first.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>

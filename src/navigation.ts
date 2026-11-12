@@ -86,6 +86,12 @@ export const navSections: NavSection[] = [
             roles: CLINIC,
           },
           {
+            label: 'Client journey',
+            path: '/client-journey',
+            icon: NotebookPen,
+            roles: CLINIC,
+          },
+          {
             label: 'Client sessions',
             path: '/sessions',
             icon: CalendarCheck2,
