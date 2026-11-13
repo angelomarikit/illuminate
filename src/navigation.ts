@@ -74,12 +74,6 @@ export const navSections: NavSection[] = [
         roles: CLINIC,
         children: [
           {
-            label: 'Register clients',
-            path: '/register-clients',
-            icon: UserPlus,
-            roles: CLINIC,
-          },
-          {
             label: 'Clients list',
             path: '/clients',
             icon: Users,
@@ -89,12 +83,6 @@ export const navSections: NavSection[] = [
             label: 'Client journey',
             path: '/client-journey',
             icon: NotebookPen,
-            roles: CLINIC,
-          },
-          {
-            label: 'Client sessions',
-            path: '/sessions',
-            icon: CalendarCheck2,
             roles: CLINIC,
           },
         ],
