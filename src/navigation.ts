@@ -74,6 +74,12 @@ export const navSections: NavSection[] = [
         roles: CLINIC,
         children: [
           {
+            label: 'Register clients',
+            path: '/register-clients',
+            icon: UserPlus,
+            roles: CLINIC,
+          },
+          {
             label: 'Clients list',
             path: '/clients',
             icon: Users,

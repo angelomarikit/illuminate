@@ -1,7 +1,8 @@
 import { NavLink } from 'react-router-dom'
-import { NotebookPen, Users } from 'lucide-react'
+import { NotebookPen, UserPlus, Users } from 'lucide-react'
 
 const links = [
+  { to: '/register-clients', label: 'Register clients', icon: UserPlus, end: true },
   { to: '/clients', label: 'Clients list', icon: Users, end: true },
   { to: '/client-journey', label: 'Client journey', icon: NotebookPen, end: true },
 ]
