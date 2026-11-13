@@ -6,10 +6,19 @@ import {
   type ClientJourney,
   type ClientJourneyStep,
   type JourneyStepNumber,
-  type Step1MedicalAssessment,
-  type Step2AestheticAssessment,
-  type Step3TreatmentProposal,
-  type Step4SocialConsent,
+  type StepAestheticAssessment,
+  type StepAftercare,
+  type StepBilling,
+  type StepMedicalForms,
+  type StepRecordService,
+  type StepReviewHistory,
+  type StepSocialConsent,
+  type StepSupplies,
+  type StepTreatment,
+  type StepTreatmentProposal,
+  type StepWait,
+  type StepWelcome,
+  type VisitLinks,
 } from '../types/clientJourney'
 import type { CustomerHistoryNote, CustomerLifestyle, CustomerMedicalConditions } from '../types'
 
@@ -34,7 +43,7 @@ export type JourneyCustomerSeed = {
   membership_expires_at: string | null
 }
 
-function emptyProposalLine(): Step3TreatmentProposal['lines'][number] {
+function emptyProposalLine() {
   return {
     id: crypto.randomUUID(),
     description: '',
@@ -44,7 +53,7 @@ function emptyProposalLine(): Step3TreatmentProposal['lines'][number] {
   }
 }
 
-export function emptyStep1(seed?: Partial<JourneyCustomerSeed> | null): Step1MedicalAssessment {
+export function emptyMedicalForms(seed?: Partial<JourneyCustomerSeed> | null): StepMedicalForms {
   return {
     patientName: seed?.name ?? '',
     sex: seed?.sex ?? '',
@@ -73,7 +82,7 @@ export function emptyStep1(seed?: Partial<JourneyCustomerSeed> | null): Step1Med
   }
 }
 
-export function emptyStep2(): Step2AestheticAssessment {
+export function emptyAesthetic(): StepAestheticAssessment {
   return {
     assessedAt: new Date().toISOString().slice(0, 10),
     overallNotes: '',
@@ -88,7 +97,7 @@ export function emptyStep2(): Step2AestheticAssessment {
   }
 }
 
-export function emptyStep3(patientName = ''): Step3TreatmentProposal {
+export function emptyProposal(patientName = ''): StepTreatmentProposal {
   return {
     patientName,
     proposalDate: new Date().toISOString().slice(0, 10),
@@ -127,7 +136,7 @@ export function emptyStep3(patientName = ''): Step3TreatmentProposal {
   }
 }
 
-export function emptyStep4(patientName = ''): Step4SocialConsent {
+export function emptySocialConsent(patientName = ''): StepSocialConsent {
   return {
     consentTextVersion: SOCIAL_CONSENT_TEXT_V1,
     patientName,
@@ -150,14 +159,151 @@ export function emptyStep4(patientName = ''): Step4SocialConsent {
   }
 }
 
+export function emptyWelcome(): StepWelcome {
+  return { reasonForVisit: '', detailsConfirmed: false, greeted: false, notes: '' }
+}
+
+export function emptyReview(): StepReviewHistory {
+  return {
+    historyChecked: false,
+    medicationsChecked: false,
+    allergiesChecked: false,
+    concernRaised: false,
+    concernNotes: '',
+    reviewerName: '',
+  }
+}
+
+export function emptyRecordService(): StepRecordService {
+  return { serviceAgreed: false, serviceName: '', notes: '' }
+}
+
+export function emptyBilling(): StepBilling {
+  return { paymentDone: false, paymentExplained: false, receiptNo: '', notes: '' }
+}
+
+export function emptyWait(): StepWait {
+  return { waterOffered: false, expectationsSet: false, notes: '' }
+}
+
+export function emptySupplies(): StepSupplies {
+  return { suppliesReady: false, extrasNoted: false, notes: '' }
+}
+
+export function emptyTreatment(): StepTreatment {
+  return { handedOff: false, treatmentDone: false, notes: '' }
+}
+
+export function emptyAftercare(): StepAftercare {
+  return { escortedOut: false, aftercareReviewed: false, aftercareNotes: '' }
+}
+
+/** @deprecated */
+export const emptyStep1 = emptyMedicalForms
+/** @deprecated */
+export const emptyStep2 = emptyAesthetic
+/** @deprecated */
+export const emptyStep3 = emptyProposal
+/** @deprecated */
+export const emptyStep4 = emptySocialConsent
+
 export function defaultPayloadForStep(
   step: JourneyStepNumber,
   seed?: Partial<JourneyCustomerSeed> | null,
-): Step1MedicalAssessment | Step2AestheticAssessment | Step3TreatmentProposal | Step4SocialConsent {
-  if (step === 1) return emptyStep1(seed)
-  if (step === 2) return emptyStep2()
-  if (step === 3) return emptyStep3(seed?.name ?? '')
-  return emptyStep4(seed?.name ?? '')
+): Record<string, unknown> {
+  switch (step) {
+    case 1:
+      return emptyWelcome() as unknown as Record<string, unknown>
+    case 2:
+      return emptyMedicalForms(seed) as unknown as Record<string, unknown>
+    case 3:
+      return emptyReview() as unknown as Record<string, unknown>
+    case 4:
+      return emptyAesthetic() as unknown as Record<string, unknown>
+    case 5:
+      return emptyProposal(seed?.name ?? '') as unknown as Record<string, unknown>
+    case 6:
+      return emptyRecordService() as unknown as Record<string, unknown>
+    case 7:
+      return emptyBilling() as unknown as Record<string, unknown>
+    case 8:
+      return emptyWait() as unknown as Record<string, unknown>
+    case 9:
+      return emptySupplies() as unknown as Record<string, unknown>
+    case 10:
+      return emptyTreatment() as unknown as Record<string, unknown>
+    case 11:
+      return emptyAftercare() as unknown as Record<string, unknown>
+  }
+}
+
+export function buildReturnTo(journeyId: string) {
+  return `/client-journey?journeyId=${encodeURIComponent(journeyId)}`
+}
+
+export function clientsAvailHref(customerId: string, journeyId: string) {
+  const qs = new URLSearchParams({
+    customerId,
+    avail: '1',
+    returnTo: buildReturnTo(journeyId),
+    journeyId,
+  })
+  return `/clients?${qs.toString()}`
+}
+
+export function posHref(customerId: string, journeyId: string) {
+  const qs = new URLSearchParams({
+    customerId,
+    returnTo: buildReturnTo(journeyId),
+    journeyId,
+  })
+  return `/pos?${qs.toString()}`
+}
+
+export function sessionsHref(packageId: string | null | undefined, journeyId: string) {
+  const qs = new URLSearchParams({
+    returnTo: buildReturnTo(journeyId),
+    journeyId,
+  })
+  if (packageId && isUuid(packageId)) qs.set('packageId', packageId)
+  return `/sessions?${qs.toString()}`
+}
+
+export function clientsHref(customerId: string, journeyId: string) {
+  const qs = new URLSearchParams({
+    customerId,
+    returnTo: buildReturnTo(journeyId),
+    journeyId,
+  })
+  return `/clients?${qs.toString()}`
+}
+
+export function registerHref(journeyId?: string) {
+  if (!journeyId) return '/register-clients'
+  const qs = new URLSearchParams({
+    returnTo: buildReturnTo(journeyId),
+    journeyId,
+  })
+  return `/register-clients?${qs.toString()}`
+}
+
+function normalizeJourney(row: Record<string, unknown>): ClientJourney {
+  return {
+    id: String(row.id),
+    customer_id: String(row.customer_id),
+    branch_id: (row.branch_id as string | null) ?? null,
+    status: row.status as ClientJourney['status'],
+    current_step: Number(row.current_step || 1) as JourneyStepNumber,
+    links: (row.links as VisitLinks) || {},
+    safety_paused: Boolean(row.safety_paused),
+    safety_cleared_at: (row.safety_cleared_at as string | null) ?? null,
+    safety_note: (row.safety_note as string | null) ?? null,
+    social_consent: (row.social_consent as StepSocialConsent | null) ?? null,
+    created_by: (row.created_by as string | null) ?? null,
+    updated_by: (row.updated_by as string | null) ?? null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  }
 }
 
 export async function searchCustomersForJourney(
@@ -203,7 +349,7 @@ export async function listJourneysForCustomer(customerId: string): Promise<Clien
     .eq('customer_id', customerId)
     .order('created_at', { ascending: false })
   if (error || !data) return []
-  return data as ClientJourney[]
+  return (data as Record<string, unknown>[]).map(normalizeJourney)
 }
 
 export async function loadJourneyWithSteps(journeyId: string): Promise<{
@@ -225,8 +371,11 @@ export async function loadJourneyWithSteps(journeyId: string): Promise<{
     .order('step_number')
 
   return {
-    journey: journey as ClientJourney,
-    steps: (steps as ClientJourneyStep[] | null) ?? [],
+    journey: normalizeJourney(journey as Record<string, unknown>),
+    steps: ((steps as ClientJourneyStep[] | null) ?? []).map((s) => ({
+      ...s,
+      step_number: Number(s.step_number) as JourneyStepNumber,
+    })),
   }
 }
 
@@ -244,6 +393,8 @@ export async function createJourney(opts: {
       branch_id: opts.branchId && isUuid(opts.branchId) ? opts.branchId : null,
       status: 'draft',
       current_step: 1,
+      links: {},
+      safety_paused: false,
       created_by: opts.userId && isUuid(opts.userId) ? opts.userId : null,
       updated_by: opts.userId && isUuid(opts.userId) ? opts.userId : null,
     })
@@ -255,12 +406,12 @@ export async function createJourney(opts: {
     if (msg.includes('client_journeys') || msg.includes('schema cache')) {
       return {
         ok: false,
-        error: `${msg} — run supabase/add_client_journey.sql in Supabase.`,
+        error: `${msg} — run supabase/add_client_visit_board.sql in Supabase.`,
       }
     }
     return { ok: false, error: msg }
   }
-  return { ok: true, journey: data as ClientJourney }
+  return { ok: true, journey: normalizeJourney(data as Record<string, unknown>) }
 }
 
 export async function upsertJourneyStep(opts: {
@@ -312,23 +463,23 @@ export async function upsertJourneyStep(opts: {
       ok: false,
       error:
         stepErr.message.includes('client_journey') || stepErr.message.includes('schema cache')
-          ? `${stepErr.message} — run supabase/add_client_journey.sql in Supabase.`
+          ? `${stepErr.message} — run supabase/add_client_visit_board.sql in Supabase.`
           : stepErr.message,
     }
   }
 
-  const nextStep = opts.advance
-    ? Math.min(4, opts.stepNumber + (opts.markComplete ? 1 : 0))
-    : undefined
-
   const journeyPatch: Record<string, unknown> = {
     updated_at: now,
     updated_by: userId,
-    status: opts.stepNumber === 4 && opts.markComplete ? 'completed' : 'in_progress',
+    status: opts.stepNumber === 11 && opts.markComplete ? 'completed' : 'in_progress',
   }
-  if (nextStep != null) journeyPatch.current_step = nextStep
-  else if (opts.markComplete && opts.stepNumber < 4) {
+
+  if (opts.advance && opts.markComplete && opts.stepNumber < 11) {
     journeyPatch.current_step = (opts.stepNumber + 1) as JourneyStepNumber
+  } else if (opts.markComplete && opts.stepNumber === 11) {
+    journeyPatch.current_step = 11
+  } else if (!opts.markComplete) {
+    journeyPatch.current_step = opts.stepNumber
   }
 
   const { error: journeyErr } = await supabase
@@ -338,4 +489,73 @@ export async function upsertJourneyStep(opts: {
 
   if (journeyErr) return { ok: false, error: journeyErr.message }
   return { ok: true }
+}
+
+export async function updateJourneySafety(opts: {
+  journeyId: string
+  safetyPaused: boolean
+  safetyNote: string | null
+  userId: string | null
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isUuid(opts.journeyId)) return { ok: false, error: 'Invalid journey.' }
+  const now = new Date().toISOString()
+  const { error } = await supabase
+    .from('client_journeys')
+    .update({
+      safety_paused: opts.safetyPaused,
+      safety_note: opts.safetyNote,
+      safety_cleared_at: opts.safetyPaused ? null : now,
+      updated_at: now,
+      updated_by: opts.userId && isUuid(opts.userId) ? opts.userId : null,
+    })
+    .eq('id', opts.journeyId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+export async function updateJourneyLinks(opts: {
+  journeyId: string
+  links: VisitLinks
+  userId: string | null
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isUuid(opts.journeyId)) return { ok: false, error: 'Invalid journey.' }
+  const { data: existing } = await supabase
+    .from('client_journeys')
+    .select('links')
+    .eq('id', opts.journeyId)
+    .maybeSingle()
+  const prev = ((existing as { links?: VisitLinks } | null)?.links || {}) as VisitLinks
+  const { error } = await supabase
+    .from('client_journeys')
+    .update({
+      links: { ...prev, ...opts.links },
+      updated_at: new Date().toISOString(),
+      updated_by: opts.userId && isUuid(opts.userId) ? opts.userId : null,
+    })
+    .eq('id', opts.journeyId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+export async function saveSocialConsent(opts: {
+  journeyId: string
+  consent: StepSocialConsent
+  userId: string | null
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isUuid(opts.journeyId)) return { ok: false, error: 'Invalid journey.' }
+  const { error } = await supabase
+    .from('client_journeys')
+    .update({
+      social_consent: opts.consent,
+      updated_at: new Date().toISOString(),
+      updated_by: opts.userId && isUuid(opts.userId) ? opts.userId : null,
+    })
+    .eq('id', opts.journeyId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+export function proposalBlockedBySafety(journey: ClientJourney | null): boolean {
+  if (!journey) return false
+  return journey.safety_paused && !journey.safety_cleared_at
 }
