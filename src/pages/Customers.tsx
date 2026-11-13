@@ -215,43 +215,85 @@ export function Customers() {
     setLoading(true)
     setError('')
 
-    let request = supabase
-      .from('customers')
-      .select(
-        'id, branch_id, full_name, phone, email, membership, membership_expires_at, points, cash_in_balance, visits, last_visit, age, birthday, sex, address, medical_history, notes, occupation, facebook, instagram, medical_conditions, topical_medications, medications_intake, lifestyle, history_notes, signature_primary, signature_confirm, intake_completed_at',
-      )
-      .order('full_name')
+    try {
+      // Omit signature data URLs from the directory query — they can be tens of KB each
+      // and stall / empty the Clients list when loading every customer at once.
+      let request = supabase
+        .from('customers')
+        .select(
+          'id, branch_id, full_name, phone, email, membership, membership_expires_at, points, cash_in_balance, visits, last_visit, age, birthday, sex, address, medical_history, notes, occupation, facebook, instagram, medical_conditions, topical_medications, medications_intake, lifestyle, history_notes, intake_completed_at',
+        )
+        .order('full_name')
 
-    if (branchId && isUuid(branchId)) {
-      request = request.or(`branch_id.eq.${branchId},branch_id.is.null`)
-    }
+      if (branchId && isUuid(branchId)) {
+        request = request.or(`branch_id.eq.${branchId},branch_id.is.null`)
+      }
 
-    const { data, error: fetchError } = await request
+      const { data, error: fetchError } = await request
 
-    if (fetchError) {
-      setError(
-        fetchError.message.includes('occupation') ||
-          fetchError.message.includes('history_notes') ||
-          fetchError.message.includes('signature_primary') ||
-          fetchError.message.includes('schema cache')
-          ? `${fetchError.message} — run supabase/add_customer_intake.sql in Supabase.`
-          : fetchError.message.includes('birthday')
-            ? `${fetchError.message} — run supabase/add_customer_birthday.sql in Supabase.`
-            : fetchError.message.includes('age') || fetchError.message.includes('medical_history')
-              ? `${fetchError.message} — run supabase/fix_public_booking_flow.sql in Supabase.`
-              : fetchError.message,
-      )
+      if (fetchError) {
+        setError(
+          fetchError.message.includes('occupation') ||
+            fetchError.message.includes('history_notes') ||
+            fetchError.message.includes('schema cache')
+            ? `${fetchError.message} — run supabase/add_customer_intake.sql in Supabase.`
+            : fetchError.message.includes('birthday')
+              ? `${fetchError.message} — run supabase/add_customer_birthday.sql in Supabase.`
+              : fetchError.message.includes('age') || fetchError.message.includes('medical_history')
+                ? `${fetchError.message} — run supabase/fix_public_booking_flow.sql in Supabase.`
+                : fetchError.message,
+        )
+        setRows([])
+      } else {
+        setRows(
+          ((data as Omit<CustomerRow, 'signature_primary' | 'signature_confirm'>[] | null) ?? []).map(
+            (row) =>
+              mapCustomer({
+                ...row,
+                signature_primary: null,
+                signature_confirm: null,
+              }),
+          ),
+        )
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load clients.')
       setRows([])
-    } else {
-      setRows((data as CustomerRow[] | null)?.map(mapCustomer) ?? [])
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
   }, [branchId])
+
+  const loadIntakeSignatures = useCallback(async (customerId: string) => {
+    if (!isUuid(customerId)) return
+    const { data } = await supabase
+      .from('customers')
+      .select('signature_primary, signature_confirm')
+      .eq('id', customerId)
+      .maybeSingle()
+    if (!data) return
+    setRows((prev) =>
+      prev.map((c) =>
+        c.id === customerId
+          ? {
+              ...c,
+              signaturePrimary: (data as { signature_primary?: string | null }).signature_primary ?? null,
+              signatureConfirm: (data as { signature_confirm?: string | null }).signature_confirm ?? null,
+            }
+          : c,
+      ),
+    )
+  }, [])
 
   useEffect(() => {
     loadCustomers()
   }, [loadCustomers])
+
+  useEffect(() => {
+    if (profileTab === 'intake' && selectedId) {
+      void loadIntakeSignatures(selectedId)
+    }
+  }, [profileTab, selectedId, loadIntakeSignatures])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
