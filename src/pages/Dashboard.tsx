@@ -18,21 +18,12 @@ import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
 import { useBranch } from '../context/BranchContext'
 import { formatShortDate, inDateRange, toLocalISODate } from '../lib/dates'
+import { loadRecognizedSales, localDayKeyFromSoldAt, type SaleForTotal } from '../lib/salesTotals'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, isUuid } from '../lib/utils'
 import './Dashboard.css'
 
-type SaleRow = {
-  id: string
-  receipt_no: string
-  customer_name: string | null
-  items: string | null
-  total: number
-  payment_method: string
-  sold_at: string
-  points_used: number
-  sales_by: string | null
-}
+type SaleRow = SaleForTotal
 
 type ServicePoint = { name: string; revenue: number; units: number }
 type StaffPoint = { name: string; sales: number; commission: number; count: number }
@@ -94,13 +85,13 @@ function aggregateTopServices(sales: SaleRow[], limit = 8): ServicePoint[] {
     if (!lines.length) {
       const name = 'Unspecified'
       const cur = map.get(name) ?? { name, revenue: 0, units: 0 }
-      cur.revenue += Number(sale.total || 0)
+      cur.revenue += Number(sale.recognizedTotal ?? sale.total ?? 0)
       cur.units += 1
       map.set(name, cur)
       continue
     }
     const totalUnits = lines.reduce((sum, l) => sum + l.units, 0) || 1
-    const saleTotal = Number(sale.total || 0)
+    const saleTotal = Number(sale.recognizedTotal ?? sale.total ?? 0)
     for (const line of lines) {
       const cur = map.get(line.name) ?? { name: line.name, revenue: 0, units: 0 }
       cur.revenue += saleTotal * (line.units / totalUnits)
@@ -125,7 +116,8 @@ function estimateCommissionFromRules(
   for (const sale of sales) {
     const staff = (sale.sales_by || '').trim()
     if (!staff) continue
-    const total = Number(sale.total || 0)
+    const total = Number(sale.recognizedTotal ?? sale.total ?? 0)
+    if (total <= 0) continue
     const cur = byStaff.get(staff) ?? { service: 0, product: 0 }
     if (looksLikeProductItems(sale.items)) cur.product += total
     else cur.service += total
@@ -149,7 +141,7 @@ function estimateCommissionFromRules(
 function commissionForSale(sale: SaleRow, rules: IncentiveRule[]): number {
   const staff = (sale.sales_by || '').trim()
   if (!staff) return 0
-  const total = Number(sale.total || 0)
+  const total = Number(sale.recognizedTotal ?? sale.total ?? 0)
   if (total <= 0) return 0
   const serviceRule = rules.find((r) => r.active && r.incentive_type === 'service_commission')
   const productRule = rules.find((r) => r.active && r.incentive_type === 'product_incentive')
@@ -170,12 +162,14 @@ function buildStaffTrend(
 ): StaffTrendPoint[] {
   const daySales = new Map<string, number>()
   const dayCommission = new Map<string, number>()
-  const totalSales = sales.reduce((sum, s) => sum + Number(s.total || 0), 0) || 1
+  const totalSales =
+    sales.reduce((sum, s) => sum + Number(s.recognizedTotal ?? s.total ?? 0), 0) || 1
   const totalCommission = Array.from(commissionByStaff.values()).reduce((a, b) => a + b, 0)
 
   for (const sale of sales) {
-    const key = String(sale.sold_at).slice(0, 10)
-    const amount = Number(sale.total || 0)
+    const key = localDayKeyFromSoldAt(sale.sold_at)
+    const amount = Number(sale.recognizedTotal ?? sale.total ?? 0)
+    if (amount <= 0) continue
     daySales.set(key, (daySales.get(key) || 0) + amount)
     if (usePayoutShare) {
       dayCommission.set(key, (dayCommission.get(key) || 0) + (totalCommission * amount) / totalSales)
@@ -258,15 +252,6 @@ export function Dashboard() {
       const safeFrom = from <= to ? from : to
       const safeTo = from <= to ? to : from
 
-      let salesQ = supabase
-        .from('sales')
-        .select(
-          'id, receipt_no, customer_name, items, total, payment_method, sold_at, points_used, sales_by',
-        )
-        .gte('sold_at', `${safeFrom}T00:00:00`)
-        .lte('sold_at', `${safeTo}T23:59:59`)
-        .order('sold_at', { ascending: false })
-        .limit(500)
       let apptQ = supabase
         .from('appointments')
         .select(
@@ -304,7 +289,6 @@ export function Dashboard() {
         .eq('active', true)
 
       if (isUuid(branchId)) {
-        salesQ = salesQ.eq('branch_id', branchId)
         apptQ = apptQ.or(`branch_id.eq.${branchId},branch_id.is.null`)
         invQ = invQ.eq('branch_id', branchId)
         custQ = custQ.eq('branch_id', branchId)
@@ -313,17 +297,25 @@ export function Dashboard() {
       }
 
       const [
-        { data: salesData },
+        salesResult,
         { data: apptData },
         { data: invData },
         { data: custData },
         { data: expenseData },
         { data: payoutData },
         { data: rulesData },
-      ] = await Promise.all([salesQ, apptQ, invQ, custQ, expenseQ, payoutQ, rulesQ])
+      ] = await Promise.all([
+        loadRecognizedSales({ fromDate: safeFrom, toDate: safeTo, branchId }),
+        apptQ,
+        invQ,
+        custQ,
+        expenseQ,
+        payoutQ,
+        rulesQ,
+      ])
 
-      const sales = (salesData as SaleRow[]) ?? []
-      setRangeSalesTotal(sales.reduce((sum, s) => sum + Number(s.total || 0), 0))
+      const sales = salesResult.sales
+      setRangeSalesTotal(salesResult.total)
       setPointsRedeemed(sales.reduce((sum, s) => sum + Number(s.points_used || 0), 0))
       setRecentSales(sales.slice(0, 8))
       setRangeAppts((apptData as AppointmentRow[]) ?? [])
@@ -332,8 +324,10 @@ export function Dashboard() {
       const byMap = new Map<string, StaffPoint>()
       for (const s of sales) {
         const name = (s.sales_by || 'Unassigned').trim() || 'Unassigned'
+        const amount = Number(s.recognizedTotal || 0)
+        if (amount <= 0) continue
         const cur = byMap.get(name) ?? { name, sales: 0, commission: 0, count: 0 }
-        cur.sales += Number(s.total || 0)
+        cur.sales += amount
         cur.count += 1
         byMap.set(name, cur)
       }
@@ -407,9 +401,9 @@ export function Dashboard() {
         }
       }
       for (const s of sales) {
-        const key = String(s.sold_at).slice(0, 10)
+        const key = localDayKeyFromSoldAt(s.sold_at)
         const cur = dayMap.get(key) ?? { month: key.slice(5), revenue: 0, expenses: 0 }
-        cur.revenue += Number(s.total || 0)
+        cur.revenue += Number(s.recognizedTotal || 0)
         dayMap.set(key, cur)
       }
       for (const e of (expenseData as { amount: number; expense_date: string }[]) ?? []) {
@@ -920,7 +914,7 @@ export function Dashboard() {
                         <td>{sale.receipt_no}</td>
                         <td>{sale.customer_name || '—'}</td>
                         <td>{sale.sales_by || '—'}</td>
-                        <td>{formatCurrency(Number(sale.total))}</td>
+                        <td>{formatCurrency(Number(sale.recognizedTotal ?? sale.total))}</td>
                         <td>
                           <span className="badge">{sale.payment_method}</span>
                         </td>

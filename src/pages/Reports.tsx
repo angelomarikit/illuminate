@@ -5,24 +5,10 @@ import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
 import { canDeleteClinicData } from '../lib/roles'
+import { loadRecognizedSales, localDayKeyFromSoldAt } from '../lib/salesTotals'
 import { supabase } from '../lib/supabase'
 import { downloadCsv, formatCurrency, isUuid } from '../lib/utils'
 import './reports.css'
-
-type SaleRow = {
-  id: string
-  branch_id: string | null
-  customer_name: string | null
-  items: string
-  total: number | string
-  payment_method: string
-  administered_by: string | null
-  sales_by: string | null
-  staff_name: string | null
-  doctor_notes: string | null
-  sold_at: string
-  receipt_no: string
-}
 
 type PackageEmbed = {
   customer_name: string | null
@@ -109,71 +95,21 @@ export function Reports() {
       return
     }
 
-    // Local calendar day bounds (clinic timezone), then convert for timestamptz compare.
-    const fromIso = new Date(`${from}T00:00:00`).toISOString()
-    const toIso = new Date(`${to}T23:59:59.999`).toISOString()
-
-    const { data: salesData, error: salesErr } = await supabase
-      .from('sales')
-      .select(
-        'id, branch_id, customer_name, items, total, payment_method, administered_by, sales_by, staff_name, doctor_notes, sold_at, receipt_no',
-      )
-      .gte('sold_at', fromIso)
-      .lte('sold_at', toIso)
-      .order('sold_at', { ascending: false })
-
-    if (salesErr) {
-      setError(
-        salesErr.message.includes('schema cache') || salesErr.message.includes('sales')
-          ? `${salesErr.message} — confirm sales + add_pos_attribution.sql are applied.`
-          : salesErr.message,
-      )
+    // Shared clinic sales recognition (same rules as Dashboard).
+    const salesResult = await loadRecognizedSales({
+      fromDate: from,
+      toDate: to,
+      branchId,
+    })
+    if (salesResult.error) {
+      setError(salesResult.error)
       setRows([])
       setLoading(false)
       return
     }
 
-    const salesInRange = ((salesData as SaleRow[] | null) ?? []).filter((s) =>
-      matchesBranch(s.branch_id, branchId),
-    )
-
-    // Original package receipts must not count when installment payments exist for that package
-    // (otherwise Reports = full package price + installment = double count).
-    const installmentPlanReceipts = new Set<string>()
-    const receiptNos = [
-      ...new Set(salesInRange.map((s) => s.receipt_no).filter(Boolean)),
-    ]
-    for (let i = 0; i < receiptNos.length; i += 80) {
-      const chunk = receiptNos.slice(i, i + 80)
-      const { data: pkgs } = await supabase
-        .from('client_session_packages')
-        .select('id, sale_receipt_no')
-        .in('sale_receipt_no', chunk)
-      const pkgRows =
-        (pkgs as { id: string; sale_receipt_no: string | null }[] | null) ?? []
-      if (!pkgRows.length) continue
-      const pkgIds = pkgRows.map((p) => p.id)
-      const { data: paySlots } = await supabase
-        .from('client_session_slots')
-        .select('package_id, payment_amount')
-        .in('package_id', pkgIds)
-        .gt('payment_amount', 0)
-      const pkgsWithInstallments = new Set(
-        ((paySlots as { package_id: string }[] | null) ?? []).map((s) => s.package_id),
-      )
-      for (const pkg of pkgRows) {
-        if (pkg.sale_receipt_no && pkgsWithInstallments.has(pkg.id)) {
-          installmentPlanReceipts.add(pkg.sale_receipt_no)
-        }
-      }
-    }
-
-    const saleRows: ReportRow[] = salesInRange.map((s) => {
-      const day = new Date(s.sold_at)
-      const dayStr = Number.isNaN(day.getTime()) ? s.sold_at.slice(0, 10) : toDateInput(day)
-      const isInstallmentLine = /installment/i.test(s.items || '')
-      const isPackageBookedOnPlan =
-        !isInstallmentLine && installmentPlanReceipts.has(s.receipt_no)
+    const saleRows: ReportRow[] = salesResult.sales.map((s) => {
+      const dayStr = localDayKeyFromSoldAt(s.sold_at)
       const rawPay = Number(s.total) || 0
       return {
         id: `sale-${s.id}`,
@@ -183,15 +119,15 @@ export function Reports() {
         service: s.items || '—',
         sessionDate: formatSessionDate(dayStr),
         sessionDateSort: dayStr,
-        payment: isPackageBookedOnPlan ? 0 : rawPay,
-        paymentLabel: isPackageBookedOnPlan
+        payment: s.recognizedTotal,
+        paymentLabel: s.packageBookedOnPlan
           ? 'Package booked · paid via installments'
-          : isInstallmentLine
+          : s.isInstallmentLine
             ? `${s.payment_method || 'Cash'} · installment`
             : s.payment_method || 'Cash',
         attendant:
           s.administered_by?.trim() || s.sales_by?.trim() || s.staff_name?.trim() || '—',
-        remarks: isPackageBookedOnPlan
+        remarks: s.packageBookedOnPlan
           ? [s.doctor_notes?.trim(), `List price ${rawPay.toLocaleString('en-PH')}`]
               .filter(Boolean)
               .join(' · ')
