@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Letter of Authorization — Angelo Marikit | Illuminate</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 18mm 18mm 18mm 18mm;
+      }
+      :root {
+        --ink: #1a1a1a;
+        --muted: #555;
+        --line: #222;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: 'Times New Roman', Times, Georgia, serif;
+        font-size: 12pt;
+        line-height: 1.45;
+        background: #e8e8e8;
+      }
+      .sheet {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 12px auto;
+        padding: 18mm 20mm;
+        background: #fff;
+        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.12);
+      }
+      .brand {
+        text-align: center;
+        border-bottom: 2px solid var(--line);
+        padding-bottom: 10px;
+        margin-bottom: 18px;
+      }
+      .brand h1 {
+        margin: 0;
+        font-size: 16pt;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .brand p {
+        margin: 4px 0 0;
+        font-size: 10.5pt;
+        color: var(--muted);
+      }
+      h2 {
+        text-align: center;
+        font-size: 13.5pt;
+        margin: 0 0 4px;
+        text-decoration: underline;
+        text-transform: uppercase;
+      }
+      .subtitle {
+        text-align: center;
+        font-size: 10.5pt;
+        color: var(--muted);
+        margin: 0 0 18px;
+      }
+      .meta {
+        margin-bottom: 14px;
+      }
+      p {
+        margin: 0 0 10px;
+        text-align: justify;
+      }
+      .blank {
+        display: inline-block;
+        min-width: 12em;
+        border-bottom: 1px solid #333;
+        height: 1em;
+        vertical-align: baseline;
+      }
+      .blank.short {
+        min-width: 6em;
+      }
+      .blank.long {
+        min-width: 18em;
+      }
+      .section-title {
+        font-weight: bold;
+        margin: 14px 0 6px;
+        text-align: left;
+      }
+      ol {
+        margin: 0 0 12px;
+        padding-left: 1.3em;
+      }
+      ol li {
+        margin-bottom: 6px;
+        text-align: justify;
+      }
+      .facts {
+        margin: 8px 0 12px 0;
+      }
+      .facts div {
+        margin: 3px 0;
+      }
+      .facts strong {
+        display: inline-block;
+        min-width: 10.5em;
+      }
+      .sign-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 28px;
+        margin-top: 28px;
+      }
+      .sign-block {
+        min-height: 160px;
+      }
+      .sign-block h3 {
+        margin: 0 0 28px;
+        font-size: 11pt;
+        text-transform: uppercase;
+      }
+      .sign-line {
+        margin: 18px 0 0;
+        border-top: 1px solid #333;
+        padding-top: 4px;
+        font-size: 10.5pt;
+      }
+      .note {
+        margin-top: 22px;
+        font-size: 10pt;
+        font-style: italic;
+        color: var(--muted);
+      }
+      .toolbar {
+        max-width: 210mm;
+        margin: 12px auto 0;
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      .toolbar button {
+        font: 600 13px/1 system-ui, sans-serif;
+        padding: 10px 14px;
+        border: 0;
+        border-radius: 8px;
+        background: #1a1a1a;
+        color: #fff;
+        cursor: pointer;
+      }
+      @media print {
+        body {
+          background: #fff;
+        }
+        .toolbar {
+          display: none;
+        }
+        .sheet {
+          margin: 0;
+          box-shadow: none;
+          width: auto;
+          min-height: auto;
+          padding: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    </div>
+    <article class="sheet">
+      <header class="brand">
+        <h1>Illuminate Aesthetic Clinic</h1>
+        <p>3rd Floor, Ayala Malls Capitol Central, Bacolod City</p>
+        <p>
+          Email: <span class="blank long" contenteditable="true"></span>
+          &nbsp;|&nbsp; Contact:
+          <span class="blank" contenteditable="true"></span>
+        </p>
+      </header>
+
+      <h2>Letter of Authorization (LOA)</h2>
+      <p class="subtitle">
+        For iTexMo SMS API Account &amp; Sender ID Registration
+      </p>
+
+      <p class="meta">
+        Date: <span class="blank" contenteditable="true"></span>
+      </p>
+
+      <p><strong>To:</strong> iTexMo / SMS Gateway Support</p>
+
+      <p>
+        I,
+        <span class="blank long" contenteditable="true" title="Owner full legal name"></span
+        >, of legal age, and the Owner / Authorized Signatory of
+        <strong>Illuminate Aesthetic Clinic</strong> (also referred to as Illuminate
+        Aesthetics / Illuminate Medical Aesthetics), with business address at 3rd Floor,
+        Ayala Malls Capitol Central, Bacolod City, do hereby authorize:
+      </p>
+
+      <div class="section-title">Authorized Representative</div>
+      <div class="facts">
+        <div><strong>Name:</strong> Angelo Marikit</div>
+        <div><strong>Role:</strong> Software Developer / Technical Representative</div>
+        <div>
+          <strong>Email:</strong>
+          <span class="blank long" contenteditable="true"></span>
+        </div>
+        <div>
+          <strong>Contact No.:</strong>
+          <span class="blank" contenteditable="true"></span>
+        </div>
+        <div>
+          <strong>Government ID:</strong>
+          <span class="blank long" contenteditable="true"></span>
+        </div>
+      </div>
+
+      <p>to act on behalf of Illuminate Aesthetic Clinic for the following purposes:</p>
+      <ol>
+        <li>Communicate with iTexMo regarding our SMS API account;</li>
+        <li>
+          Register, apply for, and manage Sender ID / branded SMS identity for clinic
+          notifications;
+        </li>
+        <li>
+          Coordinate API credentials, IP allowlisting / access confirmation for our cloud
+          systems (including Supabase Edge Functions / AWS egress used by Illuminate);
+        </li>
+        <li>
+          Submit and receive documents, updates, and technical requirements related to SMS
+          integration for the Illuminate clinic system; and
+        </li>
+        <li>
+          Perform other acts reasonably necessary to complete Sender ID approval and SMS
+          service activation for Illuminate Aesthetic Clinic.
+        </li>
+      </ol>
+
+      <p>
+        This authorization does <strong>not</strong> transfer ownership of the clinic or the
+        iTexMo account. The Owner remains the account principal. This LOA is valid from the
+        date of signing until revoked in writing by the Owner.
+      </p>
+
+      <p>
+        I confirm that any SMS messages sent through this account are for legitimate clinic
+        operations (appointment confirmations, reminders, and related client communications).
+      </p>
+
+      <p>
+        Signed this
+        <span class="blank short" contenteditable="true"></span> day of
+        <span class="blank" contenteditable="true"></span>, 20<span
+          class="blank short"
+          contenteditable="true"
+        ></span
+        >, in Bacolod City, Philippines.
+      </p>
+
+      <div class="sign-grid">
+        <div class="sign-block">
+          <h3>Owner / Authorized Signatory</h3>
+          <div class="sign-line">Signature over printed name</div>
+          <p style="margin-top: 10px">
+            Printed name: <span class="blank long" contenteditable="true"></span>
+          </p>
+          <p>Position / Title: Owner</p>
+          <p>Date: <span class="blank" contenteditable="true"></span></p>
+        </div>
+        <div class="sign-block">
+          <h3>Authorized Developer (Conforme)</h3>
+          <div class="sign-line">Signature over printed name</div>
+          <p style="margin-top: 10px"><strong>Printed name: Angelo Marikit</strong></p>
+          <p>Position / Title: Software Developer</p>
+          <p>Date: <span class="blank" contenteditable="true"></span></p>
+        </div>
+      </div>
+
+      <p class="note">
+        Attach: photocopy of Owner’s valid government ID and Angelo Marikit’s valid government
+        ID (as required by iTexMo).
+      </p>
+    </article>
+  </body>
+</html>
