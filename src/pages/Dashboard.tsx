@@ -16,8 +16,10 @@ import {
 } from 'recharts'
 import { MembershipBadge } from '../components/MembershipBadge'
 import { PageHeader } from '../components/PageHeader'
+import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
 import { formatShortDate, inDateRange, toLocalISODate } from '../lib/dates'
+import { isElevatedRole } from '../lib/roles'
 import { loadRecognizedSales, localDayKeyFromSoldAt, type SaleForTotal } from '../lib/salesTotals'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, isUuid } from '../lib/utils'
@@ -225,7 +227,9 @@ function defaultRange() {
 }
 
 export function Dashboard() {
+  const { user } = useAuth()
   const { branchId, branchName } = useBranch()
+  const canSeeSalesTotal = isElevatedRole(user?.role)
   const today = toLocalISODate()
   const initial = useMemo(() => defaultRange(), [])
   const [rangeFrom, setRangeFrom] = useState(initial.from)
@@ -498,11 +502,13 @@ export function Dashboard() {
       </div>
 
       <div className="stat-grid dash-stats" style={{ marginBottom: 16 }}>
-        <div className="stat-card dash-stat">
-          <div className="stat-label">Sales</div>
-          <div className="stat-value">{formatCurrency(rangeSalesTotal)}</div>
-          <div className="stat-meta">{rangeLabel}</div>
-        </div>
+        {canSeeSalesTotal ? (
+          <div className="stat-card dash-stat">
+            <div className="stat-label">Sales</div>
+            <div className="stat-value">{formatCurrency(rangeSalesTotal)}</div>
+            <div className="stat-meta">{rangeLabel}</div>
+          </div>
+        ) : null}
         <div className="stat-card dash-stat">
           <div className="stat-label">Appointments</div>
           <div className="stat-value">{rangeAppts.length}</div>
@@ -637,6 +643,7 @@ export function Dashboard() {
         </div>
       </div>
 
+      {canSeeSalesTotal ? (
       <div className="panel dash-finance" style={{ marginBottom: 16 }}>
         <div className="panel-header">
           <h2 className="panel-title">Revenue vs Expenses</h2>
@@ -775,6 +782,7 @@ export function Dashboard() {
           )}
         </div>
       </div>
+      ) : null}
 
       <div className="dash-grid-2 dash-align-start">
         <div className="panel">

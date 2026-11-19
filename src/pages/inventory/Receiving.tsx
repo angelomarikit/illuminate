@@ -17,6 +17,18 @@ type ReceiptRow = {
   received_by: string | null
   created_at: string
 }
+type ReceiptLineView = {
+  key: string
+  receiptId: string
+  received_at: string
+  supplier: string | null
+  reference_no: string | null
+  received_by: string | null
+  notes: string | null
+  itemName: string
+  qty: number
+  unit: string
+}
 type LineForm = { itemId: string; qty: string; unitCost: string; lotNo: string; expiry: string }
 
 const emptyLine = (): LineForm => ({
@@ -32,6 +44,7 @@ export function Receiving() {
   const { branchId } = useBranch()
   const [items, setItems] = useState<ItemOpt[]>([])
   const [receipts, setReceipts] = useState<ReceiptRow[]>([])
+  const [receiptLines, setReceiptLines] = useState<ReceiptLineView[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -76,8 +89,57 @@ export function Receiving() {
           : (itemErr || receiptErr)?.message || 'Failed to load',
       )
     }
+    const receiptRows = (receiptData as ReceiptRow[] | null) ?? []
     setItems((itemData as ItemOpt[] | null) ?? [])
-    setReceipts((receiptData as ReceiptRow[] | null) ?? [])
+    setReceipts(receiptRows)
+
+    // Flatten receipt lines so Recent receipts can show Item + Quantity.
+    if (receiptRows.length) {
+      const receiptIds = receiptRows.map((r) => r.id)
+      const byReceipt = new Map(receiptRows.map((r) => [r.id, r]))
+      const lineViews: ReceiptLineView[] = []
+      for (let i = 0; i < receiptIds.length; i += 80) {
+        const chunk = receiptIds.slice(i, i + 80)
+        const { data: lineData } = await supabase
+          .from('inventory_receipt_lines')
+          .select('id, receipt_id, qty, inventory_items(name, unit)')
+          .in('receipt_id', chunk)
+          .order('created_at', { ascending: true })
+        for (const line of (lineData as {
+          id: string
+          receipt_id: string
+          qty: number
+          inventory_items?: { name?: string; unit?: string } | { name?: string; unit?: string }[] | null
+        }[] | null) ?? []) {
+          const header = byReceipt.get(line.receipt_id)
+          if (!header) continue
+          const itemEmbed = Array.isArray(line.inventory_items)
+            ? line.inventory_items[0]
+            : line.inventory_items
+          lineViews.push({
+            key: line.id,
+            receiptId: line.receipt_id,
+            received_at: header.received_at,
+            supplier: header.supplier,
+            reference_no: header.reference_no,
+            received_by: header.received_by,
+            notes: header.notes,
+            itemName: itemEmbed?.name?.trim() || 'Unknown item',
+            qty: Number(line.qty) || 0,
+            unit: itemEmbed?.unit?.trim() || 'pc',
+          })
+        }
+      }
+      // Keep newest receipts first (same order as headers).
+      const order = new Map(receiptIds.map((id, idx) => [id, idx]))
+      lineViews.sort(
+        (a, b) => (order.get(a.receiptId) ?? 0) - (order.get(b.receiptId) ?? 0),
+      )
+      setReceiptLines(lineViews)
+    } else {
+      setReceiptLines([])
+    }
+
     setLoading(false)
   }, [branchId])
 
@@ -356,14 +418,20 @@ export function Receiving() {
         <div className="panel-body">
           {loading ? (
             <div className="empty-state">Loading…</div>
-          ) : receipts.length === 0 ? (
-            <div className="empty-state">No receipts logged yet.</div>
+          ) : receiptLines.length === 0 ? (
+            <div className="empty-state">
+              {receipts.length === 0
+                ? 'No receipts logged yet.'
+                : 'Receipts found, but no line items to show.'}
+            </div>
           ) : (
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
                   <tr>
                     <th>Date</th>
+                    <th>Item</th>
+                    <th>Quantity</th>
                     <th>Supplier</th>
                     <th>Reference</th>
                     <th>Received by</th>
@@ -371,13 +439,19 @@ export function Receiving() {
                   </tr>
                 </thead>
                 <tbody>
-                  {receipts.map((r) => (
-                    <tr key={r.id}>
-                      <td>{r.received_at}</td>
-                      <td>{r.supplier || '—'}</td>
-                      <td>{r.reference_no || '—'}</td>
-                      <td>{r.received_by || '—'}</td>
-                      <td>{r.notes || '—'}</td>
+                  {receiptLines.map((row) => (
+                    <tr key={row.key}>
+                      <td>{row.received_at}</td>
+                      <td>
+                        <strong>{row.itemName}</strong>
+                      </td>
+                      <td>
+                        {row.qty} {row.unit}
+                      </td>
+                      <td>{row.supplier || '—'}</td>
+                      <td>{row.reference_no || '—'}</td>
+                      <td>{row.received_by || '—'}</td>
+                      <td>{row.notes || '—'}</td>
                     </tr>
                   ))}
                 </tbody>

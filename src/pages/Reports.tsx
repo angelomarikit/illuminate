@@ -4,7 +4,7 @@ import { PageHeader } from '../components/PageHeader'
 import { StatusMessage } from '../components/StatusMessage'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
-import { canDeleteClinicData } from '../lib/roles'
+import { canDeleteClinicData, isElevatedRole } from '../lib/roles'
 import { loadRecognizedSales, localDayKeyFromSoldAt } from '../lib/salesTotals'
 import { supabase } from '../lib/supabase'
 import { downloadCsv, formatCurrency, isUuid } from '../lib/utils'
@@ -69,6 +69,7 @@ export function Reports() {
   const { user } = useAuth()
   const { branchId } = useBranch()
   const canDelete = canDeleteClinicData(user?.role)
+  const canSeeSalesTotal = isElevatedRole(user?.role)
   const [fromDate, setFromDate] = useState(startOfMonthInput)
   const [toDate, setToDate] = useState(() => toDateInput(new Date()))
   const [appliedFrom, setAppliedFrom] = useState(startOfMonthInput)
@@ -430,17 +431,19 @@ export function Reports() {
         </div>
       </div>
 
-      <div className="reports-total">
-        <FileBarChart2 size={22} aria-hidden />
-        <div>
-          <p className="reports-total-label">Total sales</p>
-          <p className="reports-total-value">{formatCurrency(totalSales)}</p>
-          <p className="reports-total-meta">
-            {filtered.length} row{filtered.length === 1 ? '' : 's'} · {appliedFrom} → {appliedTo}
-            {isUuid(branchId) ? ' · this branch' : ' · all branches'}
-          </p>
+      {canSeeSalesTotal ? (
+        <div className="reports-total">
+          <FileBarChart2 size={22} aria-hidden />
+          <div>
+            <p className="reports-total-label">Total sales</p>
+            <p className="reports-total-value">{formatCurrency(totalSales)}</p>
+            <p className="reports-total-meta">
+              {filtered.length} row{filtered.length === 1 ? '' : 's'} · {appliedFrom} → {appliedTo}
+              {isUuid(branchId) ? ' · this branch' : ' · all branches'}
+            </p>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className="panel">
         <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
