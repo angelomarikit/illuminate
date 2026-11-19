@@ -412,6 +412,20 @@ export function Incentives() {
 
   const totalFinal = filteredPayouts.reduce((s, p) => s + p.final_amount, 0)
 
+  const byTypeTotals = useMemo(() => {
+    const totals: Record<IncentiveType, number> = {
+      service_commission: 0,
+      product_incentive: 0,
+      upsell: 0,
+      other: 0,
+    }
+    for (const p of filteredPayouts) {
+      const key = (TYPE_LABEL[p.incentive_type] ? p.incentive_type : 'other') as IncentiveType
+      totals[key] = (totals[key] || 0) + Number(p.final_amount || 0)
+    }
+    return totals
+  }, [filteredPayouts])
+
   const byStaffTotals = useMemo(() => {
     const map = new Map<string, number>()
     for (const p of filteredPayouts) {
@@ -561,9 +575,51 @@ export function Incentives() {
                   </>
                 ) : null}
                 {' · '}
-                Period incentives:{' '}
+                All types:{' '}
                 <strong style={{ color: 'var(--ink)' }}>{formatCurrency(totalFinal)}</strong>
               </p>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 8,
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+                }}
+              >
+                {(
+                  [
+                    ['service_commission', 'Service commission'],
+                    ['product_incentive', 'Product incentive'],
+                    ['upsell', 'Upsell incentive'],
+                    ['other', 'Other'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <div
+                    key={key}
+                    style={{
+                      border: '1px solid var(--line)',
+                      borderRadius: 12,
+                      padding: '10px 12px',
+                      background: 'var(--surface, #fff)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '0.72rem',
+                        letterSpacing: '0.04em',
+                        textTransform: 'uppercase',
+                        color: 'var(--muted)',
+                        marginBottom: 4,
+                      }}
+                    >
+                      {label}
+                    </div>
+                    <strong style={{ fontSize: '1.05rem' }}>
+                      {formatCurrency(byTypeTotals[key])}
+                    </strong>
+                  </div>
+                ))}
+              </div>
 
               {byStaffTotals.length > 1 ? (
                 <div
